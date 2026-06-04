@@ -1,6 +1,7 @@
 fastapi
 uvicorn
 requests
+httpx
 python-telegram-bot
 python-decouple
 sqlalchemy
