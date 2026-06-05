@@ -15,9 +15,14 @@ async def get_db():
         yield session
 
 async def init_db():
+    # Import models so their tables register on the shared Base metadata.
     import models.trade_model
     import models.signal_model
+    import models.usdjpy_model
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        # create_all only — never drop. The USD/JPY forward test accumulates
+        # months of daily closes and trades; dropping tables on every startup
+        # would silently wipe the experiment. New tables are added safely;
+        # existing data is preserved across restarts/redeploys.
         await conn.run_sync(Base.metadata.create_all)
 
