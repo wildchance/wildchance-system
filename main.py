@@ -15,6 +15,7 @@ from routes.alert_webhook import router as alert_webhook
 from routes.history import router as history_router
 from routes.history_commands import router as history_cmd_router
 from routes.usdjpy import router as usdjpy_router
+from routes.portfolio import router as portfolio_router
 from services.usdjpy_scheduler import start_scanner
 
 app = FastAPI(
@@ -62,6 +63,7 @@ app.include_router(market_router)
 app.include_router(history_router)
 app.include_router(history_cmd_router)
 app.include_router(usdjpy_router)
+app.include_router(portfolio_router)
 
 if __name__ == "__main__":
     uvicorn.run(
