@@ -2,9 +2,8 @@ fastapi
 uvicorn
 requests
 httpx
-python-telegram-bot
+python-telegram-bot==20.3
 python-decouple
 sqlalchemy
 asyncpg
 psycopg2-binary
-python-telegram-bot==20.3
