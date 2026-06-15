@@ -1,0 +1,31 @@
+from decouple import config
+
+BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+
+WEBHOOK_SECRET=your_webhook_secret_here
+
+DATABASE_URL=postgresql+asyncpg://user:password@host:port/dbname
+
+USE_TWELVEDATA=true
+TWELVEDATA_API_KEY=your_twelvedata_key_here
+
+ALERTATRON_API_KEY=your_alertatron_key_here
+METATRADER_LOGIN=your_mt5_login_optional
+METATRADER_PASSWORD=your_mt5_password_optional
+METATRADER_SERVER=your_mt5_server_optional
+
+# --- USD/JPY forward-test scanner (optional) ---
+# Auto-fetch the daily USD/JPY close once a day and run the signal engine.
+USDJPY_SCANNER_ENABLED=false      # set true to run the daily auto-scan
+USDJPY_SCAN_HOUR_UTC=22           # hour (0-23 UTC) to fetch the daily close
+USDJPY_ACCOUNT_SIZE=0             # demo account size in USD for sizing alerts (0 = skip)
+
+# --- Wildchance Confluence Engine (wildchance/) ---
+# Read by wildchance/wildchance_scraper.py. All optional — each source falls
+# back to a snapshot if its credential is unset, so the feed always writes.
+# The scraper accepts TWELVEDATA_API_KEY above, or TWELVEDATA_KEY here.
+TWELVEDATA_KEY=your_twelvedata_key_here       # alias of TWELVEDATA_API_KEY; either works
+MYFXBOOK_EMAIL=you@email.com                   # retail sentiment (Community Outlook API)
+MYFXBOOK_PASSWORD=your_myfxbook_password        # retail sentiment
+GOLD_COT_COHORT=managed_money                  # or "commercial" to fade Managed Money
