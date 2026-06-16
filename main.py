@@ -1,5 +1,8 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from core.signals import router as signals_router
@@ -65,10 +68,16 @@ app.include_router(history_cmd_router)
 app.include_router(usdjpy_router)
 app.include_router(portfolio_router)
 
+# Serve the Wildchance Confluence Engine dashboard over HTTP (not file://) so its
+# fetch('feed.json') can work. Open it at /engine/wildchance_engine.html.
+# Mounted last so it never shadows the API routes above.
+app.mount("/engine", StaticFiles(directory="wildchance", html=True), name="engine")
+
 if __name__ == "__main__":
+    # Bind the platform-provided port (Railway sets $PORT); default 8000 locally.
     uvicorn.run(
-        app, 
-        host="0.0.0.0", 
-        port=8000,
-        reload=True  # Enable auto-reload in development
+        "main:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8000")),
+        reload=bool(os.getenv("DEV_RELOAD")),  # set DEV_RELOAD=1 for local auto-reload
     )
