@@ -1,6 +1,6 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -20,6 +20,9 @@ from routes.history_commands import router as history_cmd_router
 from routes.usdjpy import router as usdjpy_router
 from routes.portfolio import router as portfolio_router
 from services.usdjpy_scheduler import start_scanner
+from routes.wildchance import router as wildchance_router
+from services.wildchance_scheduler import start_wildchance_scheduler
+from services.wildchance_service import get_latest_feed
 
 app = FastAPI(
     title="Wildchance Trading Bot API",
@@ -42,6 +45,7 @@ async def startup_event():
     """Initialize database and launch the daily USD/JPY scanner on startup"""
     await init_db()
     start_scanner()
+    start_wildchance_scheduler()
 
 @app.get("/")
 async def home():
@@ -67,6 +71,18 @@ app.include_router(history_router)
 app.include_router(history_cmd_router)
 app.include_router(usdjpy_router)
 app.include_router(portfolio_router)
+app.include_router(wildchance_router)
+
+# The dashboard fetches a relative "feed.json" -> /engine/feed.json. Serve that
+# from the DB-backed feed (registered BEFORE the static mount so it wins the
+# exact path), so the dashboard goes LIVE on an ephemeral host. Falls through
+# to SNAPSHOT (404) until the first scrape is stored.
+@app.get("/engine/feed.json")
+async def engine_feed_json():
+    feed = await get_latest_feed()
+    if feed is None:
+        raise HTTPException(status_code=404, detail="no feed stored yet")
+    return feed
 
 # Serve the Wildchance Confluence Engine dashboard over HTTP (not file://) so its
 # fetch('feed.json') can work. Open it at /engine/wildchance_engine.html.
