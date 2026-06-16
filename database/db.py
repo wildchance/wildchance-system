@@ -19,6 +19,7 @@ async def init_db():
     import models.trade_model
     import models.signal_model
     import models.usdjpy_model
+    import models.wildchance_model
     async with engine.begin() as conn:
         # create_all only — never drop. The USD/JPY forward test accumulates
         # months of daily closes and trades; dropping tables on every startup
