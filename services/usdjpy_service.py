@@ -19,6 +19,7 @@ from models.usdjpy_model import UsdJpyClose, UsdJpyTrade
 from usdjpy.engine import (
     HOLD_DAYS,
     evaluate_close,
+    is_new_stretch,
     result_r,
     stop_breached,
     build_scoreboard,
@@ -72,11 +73,23 @@ async def ingest_close(
     row.signal = sig.action
 
     opened: Optional[UsdJpyTrade] = None
+    trade_skipped: Optional[str] = None
     if sig.is_trade:
-        dup = await db.execute(
-            select(UsdJpyTrade).where(UsdJpyTrade.entry_date == trade_date)
-        )
-        if dup.scalar_one_or_none() is None:
+        # One position per stretch event (no-overlap, matches the backtest):
+        # open only if no earlier trade's 3-day hold window still covers today.
+        index_by_date = {c.trade_date: i for i, c in enumerate(history)}
+        entry_idx = index_by_date.get(trade_date)
+        existing = (await db.execute(select(UsdJpyTrade))).scalars().all()
+        prior_idx = [
+            index_by_date[t.entry_date]
+            for t in existing
+            if t.entry_date != trade_date and t.entry_date in index_by_date
+        ]
+        if any(t.entry_date == trade_date for t in existing):
+            trade_skipped = "duplicate: a trade already exists for this date"
+        elif entry_idx is not None and not is_new_stretch(entry_idx, prior_idx):
+            trade_skipped = "continuation: within an open trade's hold window (no-overlap rule)"
+        else:
             opened = UsdJpyTrade(
                 entry_date=trade_date,
                 action=sig.action,
@@ -94,6 +107,7 @@ async def ingest_close(
     return {
         "signal": sig.to_dict(),
         "opened_trade": _trade_dict(opened) if opened else None,
+        "trade_skipped": trade_skipped,
         "exits_filled": filled,
     }
 
