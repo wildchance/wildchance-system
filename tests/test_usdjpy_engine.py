@@ -12,6 +12,7 @@ from usdjpy.engine import (
     result_r,
     stop_breached,
     build_scoreboard,
+    is_new_stretch,
 )
 
 
@@ -112,3 +113,30 @@ def test_workbook_numbers_match():
     assert sig.sd20 == pytest.approx(1.0053, abs=1e-3)
     assert sig.z == pytest.approx(1.0307, abs=1e-3)
     assert sig.action == "NO TRADE"
+
+
+def test_is_new_stretch_first_trade_has_no_priors():
+    assert is_new_stretch(5, []) is True
+
+
+def test_is_new_stretch_blocks_within_hold_window():
+    # 06-19 entered at index 18; 06-20 is index 19 -> 1 day later, within HOLD(3).
+    assert is_new_stretch(19, [18]) is False        # the live 06-20 case
+    assert is_new_stretch(20, [18]) is False         # +2 days, still covered
+    assert is_new_stretch(21, [18]) is False         # +3 days == HOLD, still covered
+
+
+def test_is_new_stretch_allows_after_hold_window():
+    # Resume scanning at entry+HOLD+1 (= index 22), matching the i=end+1 backtest.
+    assert is_new_stretch(22, [18]) is True
+
+
+def test_is_new_stretch_ignores_priors_on_or_after_entry():
+    assert is_new_stretch(18, [18]) is True          # same index handled elsewhere
+    assert is_new_stretch(18, [20]) is True          # a later entry can't cover this one
+
+
+def test_is_new_stretch_uses_nearest_prior():
+    # Multiple priors: blocked if ANY earlier trade still covers entry_idx.
+    assert is_new_stretch(23, [10, 21]) is False     # 21 covers 23 (diff 2)
+    assert is_new_stretch(25, [10, 21]) is True      # nearest prior 21 is 4 days back
