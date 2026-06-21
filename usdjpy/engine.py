@@ -1,206 +1,236 @@
-"""USD/JPY forward-test orchestration over the database.
+"""USD/JPY mean-reversion signal engine — FROZEN RULES.
 
-Glues the pure engine (usdjpy/) to persistence (models/usdjpy_model.py):
-  - ingest a daily close (manual or auto), compute MA20/SD20/z/signal
-  - open a trade when a BUY/SELL fires
-  - fill the day+3 exit and R for trades whose hold period has elapsed
-  - build the live scoreboard
+A faithful, code-form replica of the USDJPY_FORWARD_TEST.xlsx tracker.
+Everything here mirrors the spreadsheet exactly so the forward test stays
+honest. The only thing this code adds over the workbook is automation: it
+does the arithmetic the yellow cells did, so a feed/scanner can replace the
+once-a-day manual paste.
+
+Spreadsheet equivalences (DAILY LOG sheet):
+    D  MA20      = AVERAGE(last 20 closes)
+    E  SD20      = STDEV(last 20 closes)          # Excel STDEV == sample (n-1)
+    F  Z-SCORE   = (close - MA20) / SD20
+    G  SIGNAL    = IF(F<=-2,"BUY",IF(F>=2,"SELL","—"))
+    H  ENTRY     = close on a BUY/SELL row
+    I  STOP      = BUY: close - 0.5*SD20 ; SELL: close + 0.5*SD20
+    J  EXIT(d+3) = close 3 trading days after entry
+    K  RESULT R  = BUY:  (exit-entry)/(entry-stop)
+                   SELL: (entry-exit)/(stop-entry)
 """
 
 from __future__ import annotations
 
-from datetime import date
-from typing import List, Optional
+import statistics
+from dataclasses import dataclass, asdict
+from typing import List, Optional, Sequence
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+# --- FROZEN RULES (locked 2026-06-04 — see FROZEN RULES sheet) ---------------
+FROZEN_RULES = {
+    "instrument": "USD/JPY",
+    "timeframe": "1D (daily close)",
+    "lookback": 20,                 # MA20 / SD20 window
+    "z_entry_buy": -2.0,            # z <= -2.0  -> BUY (fade up)
+    "z_entry_sell": 2.0,           # z >= +2.0  -> SELL (fade down)
+    "stop_sd_multiple": 0.5,       # stop = 0.5 * SD20 beyond entry
+    "hold_trading_days": 3,        # time-based exit at close of day +3
+    "frozen_on": "2026-06-04",
+    # Pass/fail decided in advance — do NOT move these.
+    "min_trades_for_verdict": 20,
+    "pass_profit_factor": 1.2,
+    "fail_profit_factor": 1.0,
+}
 
-from models.usdjpy_model import UsdJpyClose, UsdJpyTrade
-from usdjpy.engine import (
-    HOLD_DAYS,
-    evaluate_close,
-    is_new_stretch,
-    result_r,
-    stop_breached,
-    build_scoreboard,
-)
+LOOKBACK = FROZEN_RULES["lookback"]
+Z_BUY = FROZEN_RULES["z_entry_buy"]
+Z_SELL = FROZEN_RULES["z_entry_sell"]
+STOP_MULT = FROZEN_RULES["stop_sd_multiple"]
+HOLD_DAYS = FROZEN_RULES["hold_trading_days"]
+
+# USD/JPY: one pip = 0.01.
+PIP = 0.01
 
 
-def _to_date(d) -> date:
-    return d if isinstance(d, date) else date.fromisoformat(str(d)[:10])
+@dataclass
+class Signal:
+    """The decision for a single daily close (one DAILY LOG row)."""
+    date: Optional[str]
+    close: float
+    ma20: Optional[float]
+    sd20: Optional[float]
+    z: Optional[float]
+    action: str               # "BUY" | "SELL" | "NO TRADE"
+    entry: Optional[float]
+    stop: Optional[float]
+    stop_pips: Optional[float]
+
+    @property
+    def is_trade(self) -> bool:
+        return self.action in ("BUY", "SELL")
+
+    def to_dict(self) -> dict:
+        return asdict(self) | {"is_trade": self.is_trade}
 
 
-async def _ordered_closes(db: AsyncSession) -> List[UsdJpyClose]:
-    res = await db.execute(select(UsdJpyClose).order_by(UsdJpyClose.trade_date.asc()))
-    return list(res.scalars().all())
+def rolling_stats(closes: Sequence[float], lookback: int = LOOKBACK):
+    """Return (ma, sd) over the last ``lookback`` closes, or (None, None).
 
-
-async def ingest_close(
-    db: AsyncSession,
-    trade_date,
-    close: float,
-    source: str = "manual",
-) -> dict:
-    """Add/replace one daily close, recompute its row, open a trade if it fires.
-
-    Idempotent on date: re-submitting the same trading day overwrites the close
-    (handy for corrections). Returns the resulting signal plus any opened trade.
+    Uses sample standard deviation (n-1) to match Excel's STDEV exactly.
+    Needs at least ``lookback`` closes — same guard as the workbook
+    (=IF(COUNT(...)=20, ...)).
     """
-    trade_date = _to_date(trade_date)
-    close = float(close)
+    if len(closes) < lookback:
+        return None, None
+    window = list(closes[-lookback:])
+    ma = statistics.fmean(window)
+    sd = statistics.stdev(window)  # sample stdev == Excel STDEV
+    return ma, sd
 
-    existing = await db.execute(
-        select(UsdJpyClose).where(UsdJpyClose.trade_date == trade_date)
-    )
-    row = existing.scalar_one_or_none()
-    if row is None:
-        row = UsdJpyClose(trade_date=trade_date, close=close, source=source)
-        db.add(row)
+
+def evaluate_close(
+    closes: Sequence[float],
+    date: Optional[str] = None,
+    lookback: int = LOOKBACK,
+) -> Signal:
+    """Evaluate the most recent close.
+
+    ``closes`` is the full history of daily closes in chronological order,
+    INCLUDING the close being evaluated as the last element.
+    """
+    if not closes:
+        raise ValueError("closes must contain at least the current close")
+
+    close = float(closes[-1])
+    ma, sd = rolling_stats(closes, lookback)
+
+    if ma is None or sd is None or sd == 0:
+        return Signal(date, close, ma, sd, None, "NO TRADE", None, None, None)
+
+    z = (close - ma) / sd
+
+    if z <= Z_BUY:
+        action = "BUY"
+        stop = close - STOP_MULT * sd
+    elif z >= Z_SELL:
+        action = "SELL"
+        stop = close + STOP_MULT * sd
     else:
-        row.close = close
-        row.source = source
+        return Signal(date, close, ma, sd, z, "NO TRADE", None, None, None)
 
-    await db.flush()
-
-    # Full chronological history including this close.
-    history = await _ordered_closes(db)
-    closes = [c.close for c in history]
-    sig = evaluate_close(closes, date=trade_date.isoformat())
-
-    row.ma20 = sig.ma20
-    row.sd20 = sig.sd20
-    row.z = sig.z
-    row.signal = sig.action
-
-    opened: Optional[UsdJpyTrade] = None
-    trade_skipped: Optional[str] = None
-    if sig.is_trade:
-        # One position per stretch event (no-overlap, matches the backtest):
-        # open only if no earlier trade's 3-day hold window still covers today.
-        index_by_date = {c.trade_date: i for i, c in enumerate(history)}
-        entry_idx = index_by_date.get(trade_date)
-        existing = (await db.execute(select(UsdJpyTrade))).scalars().all()
-        prior_idx = [
-            index_by_date[t.entry_date]
-            for t in existing
-            if t.entry_date != trade_date and t.entry_date in index_by_date
-        ]
-        if any(t.entry_date == trade_date for t in existing):
-            trade_skipped = "duplicate: a trade already exists for this date"
-        elif entry_idx is not None and not is_new_stretch(entry_idx, prior_idx):
-            trade_skipped = "continuation: within an open trade's hold window (no-overlap rule)"
-        else:
-            opened = UsdJpyTrade(
-                entry_date=trade_date,
-                action=sig.action,
-                entry=sig.entry,
-                stop=sig.stop,
-                sd20=sig.sd20,
-                stop_pips=sig.stop_pips,
-                status="OPEN",
-            )
-            db.add(opened)
-
-    filled = await fill_due_exits(db)
-    await db.commit()
-
-    return {
-        "signal": sig.to_dict(),
-        "opened_trade": _trade_dict(opened) if opened else None,
-        "trade_skipped": trade_skipped,
-        "exits_filled": filled,
-    }
+    entry = close
+    stop_pips = abs(entry - stop) / PIP
+    return Signal(date, close, ma, sd, z, action, entry, stop, stop_pips)
 
 
-async def fill_due_exits(db: AsyncSession) -> List[dict]:
-    """Close any OPEN trade whose day+3 close now exists.
+def is_new_stretch(
+    entry_idx: int,
+    prior_entry_indices: Sequence[int],
+    hold_days: int = HOLD_DAYS,
+) -> bool:
+    """One position per stretch event (the validated NON-OVERLAPPING backtest).
 
-    "3 trading days after entry" == 3 rows after the entry row in the daily log.
+    The backtest scanned with ``i = end + 1`` — after a trade entered at index i
+    and exited at i+hold_days, scanning resumed at i+hold_days+1. So a daily
+    BUY/SELL is only a NEW trade if no earlier trade's hold window still covers
+    it; while z stays beyond the band within ``hold_days`` of the last entry,
+    that day is a continuation of the same stretch, not a new bet.
+
+    ``entry_idx`` and ``prior_entry_indices`` are positions in the chronological
+    daily-log. Returns True if a new trade may open at ``entry_idx``.
     """
-    history = await _ordered_closes(db)
-    index_by_date = {c.trade_date: i for i, c in enumerate(history)}
+    for p in prior_entry_indices:
+        if p < entry_idx and (entry_idx - p) <= hold_days:
+            return False
+    return True
 
-    open_res = await db.execute(
-        select(UsdJpyTrade).where(UsdJpyTrade.status == "OPEN")
+
+def result_r(action: str, entry: float, stop: float, exit_price: float) -> float:
+    """R outcome, exactly as the K column.
+
+    R is measured in units of the risk distance (entry->stop = 0.5*SD20).
+    A clean stop-out is -1R; a move equal to the risk distance in your favour
+    is +1R.
+    """
+    if action == "BUY":
+        return (exit_price - entry) / (entry - stop)
+    if action == "SELL":
+        return (entry - exit_price) / (stop - entry)
+    raise ValueError(f"action must be BUY or SELL, got {action!r}")
+
+
+def stop_breached(action: str, stop: float, closes_during_hold: Sequence[float]) -> bool:
+    """Did any daily close during the hold breach the stop?
+
+    The workbook notes: "If stop is hit intraday before day 3, the trade is a
+    loss at the stop." With daily data we can only check closes, so this is an
+    informational flag — it does NOT change the scoreboard R (which stays
+    faithful to the workbook's day+3-close exit). Surfacing it lets you see
+    how often the stop would have been touched.
+    """
+    for c in closes_during_hold:
+        if action == "BUY" and c <= stop:
+            return True
+        if action == "SELL" and c >= stop:
+            return True
+    return False
+
+
+@dataclass
+class Scoreboard:
+    """Mirror of the SCOREBOARD sheet."""
+    trades_completed: int
+    wins: int
+    losses: int
+    win_rate: Optional[float]
+    total_r: float
+    expectancy_r: Optional[float]
+    gross_win_r: float
+    gross_loss_r: float
+    profit_factor: Optional[float]
+    verdict: str
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+def build_scoreboard(r_results: Sequence[float]) -> Scoreboard:
+    """Compute the live tally from the list of completed-trade R outcomes."""
+    completed = [float(r) for r in r_results if r is not None]
+    n = len(completed)
+    wins = sum(1 for r in completed if r > 0)
+    losses = sum(1 for r in completed if r <= 0)
+    total_r = sum(completed)
+    gross_win = sum(r for r in completed if r > 0)
+    gross_loss = sum(r for r in completed if r <= 0)
+
+    win_rate = (wins / n) if n else None
+    expectancy = (total_r / n) if n else None
+    profit_factor = abs(gross_win / gross_loss) if (n and gross_loss != 0) else None
+
+    verdict = _verdict(n, profit_factor, total_r)
+
+    return Scoreboard(
+        trades_completed=n,
+        wins=wins,
+        losses=losses,
+        win_rate=win_rate,
+        total_r=total_r,
+        expectancy_r=expectancy,
+        gross_win_r=gross_win,
+        gross_loss_r=gross_loss,
+        profit_factor=profit_factor,
+        verdict=verdict,
     )
-    open_trades = list(open_res.scalars().all())
-
-    filled: List[dict] = []
-    for t in open_trades:
-        entry_idx = index_by_date.get(t.entry_date)
-        if entry_idx is None:
-            continue
-        exit_idx = entry_idx + HOLD_DAYS
-        if exit_idx >= len(history):
-            continue  # not enough trading days have passed yet
-
-        exit_row = history[exit_idx]
-        during = [c.close for c in history[entry_idx + 1: exit_idx + 1]]
-
-        t.exit_date = exit_row.trade_date
-        t.exit_price = exit_row.close
-        t.result_r = result_r(t.action, t.entry, t.stop, exit_row.close)
-        t.stop_breached = stop_breached(t.action, t.stop, during)
-        t.status = "CLOSED"
-        filled.append(_trade_dict(t))
-
-    return filled
 
 
-async def get_scoreboard(db: AsyncSession) -> dict:
-    res = await db.execute(
-        select(UsdJpyTrade.result_r).where(UsdJpyTrade.status == "CLOSED")
-    )
-    r_values = [r for (r,) in res.all() if r is not None]
-    return build_scoreboard(r_values).to_dict()
-
-
-async def list_trades(db: AsyncSession, limit: int = 200) -> List[dict]:
-    res = await db.execute(
-        select(UsdJpyTrade).order_by(UsdJpyTrade.entry_date.desc()).limit(limit)
-    )
-    return [_trade_dict(t) for t in res.scalars().all()]
-
-
-async def list_closes(db: AsyncSession, limit: int = 200) -> List[dict]:
-    res = await db.execute(
-        select(UsdJpyClose).order_by(UsdJpyClose.trade_date.desc()).limit(limit)
-    )
-    return [_close_dict(c) for c in res.scalars().all()]
-
-
-async def latest_signal(db: AsyncSession) -> Optional[dict]:
-    res = await db.execute(
-        select(UsdJpyClose).order_by(UsdJpyClose.trade_date.desc()).limit(1)
-    )
-    row = res.scalar_one_or_none()
-    return _close_dict(row) if row else None
-
-
-def _trade_dict(t: UsdJpyTrade) -> dict:
-    return {
-        "id": t.id,
-        "entry_date": str(t.entry_date),
-        "action": t.action,
-        "entry": t.entry,
-        "stop": t.stop,
-        "sd20": t.sd20,
-        "stop_pips": round(t.stop_pips, 1) if t.stop_pips is not None else None,
-        "exit_date": str(t.exit_date) if t.exit_date else None,
-        "exit_price": t.exit_price,
-        "result_r": round(t.result_r, 4) if t.result_r is not None else None,
-        "stop_breached": t.stop_breached,
-        "status": t.status,
-    }
-
-
-def _close_dict(c: UsdJpyClose) -> dict:
-    return {
-        "trade_date": str(c.trade_date),
-        "close": c.close,
-        "ma20": round(c.ma20, 4) if c.ma20 is not None else None,
-        "sd20": round(c.sd20, 4) if c.sd20 is not None else None,
-        "z": round(c.z, 4) if c.z is not None else None,
-        "signal": c.signal,
-        "source": c.source,
-    }
+def _verdict(n: int, profit_factor: Optional[float], total_r: float) -> str:
+    """Pre-committed verdict logic (C14 of SCOREBOARD). Thresholds frozen."""
+    min_n = FROZEN_RULES["min_trades_for_verdict"]
+    pf_pass = FROZEN_RULES["pass_profit_factor"]
+    pf_fail = FROZEN_RULES["fail_profit_factor"]
+    if n < min_n:
+        return f"INCONCLUSIVE (<{min_n} trades)"
+    if profit_factor is not None and profit_factor > pf_pass and total_r > 0:
+        return "PASS — tiny real allocation OK"
+    if profit_factor is not None and profit_factor < pf_fail:
+        return "FAIL — abandon"
+    return "INCONCLUSIVE — keep on demo"
