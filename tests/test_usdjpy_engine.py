@@ -13,6 +13,7 @@ from usdjpy.engine import (
     stop_breached,
     build_scoreboard,
     is_new_stretch,
+    realized_r,
 )
 
 
@@ -140,3 +141,19 @@ def test_is_new_stretch_uses_nearest_prior():
     # Multiple priors: blocked if ANY earlier trade still covers entry_idx.
     assert is_new_stretch(23, [10, 21]) is False     # 21 covers 23 (diff 2)
     assert is_new_stretch(25, [10, 21]) is True      # nearest prior 21 is 4 days back
+
+
+def test_realized_r_collapses_breached_to_minus_one():
+    # A profitable day+3 R that nonetheless breached the stop -> stop-out -1R.
+    assert realized_r(0.8, True) == -1.0
+    assert realized_r(2.0, True) == -1.0
+
+
+def test_realized_r_keeps_faithful_when_not_breached():
+    assert realized_r(0.8, False) == 0.8
+    assert realized_r(-0.5, False) == -0.5
+
+
+def test_realized_r_passes_none_through():
+    assert realized_r(None, True) is None
+    assert realized_r(None, False) is None
