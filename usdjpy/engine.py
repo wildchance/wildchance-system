@@ -157,6 +157,21 @@ def result_r(action: str, entry: float, stop: float, exit_price: float) -> float
     raise ValueError(f"action must be BUY or SELL, got {action!r}")
 
 
+def realized_r(result_r_value: Optional[float], was_stop_breached: bool) -> Optional[float]:
+    """Stop-realism R: what the trade would have returned if the stop actually
+    closed the position.
+
+    The workbook (and ``result_r``) score every trade at the day+3 close, even
+    if a close blew through the stop earlier — that can overstate results vs.
+    real execution. This collapses any stop-breached trade to a clean -1R (a
+    stop-out), and otherwise keeps the faithful day+3 R. Lets the scoreboard
+    show BOTH a workbook-faithful and a stop-aware tally before real money.
+    """
+    if result_r_value is None:
+        return None
+    return -1.0 if was_stop_breached else result_r_value
+
+
 def stop_breached(action: str, stop: float, closes_during_hold: Sequence[float]) -> bool:
     """Did any daily close during the hold breach the stop?
 
