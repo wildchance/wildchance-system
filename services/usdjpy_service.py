@@ -21,6 +21,7 @@ from usdjpy.engine import (
     evaluate_close,
     is_new_stretch,
     result_r,
+    realized_r,
     stop_breached,
     build_scoreboard,
 )
@@ -148,11 +149,21 @@ async def fill_due_exits(db: AsyncSession) -> List[dict]:
 
 
 async def get_scoreboard(db: AsyncSession) -> dict:
+    """Two tallies side by side: the workbook-faithful day+3 scoreboard (top
+    level, unchanged) plus a stop-aware one (any stop-breached trade -> -1R),
+    so you can compare before risking real money."""
     res = await db.execute(
-        select(UsdJpyTrade.result_r).where(UsdJpyTrade.status == "CLOSED")
+        select(UsdJpyTrade.result_r, UsdJpyTrade.stop_breached).where(
+            UsdJpyTrade.status == "CLOSED"
+        )
     )
-    r_values = [r for (r,) in res.all() if r is not None]
-    return build_scoreboard(r_values).to_dict()
+    rows = res.all()
+    workbook_r = [r for (r, _) in rows if r is not None]
+    stop_aware = [realized_r(r, bool(br)) for (r, br) in rows if r is not None]
+    board = build_scoreboard(workbook_r).to_dict()
+    board["mode"] = "workbook_faithful"
+    board["stop_aware"] = build_scoreboard(stop_aware).to_dict()
+    return board
 
 
 async def list_trades(db: AsyncSession, limit: int = 200) -> List[dict]:
