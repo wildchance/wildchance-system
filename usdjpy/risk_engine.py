@@ -94,11 +94,35 @@ def risk_table() -> List[dict]:
     return [risk_profile(size).to_dict() for size in ACCOUNT_SIZES]
 
 
+def lot_to_risk(
+    balance: float,
+    risk_pct: float,
+    stop_pips: float,
+    usdjpy_price: float,
+) -> float:
+    """Lot size that risks exactly ``risk_pct`` of balance for this stop.
+
+    Solves  risk_usd = lot * pip_value_per_lot(price) * stop_pips = balance*risk_pct
+    so the dollar risk is CONSTANT regardless of the (volatility-driven) stop
+    distance — the position-sizing intent the fixed cheat-sheet lot doesn't give.
+    A tighter stop -> bigger lot; a wider stop -> smaller lot, same dollars risked.
+    Rounded to 0.01 lots (broker minimum).
+    """
+    if stop_pips <= 0:
+        raise ValueError("stop_pips must be > 0")
+    if not 0 < risk_pct < 1:
+        raise ValueError("risk_pct must be a fraction in (0, 1), e.g. 0.01 for 1%")
+    risk_usd = balance * risk_pct
+    lot = risk_usd / (pip_value_per_lot(usdjpy_price) * stop_pips)
+    return round(lot, 2)
+
+
 def trade_money_risk(
     balance: float,
     stop_pips: float,
     usdjpy_price: float,
     lot: Optional[float] = None,
+    risk_pct: Optional[float] = None,
 ) -> dict:
     """Estimate the money at risk for a specific USD/JPY trade.
 
@@ -107,8 +131,15 @@ def trade_money_risk(
     stop distance into an estimated dollar loss so you can confirm the trade
     fits inside your daily/weekly max-loss limits, and flags it if it does not.
     """
-    if lot is None:
+    # Sizing precedence: explicit lot > risk-based (constant $) > fixed cheat-sheet.
+    if lot is not None:
+        sizing = "explicit"
+    elif risk_pct is not None:
+        lot = lot_to_risk(balance, risk_pct, stop_pips, usdjpy_price)
+        sizing = "risk_based"
+    else:
         lot = lot_for_account(balance)
+        sizing = "fixed"
 
     risk_usd = lot * pip_value_per_lot(usdjpy_price) * stop_pips
 
@@ -119,6 +150,8 @@ def trade_money_risk(
     return {
         "account_size": balance,
         "lot": lot,
+        "sizing": sizing,
+        "risk_pct": risk_pct,
         "usdjpy_price": usdjpy_price,
         "stop_pips": round(stop_pips, 1),
         "pip_value_per_lot": round(pip_value_per_lot(usdjpy_price), 4),
