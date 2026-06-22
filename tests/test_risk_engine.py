@@ -10,6 +10,7 @@ from usdjpy.risk_engine import (
     risk_table,
     trade_money_risk,
     pip_value_per_lot,
+    lot_to_risk,
 )
 
 
@@ -71,3 +72,36 @@ def test_trade_money_risk_flags_oversized_stop():
     # Absurdly wide stop should breach the daily cap.
     r = trade_money_risk(1_250, stop_pips=5000, usdjpy_price=150.0)
     assert r["within_daily_cap"] is False
+
+
+def test_lot_to_risk_constant_dollar_risk():
+    # 1% of $10,000 = $100 risk. At price 150, pip value/lot = 1000/150 = 6.667.
+    # 50-pip stop -> lot = 100 / (6.667 * 50) = 0.30.
+    lot = lot_to_risk(10_000, 0.01, stop_pips=50, usdjpy_price=150.0)
+    assert lot == pytest.approx(0.30, abs=0.005)
+    # the resulting risk should reproduce ~$100
+    realized = lot * pip_value_per_lot(150.0) * 50
+    assert realized == pytest.approx(100, abs=2)
+
+
+def test_lot_to_risk_tighter_stop_bigger_lot():
+    tight = lot_to_risk(10_000, 0.01, stop_pips=25, usdjpy_price=150.0)
+    wide = lot_to_risk(10_000, 0.01, stop_pips=100, usdjpy_price=150.0)
+    assert tight > wide   # same dollars risked -> tighter stop needs a bigger lot
+
+
+def test_lot_to_risk_rejects_bad_input():
+    with pytest.raises(ValueError):
+        lot_to_risk(10_000, 0.01, stop_pips=0, usdjpy_price=150.0)
+    with pytest.raises(ValueError):
+        lot_to_risk(10_000, 5, stop_pips=25, usdjpy_price=150.0)  # risk_pct must be a fraction
+
+
+def test_trade_money_risk_risk_based_mode():
+    fixed = trade_money_risk(10_000, stop_pips=25, usdjpy_price=161.23)
+    risk_based = trade_money_risk(10_000, stop_pips=25, usdjpy_price=161.23, risk_pct=0.01)
+    assert fixed["sizing"] == "fixed" and fixed["lot"] == 0.08
+    assert risk_based["sizing"] == "risk_based"
+    # risk-based should target ~1% = $100, far above the fixed-lot $12 risk here
+    assert risk_based["estimated_risk_usd"] > fixed["estimated_risk_usd"]
+    assert risk_based["estimated_risk_usd"] == pytest.approx(100, abs=10)
