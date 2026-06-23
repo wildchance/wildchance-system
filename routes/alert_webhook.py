@@ -3,13 +3,19 @@ from decouple import config
 from sqlalchemy.ext.asyncio import AsyncSession
 from database.db import get_db
 from models.signal_model import SignalLog
-from utils.send_telegram import send_telegram_message 
+from utils.send_telegram import send_telegram_message
 
 router = APIRouter()
-WEBHOOK_SECRET = config("WEBHOOK_SECRET")
+# default=None so a missing secret does not crash the app at import/startup.
+WEBHOOK_SECRET = config("WEBHOOK_SECRET", default=None)
+
 
 @router.post("/webhook/alertatron")
 async def alertatron_webhook(request: Request, db: AsyncSession = Depends(get_db)):
+    # If no secret is configured, reject rather than accepting unauthenticated calls.
+    if not WEBHOOK_SECRET:
+        raise HTTPException(status_code=503, detail="Webhook not configured")
+
     body = await request.json()
 
     if body.get("secret") != WEBHOOK_SECRET:
