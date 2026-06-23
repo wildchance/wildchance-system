@@ -16,7 +16,10 @@ from routes.alert_webhook import router as alert_webhook
 from routes.history import router as history_router
 from routes.history_commands import router as history_cmd_router
 from routes.usdjpy import router as usdjpy_router
+from routes.portfolio import router as portfolio_router
+from routes.wildchance import router as wildchance_router
 from services.usdjpy_scheduler import start_scanner
+from services.wildchance_scheduler import start_wildchance_scheduler
 
 app = FastAPI(
     title="Wildchance Trading Bot API",
@@ -45,9 +48,10 @@ register_bot(app)
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database and launch the daily USD/JPY scanner on startup"""
+    """Initialize the database and launch the background schedulers on startup"""
     await init_db()
-    start_scanner()
+    start_scanner()                 # daily USD/JPY mean-reversion scan
+    start_wildchance_scheduler()    # 6h/daily/weekly confluence feed scrape
 
 @app.get("/")
 async def home():
@@ -72,6 +76,8 @@ app.include_router(market_router)
 app.include_router(history_router)
 app.include_router(history_cmd_router)
 app.include_router(usdjpy_router)
+app.include_router(portfolio_router)
+app.include_router(wildchance_router)
 
 if __name__ == "__main__":
     uvicorn.run(
