@@ -1,8 +1,6 @@
-import os
-
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from decouple import config
 import uvicorn
 
 from core.signals import router as signals_router
@@ -18,11 +16,7 @@ from routes.alert_webhook import router as alert_webhook
 from routes.history import router as history_router
 from routes.history_commands import router as history_cmd_router
 from routes.usdjpy import router as usdjpy_router
-from routes.portfolio import router as portfolio_router
 from services.usdjpy_scheduler import start_scanner
-from routes.wildchance import router as wildchance_router
-from services.wildchance_scheduler import start_wildchance_scheduler
-from services.wildchance_service import get_latest_feed
 
 app = FastAPI(
     title="Wildchance Trading Bot API",
@@ -30,10 +24,19 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Configurable CORS. Set ALLOWED_ORIGINS to a comma-separated list of your real
+# dashboard origins (e.g. "https://app.example.com,https://example.com").
+# Credentials are only enabled when origins are explicitly listed — a wildcard
+# "*" with credentials is rejected by browsers and unsafe, so we disable
+# credentials in that case.
+_origins = config("ALLOWED_ORIGINS", default="*")
+ALLOWED_ORIGINS = [o.strip() for o in _origins.split(",") if o.strip()]
+_allow_credentials = ALLOWED_ORIGINS != ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -45,13 +48,12 @@ async def startup_event():
     """Initialize database and launch the daily USD/JPY scanner on startup"""
     await init_db()
     start_scanner()
-    start_wildchance_scheduler()
 
 @app.get("/")
 async def home():
     return {
-        "message": "Wildchance API is live 🚀", 
-        "status": "Server running", 
+        "message": "Wildchance API is live 🚀",
+        "status": "Server running",
         "bot": "active"
     }
 
@@ -70,30 +72,11 @@ app.include_router(market_router)
 app.include_router(history_router)
 app.include_router(history_cmd_router)
 app.include_router(usdjpy_router)
-app.include_router(portfolio_router)
-app.include_router(wildchance_router)
-
-# The dashboard fetches a relative "feed.json" -> /engine/feed.json. Serve that
-# from the DB-backed feed (registered BEFORE the static mount so it wins the
-# exact path), so the dashboard goes LIVE on an ephemeral host. Falls through
-# to SNAPSHOT (404) until the first scrape is stored.
-@app.get("/engine/feed.json")
-async def engine_feed_json():
-    feed = await get_latest_feed()
-    if feed is None:
-        raise HTTPException(status_code=404, detail="no feed stored yet")
-    return feed
-
-# Serve the Wildchance Confluence Engine dashboard over HTTP (not file://) so its
-# fetch('feed.json') can work. Open it at /engine/wildchance_engine.html.
-# Mounted last so it never shadows the API routes above.
-app.mount("/engine", StaticFiles(directory="wildchance", html=True), name="engine")
 
 if __name__ == "__main__":
-    # Bind the platform-provided port (Railway sets $PORT); default 8000 locally.
     uvicorn.run(
-        "main:app",
+        app,
         host="0.0.0.0",
-        port=int(os.getenv("PORT", "8000")),
-        reload=bool(os.getenv("DEV_RELOAD")),  # set DEV_RELOAD=1 for local auto-reload
+        port=8000,
+        reload=True  # Enable auto-reload in development
     )
