@@ -1,45 +1,49 @@
 name: scheduled-scans
 
-# Free replacement for the in-process schedulers. Runs hourly and triggers the
-# right scan/scrape by time-of-day, mirroring services/usdjpy_scheduler.py and
-# services/wildchance_scheduler.py. Works with ANY host (Vercel/Render/etc.).
+# Free replacement for the in-process schedulers. Hourly cron fires the right
+# scan/scrape by time-of-day; a MANUAL run (workflow_dispatch) always fires a
+# test scan so you can verify end-to-end on demand.
 #
-# Required repo secret:  APP_BASE_URL   e.g. https://your-app.vercel.app
+# Required repo secret:  APP_BASE_URL   e.g. https://wildchance-system.onrender.com
 # Optional repo variable: USDJPY_ACCOUNT_SIZE  (defaults to 0 = no sizing)
-#
-# Because cron drives scheduling, leave USDJPY_SCANNER_ENABLED and
-# WILDCHANCE_SCHEDULER_ENABLED FALSE on the host to avoid double-runs.
 
 on:
   schedule:
     - cron: "0 * * * *"      # every hour, on the hour (UTC)
-  workflow_dispatch:          # allow manual runs from the Actions tab
+  workflow_dispatch:          # manual run from the Actions tab
 
 jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger scheduled scans
+      - name: Trigger scans
         env:
           BASE: ${{ secrets.APP_BASE_URL }}
           ACCT: ${{ vars.USDJPY_ACCOUNT_SIZE }}
+          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
-          if [ -z "$BASE" ]; then echo "APP_BASE_URL secret not set"; exit 1; fi
+          if [ -z "$BASE" ]; then echo "::error::APP_BASE_URL secret not set"; exit 1; fi
           ACCT="${ACCT:-0}"
           HOUR=$(date -u +%H); DOW=$(date -u +%u)   # DOW: 1=Mon .. 7=Sun
 
           post () {  # post <path>
             echo "POST $BASE$1"
-            code=$(curl -s -o /dev/stderr -w "%{http_code}" -X POST "$BASE$1") || true
+            code=$(curl -s -m 90 -o /tmp/body -w "%{http_code}" -X POST "$BASE$1") || true
             echo "  -> HTTP $code"
+            head -c 400 /tmp/body; echo
           }
 
-          # USD/JPY daily mean-reversion scan at 22:00 UTC
+          if [ "$MANUAL" = "true" ]; then
+            echo "Manual run — forcing a test USD/JPY scan + 6h wildchance scrape"
+            post "/usdjpy/scan?account_size=$ACCT&notify=true"
+            post "/wildchance/scrape?tier=6h"
+            exit 0
+          fi
+
+          # Scheduled runs: time-based, mirroring the in-process schedulers.
           if [ "$HOUR" = "22" ]; then
             post "/usdjpy/scan?account_size=$ACCT&notify=true"
           fi
-
-          # Wildchance confluence feed (weekly > daily > 6h, like the in-proc scheduler)
           if [ "$DOW" = "5" ] && [ "$HOUR" = "21" ]; then
             post "/wildchance/scrape?tier=weekly"
           elif [ "$HOUR" = "06" ]; then
