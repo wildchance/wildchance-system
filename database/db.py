@@ -47,7 +47,19 @@ def _normalize(url: str):
 
 DATABASE_URL, _CONNECT_ARGS = _normalize(_RAW_URL)
 
-engine = create_async_engine(DATABASE_URL, echo=False, connect_args=_CONNECT_ARGS)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    connect_args=_CONNECT_ARGS,
+    # Serverless Postgres (Neon free) auto-suspends after a few minutes idle and
+    # drops open connections. pool_pre_ping checks a connection is alive (and
+    # transparently reconnects) before each use, and pool_recycle proactively
+    # discards connections older than 5 minutes — together this prevents the
+    # "connection was closed / InterfaceError" 500s on the first request after
+    # the database has been idle.
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
 AsyncSessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
 
