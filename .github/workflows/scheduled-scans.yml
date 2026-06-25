@@ -6,6 +6,8 @@ name: scheduled-scans
 #
 # Required repo secret:  APP_BASE_URL   e.g. https://wildchance-system.onrender.com
 # Optional repo variable: USDJPY_ACCOUNT_SIZE  (defaults to 0 = no sizing)
+#
+# Times are UTC. USD/JPY fires at 05:00 UTC = 08:00 East Africa Time (UTC+3).
 
 on:
   schedule:
@@ -40,10 +42,12 @@ jobs:
             exit 0
           fi
 
-          # Scheduled runs: time-based, mirroring the in-process schedulers.
-          if [ "$HOUR" = "22" ]; then
+          # Scheduled runs (UTC):
+          # USD/JPY daily mean-reversion scan at 05:00 UTC = 08:00 EAT.
+          if [ "$HOUR" = "05" ]; then
             post "/usdjpy/scan?account_size=$ACCT&notify=true"
           fi
+          # Wildchance confluence feed (weekly > daily > 6h).
           if [ "$DOW" = "5" ] && [ "$HOUR" = "21" ]; then
             post "/wildchance/scrape?tier=weekly"
           elif [ "$HOUR" = "06" ]; then
