@@ -1,22 +1,26 @@
 from telegram import Update
 from telegram.ext import ContextTypes
-import requests
-import os
 
-API_BASE_URL = os.getenv("API_BASE_URL")
+from database.db import AsyncSessionLocal
+from services import usdjpy_service as svc
+
 
 async def handle_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send last 10 trades to user"""
+    """Last 10 USD/JPY trades, read straight from the database."""
     try:
-        response = requests.get(f"{API_BASE_URL}/history/trades")
-        trades = response.json()
+        async with AsyncSessionLocal() as db:
+            trades = await svc.list_trades(db, limit=10)
 
         if not trades:
-            await update.message.reply_text("No trade history available.")
+            await update.message.reply_text("📭 No USD/JPY trades yet.")
             return
 
-        msg = "\n".join([f"{t['pair']} | {t['action']} | {t['price']}" for t in trades[:10]])
-        await update.message.reply_text(f"📈 Trade History:\n{msg}")
+        lines = []
+        for t in trades:
+            r = t["result_r"]
+            tail = f"{r:+.2f}R ({t['status']})" if r is not None else t["status"]
+            lines.append(f"{t['entry_date']} · {t['action']} @ {t['entry']} → {tail}")
+        await update.message.reply_text("📈 USD/JPY Trades (last 10):\n" + "\n".join(lines))
 
     except Exception as e:
         await update.message.reply_text(f"⚠️ Error fetching history: {e}")
