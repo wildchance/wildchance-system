@@ -1,23 +1,24 @@
 name: scheduled-scans
 
 # Robust scheduling: each cron does ONE job, dispatched by github.event.schedule
-# (the cron expression that fired) — NOT by wall-clock hour. GitHub's free
-# scheduler often delays runs by 10–60 min; matching on the hour would skip the
-# job when the 05:00 run lands at 06:xx. Dispatching on the schedule string runs
-# the right job no matter when GitHub actually fires it.
+# (the cron expression that fired) — NOT by wall-clock hour, because GitHub's
+# free scheduler often delays runs by 10–60 min.
 #
 # Required repo secret:  APP_BASE_URL   e.g. https://wildchance-system.onrender.com
 # Optional repo variable: USDJPY_ACCOUNT_SIZE
 #
-# Times are UTC. USD/JPY = 05:00 UTC = 08:00 East Africa Time (UTC+3).
+# All times UTC. Session setup digests fire at 05:00 / 09:00 / 17:00 / 21:00 UTC.
 
 on:
   schedule:
-    - cron: "0 5 * * *"         # USD/JPY daily mean-reversion scan (08:00 EAT)
+    - cron: "0 5 * * *"         # USD/JPY scan + "Before New York" setup digest
+    - cron: "0 9 * * *"         # "New York" setup digest
+    - cron: "0 17 * * *"        # "After open" setup digest
+    - cron: "0 21 * * *"        # "Asian open" setup digest
     - cron: "0 6 * * *"         # wildchance daily (retail + calendar + prices)
     - cron: "0 0,12,18 * * *"   # wildchance 6h (prices + recompute signals)
     - cron: "0 21 * * 5"        # wildchance weekly COT (Fri, after CFTC release)
-  workflow_dispatch:             # manual run = test both
+  workflow_dispatch:             # manual run = full test (forces a digest)
 
 jobs:
   scan:
@@ -37,19 +38,36 @@ jobs:
             echo "POST $BASE$1"
             code=$(curl -s -m 90 -o /tmp/body -w "%{http_code}" -X POST "$BASE$1") || true
             echo "  -> HTTP $code"
-            head -c 400 /tmp/body; echo
+            head -c 500 /tmp/body; echo
           }
 
           if [ "$MANUAL" = "true" ]; then
-            echo "Manual run — forcing a USD/JPY scan + 6h wildchance scrape"
+            echo "Manual run — usdjpy scan + refresh + forced session digest"
             post "/usdjpy/scan?account_size=$ACCT&notify=true"
             post "/wildchance/scrape?tier=6h"
+            post "/alerts/session?label=Manual%20test&force=true"
             exit 0
           fi
 
           echo "Triggered by schedule: '$SCHED'"
           case "$SCHED" in
-            "0 5 * * *")        post "/usdjpy/scan?account_size=$ACCT&notify=true" ;;
+            "0 5 * * *")
+              post "/usdjpy/scan?account_size=$ACCT&notify=true"
+              post "/wildchance/scrape?tier=6h"
+              post "/alerts/session?label=Before%20New%20York"
+              ;;
+            "0 9 * * *")
+              post "/wildchance/scrape?tier=6h"
+              post "/alerts/session?label=New%20York"
+              ;;
+            "0 17 * * *")
+              post "/wildchance/scrape?tier=6h"
+              post "/alerts/session?label=After%20open"
+              ;;
+            "0 21 * * *")
+              post "/wildchance/scrape?tier=6h"
+              post "/alerts/session?label=Asian%20open"
+              ;;
             "0 6 * * *")        post "/wildchance/scrape?tier=daily" ;;
             "0 0,12,18 * * *")  post "/wildchance/scrape?tier=6h" ;;
             "0 21 * * 5")       post "/wildchance/scrape?tier=weekly" ;;
