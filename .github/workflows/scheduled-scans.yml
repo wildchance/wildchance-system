@@ -1,18 +1,23 @@
 name: scheduled-scans
 
-# Free replacement for the in-process schedulers. Hourly cron fires the right
-# scan/scrape by time-of-day; a MANUAL run (workflow_dispatch) always fires a
-# test scan so you can verify end-to-end on demand.
+# Robust scheduling: each cron does ONE job, dispatched by github.event.schedule
+# (the cron expression that fired) — NOT by wall-clock hour. GitHub's free
+# scheduler often delays runs by 10–60 min; matching on the hour would skip the
+# job when the 05:00 run lands at 06:xx. Dispatching on the schedule string runs
+# the right job no matter when GitHub actually fires it.
 #
 # Required repo secret:  APP_BASE_URL   e.g. https://wildchance-system.onrender.com
-# Optional repo variable: USDJPY_ACCOUNT_SIZE  (defaults to 0 = no sizing)
+# Optional repo variable: USDJPY_ACCOUNT_SIZE
 #
-# Times are UTC. USD/JPY fires at 05:00 UTC = 08:00 East Africa Time (UTC+3).
+# Times are UTC. USD/JPY = 05:00 UTC = 08:00 East Africa Time (UTC+3).
 
 on:
   schedule:
-    - cron: "0 * * * *"      # every hour, on the hour (UTC)
-  workflow_dispatch:          # manual run from the Actions tab
+    - cron: "0 5 * * *"         # USD/JPY daily mean-reversion scan (08:00 EAT)
+    - cron: "0 6 * * *"         # wildchance daily (retail + calendar + prices)
+    - cron: "0 0,12,18 * * *"   # wildchance 6h (prices + recompute signals)
+    - cron: "0 21 * * 5"        # wildchance weekly COT (Fri, after CFTC release)
+  workflow_dispatch:             # manual run = test both
 
 jobs:
   scan:
@@ -22,11 +27,11 @@ jobs:
         env:
           BASE: ${{ secrets.APP_BASE_URL }}
           ACCT: ${{ vars.USDJPY_ACCOUNT_SIZE }}
+          SCHED: ${{ github.event.schedule }}
           MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
           if [ -z "$BASE" ]; then echo "::error::APP_BASE_URL secret not set"; exit 1; fi
           ACCT="${ACCT:-0}"
-          HOUR=$(date -u +%H); DOW=$(date -u +%u)   # DOW: 1=Mon .. 7=Sun
 
           post () {  # post <path>
             echo "POST $BASE$1"
@@ -36,22 +41,17 @@ jobs:
           }
 
           if [ "$MANUAL" = "true" ]; then
-            echo "Manual run — forcing a test USD/JPY scan + 6h wildchance scrape"
+            echo "Manual run — forcing a USD/JPY scan + 6h wildchance scrape"
             post "/usdjpy/scan?account_size=$ACCT&notify=true"
             post "/wildchance/scrape?tier=6h"
             exit 0
           fi
 
-          # Scheduled runs (UTC):
-          # USD/JPY daily mean-reversion scan at 05:00 UTC = 08:00 EAT.
-          if [ "$HOUR" = "05" ]; then
-            post "/usdjpy/scan?account_size=$ACCT&notify=true"
-          fi
-          # Wildchance confluence feed (weekly > daily > 6h).
-          if [ "$DOW" = "5" ] && [ "$HOUR" = "21" ]; then
-            post "/wildchance/scrape?tier=weekly"
-          elif [ "$HOUR" = "06" ]; then
-            post "/wildchance/scrape?tier=daily"
-          elif [ $((10#$HOUR % 6)) -eq 0 ]; then
-            post "/wildchance/scrape?tier=6h"
-          fi
+          echo "Triggered by schedule: '$SCHED'"
+          case "$SCHED" in
+            "0 5 * * *")        post "/usdjpy/scan?account_size=$ACCT&notify=true" ;;
+            "0 6 * * *")        post "/wildchance/scrape?tier=daily" ;;
+            "0 0,12,18 * * *")  post "/wildchance/scrape?tier=6h" ;;
+            "0 21 * * 5")       post "/wildchance/scrape?tier=weekly" ;;
+            *) echo "no action for schedule '$SCHED'" ;;
+          esac
