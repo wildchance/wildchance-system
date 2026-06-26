@@ -1,1 +1,1 @@
-# tendaji-system
+# wildchance-system
