@@ -20,6 +20,7 @@ from routes.portfolio import router as portfolio_router
 from routes.wildchance import router as wildchance_router
 from routes.alerts import router as alerts_router
 from routes.cbdr import router as cbdr_router
+from routes.pdarrays import router as pdarrays_router
 from services.usdjpy_scheduler import start_scanner
 from services.wildchance_scheduler import start_wildchance_scheduler
 
@@ -82,6 +83,7 @@ app.include_router(portfolio_router)
 app.include_router(wildchance_router)
 app.include_router(alerts_router)
 app.include_router(cbdr_router)
+app.include_router(pdarrays_router)
 
 if __name__ == "__main__":
     uvicorn.run(
