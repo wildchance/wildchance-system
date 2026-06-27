@@ -69,7 +69,7 @@ async def correlation(symbol: str, interval: str = Query("1h")):
 @router.get("/setups/intraweek")
 async def intraweek_setups(min_confidence: int = Query(70),
                            interval: str = Query("1h")):
-    """Confluence signals ranked by dollar confirmation, with COT-extreme flags."""
+    """Confluence signals ranked by dollar confirmation, COT extremes, and MiroFish bias."""
     dxy_closes, source = await fetch_dxy(interval)
     dxy_dir = dxy_direction(dxy_closes) if dxy_closes else "unknown"
 
@@ -92,12 +92,12 @@ async def intraweek_setups(min_confidence: int = Query(70),
         nets = [row.get("lev") for row in cot.get(code, [])] if code else []
         is_ext, side, rank = cot_extreme([n for n in nets if n is not None]) if nets else (False, "none", None)
 
-                mf = await mf_svc.score(pair)
+        mf = await mf_svc.score(pair)
         setups.append({
             "pair": pair,
             "verdict": verdict,
             "confidence": s.get("confidence"),
-            "dxy_confirmation": confirm,
+            "dxy_confirmation": confirm,        # confirmed | divergent | neutral
             "cot_extreme": is_ext,
             "cot_side": side,
             "cot_rank": rank,
@@ -105,6 +105,7 @@ async def intraweek_setups(min_confidence: int = Query(70),
             "mirofish_bias": mf.get("bias") if mf else None,
         })
 
+    # Confirmed + COT-extreme + MiroFish-aligned first, then by confidence.
     order = {"confirmed": 0, "neutral": 1, "divergent": 2}
 
     def _mf_rank(setup: dict) -> int:
@@ -119,12 +120,6 @@ async def intraweek_setups(min_confidence: int = Query(70),
     setups.sort(key=lambda x: (order.get(x["dxy_confirmation"], 1),
                                0 if x["cot_extreme"] else 1,
                                _mf_rank(x),
-                               -(x["confidence"] or 0)))
-
-    # Confirmed + COT-extreme first, then by confidence.
-    order = {"confirmed": 0, "neutral": 1, "divergent": 2}
-    setups.sort(key=lambda x: (order.get(x["dxy_confirmation"], 1),
-                               0 if x["cot_extreme"] else 1,
                                -(x["confidence"] or 0)))
     return {
         "dxy_source": source,
