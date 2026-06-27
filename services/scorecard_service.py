@@ -13,6 +13,7 @@ reflection loop can be run on the more conservative outcome series too.
 
 from __future__ import annotations
 
+import datetime as _dt
 from typing import List, Optional
 
 from sqlalchemy import select
@@ -98,6 +99,49 @@ async def monthly_digest_text(db: AsyncSession, month: Optional[str] = None) -> 
         f"Total: {card['total_r']:+.2f}R   ·   Profit factor: {pf_str}",
         f"Max drawdown: {card['max_drawdown_r']:.2f}R",
         f"Best / worst: {card['best_r']:+.2f}R / {card['worst_r']:+.2f}R",
+        "",
+        f"_{card['lesson']}_",
+    ]
+    return "\n".join(lines)
+
+
+async def window_report(db: AsyncSession, days: int = 7,
+                        stop_aware: bool = False) -> dict:
+    """Scorecard over the trailing `days` (by entry_date). For the weekly review."""
+    cutoff = (_dt.datetime.now(_dt.timezone.utc).date() - _dt.timedelta(days=days))
+    trades = await _closed_trades(db)
+    rows = [r for r in _rows(trades, stop_aware)
+            if r["entry_date"][:10] >= cutoff.isoformat()]
+    return {
+        "mode": "stop_aware" if stop_aware else "workbook_faithful",
+        "window_days": days,
+        "since": cutoff.isoformat(),
+        "closed_trades": len(rows),
+        "scorecard": build_scorecard([r["result_r"] for r in rows]).to_dict(),
+        "by_action": by_group(rows, "action"),
+    }
+
+
+async def window_digest_text(db: AsyncSession, days: int = 7,
+                             label: str = "Weekly") -> Optional[str]:
+    """Human-readable trailing-window review for Telegram, or None if empty."""
+    rep = await window_report(db, days=days)
+    card = rep["scorecard"]
+    if not card["n"]:
+        return None
+    icon = {"GREEN": "🟢", "AMBER": "🟡", "RED": "🔴",
+            "INCONCLUSIVE": "⚪"}.get(card["verdict"], "⚪")
+    pf = card["profit_factor"]
+    pf_str = "∞" if pf is None else f"{pf:.2f}"
+    wr = card["win_rate"]
+    wr_str = "—" if wr is None else f"{wr:.0%}"
+    lines = [
+        f"🗓️ *{label} Review — last {days}d* (since {rep['since']})",
+        "",
+        f"{icon} *{card['verdict']}*  ·  confidence ×{card['confidence_factor']}",
+        f"Trades: {card['n']}  (W {card['wins']} / L {card['losses']})  ·  win {wr_str}",
+        f"Expectancy: {card['expectancy']:+.2f}R   ·   Total: {card['total_r']:+.2f}R",
+        f"Profit factor: {pf_str}   ·   Max DD: {card['max_drawdown_r']:.2f}R",
         "",
         f"_{card['lesson']}_",
     ]
