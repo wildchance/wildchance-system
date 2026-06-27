@@ -18,7 +18,10 @@ on:
     - cron: "0 6 * * *"         # wildchance daily (retail + calendar + prices)
     - cron: "0 0,12,18 * * *"   # wildchance 6h (prices + recompute signals)
     - cron: "0 21 * * 5"        # wildchance weekly COT (Fri, after CFTC release)
-  workflow_dispatch:             # manual run = full test (forces a digest)
+    - cron: "0 8 1 * *"         # monthly performance scorecard (1st of month, 08:00 UTC)
+    - cron: "0 * * * *"         # hourly intraday breach scan (1h z-score)
+    - cron: "0 22 * * 0"        # weekly performance review (Sun 22:00 UTC)
+  workflow_dispatch:             # manual run = full test (forces every digest)
 
 jobs:
   scan:
@@ -42,10 +45,13 @@ jobs:
           }
 
           if [ "$MANUAL" = "true" ]; then
-            echo "Manual run — usdjpy scan + refresh + forced session digest"
+            echo "Manual run — usdjpy scan + refresh + forced digests"
             post "/usdjpy/scan?account_size=$ACCT&notify=true"
             post "/wildchance/scrape?tier=6h"
             post "/alerts/session?label=Manual%20test&force=true"
+            post "/intraday/scan?force=true"
+            post "/scorecard/digest?force=true"
+            post "/scorecard/weekly?force=true"
             exit 0
           fi
 
@@ -71,5 +77,8 @@ jobs:
             "0 6 * * *")        post "/wildchance/scrape?tier=daily" ;;
             "0 0,12,18 * * *")  post "/wildchance/scrape?tier=6h" ;;
             "0 21 * * 5")       post "/wildchance/scrape?tier=weekly" ;;
+            "0 8 1 * *")        post "/scorecard/digest" ;;
+            "0 * * * *")        post "/intraday/scan" ;;
+            "0 22 * * 0")       post "/scorecard/weekly" ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac
