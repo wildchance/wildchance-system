@@ -70,3 +70,24 @@ async def digest(month: str = Query(None, description="YYYY-MM; default = latest
             return {"sent": False, "reason": "no closed trades in window"}
     sent = await _send(text)
     return {"sent": sent, "month": month}
+
+
+@router.get("/weekly")
+async def weekly(days: int = Query(7), stop_aware: bool = Query(False)):
+    async with AsyncSessionLocal() as db:
+        return await svc.window_report(db, days=days, stop_aware=stop_aware)
+
+
+@router.post("/weekly")
+async def weekly_digest(days: int = Query(7),
+                        force: bool = Query(False, description="send even if nothing closed")):
+    """Trailing-window performance review (called by the weekly cron, Sunday)."""
+    async with AsyncSessionLocal() as db:
+        text = await svc.window_digest_text(db, days=days, label="Weekly")
+    if not text:
+        if force:
+            text = f"🗓️ *Weekly Review*\n\n_No trades closed in the last {days} days._"
+        else:
+            return {"sent": False, "reason": "no closed trades in window"}
+    sent = await _send(text)
+    return {"sent": sent, "days": days}
