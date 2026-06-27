@@ -19,6 +19,7 @@ from correlation.engine import (
 )
 from services.dxy_service import fetch_dxy, instrument_closes
 from services.wildchance_service import get_latest_feed
+import services.mirofish_service as mf_svc
 
 router = APIRouter(tags=["dxy"])
 
