@@ -92,15 +92,34 @@ async def intraweek_setups(min_confidence: int = Query(70),
         nets = [row.get("lev") for row in cot.get(code, [])] if code else []
         is_ext, side, rank = cot_extreme([n for n in nets if n is not None]) if nets else (False, "none", None)
 
+                mf = await mf_svc.score(pair)
         setups.append({
             "pair": pair,
             "verdict": verdict,
             "confidence": s.get("confidence"),
-            "dxy_confirmation": confirm,        # confirmed | divergent | neutral
+            "dxy_confirmation": confirm,
             "cot_extreme": is_ext,
             "cot_side": side,
             "cot_rank": rank,
+            "mirofish_score": mf.get("score") if mf else None,
+            "mirofish_bias": mf.get("bias") if mf else None,
         })
+
+    order = {"confirmed": 0, "neutral": 1, "divergent": 2}
+
+    def _mf_rank(setup: dict) -> int:
+        bias = setup.get("mirofish_bias")
+        verdict = setup.get("verdict", "")
+        if bias is None:
+            return 1
+        aligned = (bias == "bullish" and verdict == "LONG") or \
+                  (bias == "bearish" and verdict == "SHORT")
+        return 0 if aligned else 2
+
+    setups.sort(key=lambda x: (order.get(x["dxy_confirmation"], 1),
+                               0 if x["cot_extreme"] else 1,
+                               _mf_rank(x),
+                               -(x["confidence"] or 0)))
 
     # Confirmed + COT-extreme first, then by confidence.
     order = {"confirmed": 0, "neutral": 1, "divergent": 2}
