@@ -1,92 +1,95 @@
-"""CBDR — Central Bank Dealers Range (ICT) confluence engine.
+"""Reference-candle range model — continuation vs reversal, pure & deterministic.
 
-Pure, deterministic, stdlib-only so it unit-tests without a data feed.
+Some intraday models anchor off specific hourly candles. Here the anchors are the
+**01:00 UTC** and **13:00 UTC** 1-hour candles (London-prep and NY-prep hours).
+Each candle's *body* (open→close) is a reference range; where price goes relative
+to that body classifies the move:
 
-Definition (per the ICT methodology):
-  • The CBDR box = the highest high and lowest low inside the 2:00 PM–8:00 PM
-    New York time window (DST-aware; the data layer supplies the right bars).
-  • One "standard deviation" = the box range (high − low).
-  • Projection levels are measured OUTWARD from the box edges by whole multiples
-    of the range:  +nSD = high + n·range ,  −nSD = low − n·range.
-  • Read for the day's high/low: when price trades in the upper half of the box
-    the lower deviations tend to act as the floor (low of day); in the lower
-    half the upper deviations tend to cap it (high of day).
+  • break beyond the body **in the candle's own direction**  → CONTINUATION
+  • break beyond the body **against** the candle's direction → REVERSAL
+  • still inside the body                                    → INSIDE (no signal)
 
-Conventions here are explicit constants so they are easy to adjust if your
-flavour of CBDR differs.
+A bullish reference candle (close ≥ open) broken to the upside is a continuation;
+broken to the downside it is a reversal. A bearish candle is the mirror.
+
+The combined range spans both candles' open/close levels — a wider reference used
+the same way. All functions are stdlib-only so they unit-test without a feed.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from typing import Dict, List, Sequence, Tuple
-
-# CBDR window in NEW YORK local time (the data layer must convert).
-CBDR_START_HOUR = 14   # 2:00 PM
-CBDR_END_HOUR = 20     # 8:00 PM (exclusive — hourly bars 14,15,16,17,18,19)
-DEFAULT_DEVIATIONS: Tuple[int, ...] = (1, 2, 3)
+from typing import List, Optional, Sequence, Tuple
 
 
-def cbdr_box(highs: Sequence[float], lows: Sequence[float]) -> Tuple[float, float]:
-    """Box high/low from the window's bar highs and lows."""
-    if not highs or not lows:
-        raise ValueError("need at least one bar to form a CBDR box")
-    return max(highs), min(lows)
+def candle_body(open_: float, close: float) -> Tuple[float, float]:
+    """(body_low, body_high) of a candle's open→close body."""
+    return (min(open_, close), max(open_, close))
 
 
-@dataclass
-class CBDR:
-    high: float
-    low: float
-    mid: float
-    range: float
-    levels: Dict[str, float]   # "+1SD" / "-1SD" ... -> price
-
-    def to_dict(self) -> dict:
-        return asdict(self)
+def is_bullish(open_: float, close: float) -> bool:
+    return close >= open_
 
 
-def build_cbdr(high: float, low: float,
-               deviations: Sequence[int] = DEFAULT_DEVIATIONS) -> CBDR:
-    """Box + standard-deviation projection levels."""
-    if high < low:
-        raise ValueError("high must be >= low")
-    rng = high - low
-    mid = (high + low) / 2.0
-    levels: Dict[str, float] = {}
-    for n in deviations:
-        levels[f"+{n}SD"] = high + n * rng
-        levels[f"-{n}SD"] = low - n * rng
-    return CBDR(high=high, low=low, mid=mid, range=rng, levels=levels)
+def classify(open_: float, close: float, price: float) -> dict:
+    """Classify `price` relative to one reference candle's body."""
+    lo, hi = candle_body(open_, close)
+    bullish = is_bullish(open_, close)
+    if lo <= price <= hi:
+        state, break_dir = "inside", "none"
+    elif price > hi:
+        state = "continuation" if bullish else "reversal"
+        break_dir = "up"
+    else:  # price < lo
+        state = "continuation" if not bullish else "reversal"
+        break_dir = "down"
+    return {
+        "candle_dir": "bullish" if bullish else "bearish",
+        "body_low": lo,
+        "body_high": hi,
+        "price": price,
+        "state": state,            # continuation | reversal | inside
+        "break_dir": break_dir,    # up | down | none
+    }
 
 
-def read_bias(price: float, box: CBDR) -> dict:
-    """Where price sits relative to the box, and what it implies for the day.
+def combined_range(candles: Sequence[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+    """(low, high) spanning the open/close levels of every (open, close) given."""
+    pts: List[float] = []
+    for o, c in candles:
+        pts.extend((o, c))
+    if not pts:
+        return None
+    return (min(pts), max(pts))
 
-    Returns the directional read plus the most likely day-extreme level.
+
+def analyze(ref_0100: Optional[dict], ref_1300: Optional[dict],
+            price: float) -> dict:
+    """Combine the two anchor candles into one read.
+
+    ref_* are {"open","close"} dicts (extra keys ignored) or None. Returns a
+    per-candle classification plus a combined-range classification.
     """
-    if price > box.high:
-        state = "breakout_up"
-        note = "above the range — upper SDs are upside targets"
-        key_level = box.levels.get("+1SD")
-    elif price < box.low:
-        state = "breakout_down"
-        note = "below the range — lower SDs are downside targets"
-        key_level = box.levels.get("-1SD")
-    elif price >= box.mid:
-        state = "bullish_half"
-        note = "upper half — lower SDs likely act as the floor (low of day)"
-        key_level = box.levels.get("-1SD")
+    out: dict = {"price": price, "anchors": {}}
+    bodies: List[Tuple[float, float]] = []
+    for name, ref in (("0100", ref_0100), ("1300", ref_1300)):
+        if ref is None:
+            out["anchors"][name] = None
+            continue
+        o, c = float(ref["open"]), float(ref["close"])
+        out["anchors"][name] = classify(o, c, price)
+        bodies.append((o, c))
+
+    rng = combined_range(bodies)
+    if rng:
+        lo, hi = rng
+        if lo <= price <= hi:
+            cstate, cdir = "inside", "none"
+        elif price > hi:
+            cstate, cdir = "break_up", "up"
+        else:
+            cstate, cdir = "break_down", "down"
+        out["combined_range"] = {"low": lo, "high": hi,
+                                 "state": cstate, "break_dir": cdir}
     else:
-        state = "bearish_half"
-        note = "lower half — upper SDs likely cap it (high of day)"
-        key_level = box.levels.get("+1SD")
-    return {"price": price, "state": state, "note": note, "key_level": key_level}
-
-
-def nearest_levels(price: float, box: CBDR, n: int = 2) -> List[dict]:
-    """The n projection/box levels closest to a price (for 'price near a level'
-    confluence)."""
-    pts = {"high": box.high, "low": box.low, "mid": box.mid, **box.levels}
-    ranked = sorted(pts.items(), key=lambda kv: abs(kv[1] - price))
-    return [{"level": k, "price": v, "distance": abs(v - price)} for k, v in ranked[:n]]
+        out["combined_range"] = None
+    return out
