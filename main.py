@@ -24,6 +24,7 @@ from routes.pdarrays import router as pdarrays_router
 from routes.instruments import router as instruments_router
 from routes.correlation import router as correlation_router
 from routes.mirofish import router as mirofish_router
+from routes.scorecard import router as scorecard_router
 from services.usdjpy_scheduler import start_scanner
 from services.wildchance_scheduler import start_wildchance_scheduler
 
@@ -89,6 +90,7 @@ app.include_router(cbdr_router)
 app.include_router(pdarrays_router)
 app.include_router(instruments_router)
 app.include_router(mirofish_router)
+app.include_router(scorecard_router)
 app.include_router(correlation_router)
 
 if __name__ == "__main__":
