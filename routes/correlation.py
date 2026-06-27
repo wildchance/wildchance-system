@@ -19,6 +19,8 @@ from correlation.engine import (
 )
 from services.dxy_service import fetch_dxy, instrument_closes
 from services.wildchance_service import get_latest_feed
+from cot.freshness import freshness as cot_freshness
+import datetime as _dt
 import services.mirofish_service as mf_svc
 
 router = APIRouter(tags=["dxy"])
@@ -77,6 +79,11 @@ async def intraweek_setups(min_confidence: int = Query(70),
     signals = (feed or {}).get("signals", [])
     cot = (feed or {}).get("cot", {})
 
+    # How old is the COT data? CFTC prints are >=3 days stale on release; as the
+    # week ages a COT extreme deserves less weight. fresh["stale"] gates the
+    # ranking boost; fresh["discount"] is surfaced for callers to scale further.
+    fresh = cot_freshness(_dt.datetime.now(_dt.timezone.utc).date())
+
     setups = []
     for s in signals:
         verdict = s.get("verdict")
@@ -117,14 +124,18 @@ async def intraweek_setups(min_confidence: int = Query(70),
                   (bias == "bearish" and verdict == "SHORT")
         return 0 if aligned else 2
 
+    # A COT extreme only earns its ranking boost while the data is fresh; once
+    # stale it stops promoting the setup (but is still reported).
+    cot_boost_live = not fresh["stale"]
     setups.sort(key=lambda x: (order.get(x["dxy_confirmation"], 1),
-                               0 if x["cot_extreme"] else 1,
+                               0 if (x["cot_extreme"] and cot_boost_live) else 1,
                                _mf_rank(x),
                                -(x["confidence"] or 0)))
     return {
         "dxy_source": source,
         "dxy_direction": dxy_dir,
         "min_confidence": min_confidence,
+        "cot_freshness": fresh,        # as_of, age_days, stale, discount
         "count": len(setups),
         "setups": setups,
     }
