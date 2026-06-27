@@ -21,6 +21,9 @@ on:
     - cron: "0 8 1 * *"         # monthly performance scorecard (1st of month, 08:00 UTC)
     - cron: "0 * * * *"         # hourly intraday breach scan (1h z-score)
     - cron: "0 22 * * 0"        # weekly performance review (Sun 22:00 UTC)
+    - cron: "0 3 * * *"         # pre-London CBDR box + SD levels (after 02:45 UTC close)
+    - cron: "5 2 * * *"         # candle-range read after the 01:00 UTC candle closes
+    - cron: "5 14 * * *"        # candle-range read after the 13:00 UTC candle closes
   workflow_dispatch:             # manual run = full test (forces every digest)
 
 jobs:
@@ -52,6 +55,8 @@ jobs:
             post "/intraday/scan?force=true"
             post "/scorecard/digest?force=true"
             post "/scorecard/weekly?force=true"
+            post "/cbdr/alert/USD/JPY?window=prelondon"
+            post "/candlerange/scan?force=true"
             exit 0
           fi
 
@@ -80,5 +85,14 @@ jobs:
             "0 8 1 * *")        post "/scorecard/digest" ;;
             "0 * * * *")        post "/intraday/scan" ;;
             "0 22 * * 0")       post "/scorecard/weekly" ;;
+            "0 3 * * *")
+              # Pre-London CBDR box + SD levels for the key set
+              post "/cbdr/alert/USD/JPY?window=prelondon"
+              post "/cbdr/alert/EUR/USD?window=prelondon"
+              post "/cbdr/alert/GBP/USD?window=prelondon"
+              post "/cbdr/alert/XAU/USD?window=prelondon"
+              ;;
+            "5 2 * * *")        post "/candlerange/scan" ;;
+            "5 14 * * *")       post "/candlerange/scan" ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac
