@@ -7,4 +7,5 @@ httpx
 redis
 aioredis
 polygon-api-client
-# Add your existing packages below if not already present
+requests                    # ← Add this line
+# your other packages...
