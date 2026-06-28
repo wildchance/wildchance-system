@@ -24,6 +24,7 @@ on:
     - cron: "0 3 * * *"         # pre-London CBDR box + SD levels (after 02:45 UTC close)
     - cron: "5 2 * * *"         # candle-range read after the 01:00 UTC candle closes
     - cron: "5 14 * * *"        # candle-range read after the 13:00 UTC candle closes
+    - cron: "0 7 1 1,4,7,10 *"  # yearly Quarterly-Theory phase (start of each quarter)
   workflow_dispatch:             # manual run = full test (forces every digest)
 
 jobs:
@@ -57,6 +58,7 @@ jobs:
             post "/scorecard/weekly?force=true"
             post "/cbdr/alert/USD/JPY?window=prelondon"
             post "/candlerange/scan?force=true"
+            post "/quarterly/alert/USD/JPY"
             exit 0
           fi
 
@@ -94,5 +96,12 @@ jobs:
               ;;
             "5 2 * * *")        post "/candlerange/scan" ;;
             "5 14 * * *")       post "/candlerange/scan" ;;
+            "0 7 1 1,4,7,10 *")
+              # Yearly Quarterly-Theory phase + box for the key set
+              post "/quarterly/alert/USD/JPY"
+              post "/quarterly/alert/EUR/USD"
+              post "/quarterly/alert/XAU/USD"
+              post "/quarterly/alert/NAS100"
+              ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac
