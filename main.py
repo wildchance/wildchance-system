@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from decouple import config
 import uvicorn
+import asyncio
 
 from core.signals import router as signals_router
 from core.trade import router as trade_router
@@ -28,8 +29,12 @@ from routes.scorecard import router as scorecard_router
 from routes.intraday import router as intraday_router
 from routes.candlerange import router as candlerange_router
 from routes.quarterly import router as quarterly_router
+
+# Real-time streaming
+from services.polygon_stream import polygon_stream
 from services.usdjpy_scheduler import start_scanner
 from services.wildchance_scheduler import start_wildchance_scheduler
+
 
 app = FastAPI(
     title="Wildchance Trading Bot API",
@@ -37,11 +42,7 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Configurable CORS. Set ALLOWED_ORIGINS to a comma-separated list of your real
-# dashboard origins (e.g. "https://app.example.com,https://example.com").
-# Credentials are only enabled when origins are explicitly listed — a wildcard
-# "*" with credentials is rejected by browsers and unsafe, so we disable
-# credentials in that case.
+# CORS Configuration
 _origins = config("ALLOWED_ORIGINS", default="*")
 ALLOWED_ORIGINS = [o.strip() for o in _origins.split(",") if o.strip()]
 _allow_credentials = ALLOWED_ORIGINS != ["*"]
@@ -56,26 +57,36 @@ app.add_middleware(
 
 register_bot(app)
 
+
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the database and launch the background schedulers on startup"""
+    """Initialize the database and launch the background schedulers + real-time stream"""
     await init_db()
-    start_scanner()                 # daily USD/JPY mean-reversion scan
-    start_wildchance_scheduler()    # 6h/daily/weekly confluence feed scrape
+    
+    # Existing schedulers
+    start_scanner()                    # daily USD/JPY mean-reversion scan
+    start_wildchance_scheduler()       # wildchance 6h/daily/weekly confluence
+
+    # Start real-time Polygon.io WebSocket + Redis cache
+    asyncio.create_task(polygon_stream.start())
+
 
 @app.get("/")
 async def home():
     return {
         "message": "Wildchance API is live 🚀",
         "status": "Server running",
-        "bot": "active"
+        "real_time": "Polygon.io + Redis active"
     }
+
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
 
+
+# Include all routers
 app.include_router(alert_webhook)
 app.include_router(signals_router)
 app.include_router(trade_router)
@@ -99,10 +110,11 @@ app.include_router(candlerange_router)
 app.include_router(quarterly_router)
 app.include_router(correlation_router)
 
+
 if __name__ == "__main__":
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=8000,
-        reload=True  # Enable auto-reload in development
+        reload=True
     )
