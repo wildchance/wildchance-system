@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: wildchance-system-api
+    runtime: docker
+    plan: free
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: wildchance-db
+          property: connectionString
+      - key: BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: USE_TWELVEDATA
+        value: "true"
+      - key: TWELVEDATA_API_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        value: "*"
+      - key: USDJPY_SCANNER_ENABLED
+        value: "false"
+    # Optional: health check
+    healthCheckPath: /health
+
+databases:
+  - name: wildchance-db
+    databaseName: wildchance_db
+    user: wildchance_user
+    plan: free
