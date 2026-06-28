@@ -1,9 +1,10 @@
 fastapi
-uvicorn
-requests
-httpx
-python-telegram-bot==20.3
+uvicorn[standard]
 python-decouple
 sqlalchemy
 asyncpg
-psycopg2-binary
+httpx
+redis
+aioredis
+polygon-api-client
+# Add your existing packages below if not already present
