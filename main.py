@@ -31,6 +31,7 @@ from routes.candlerange import router as candlerange_router
 from routes.quarterly import router as quarterly_router
 from routes.benner import router as benner_router
 from routes.propfirm import router as propfirm_router
+from routes.setups import router as setups_router
 
 # Real-time streaming
 from services.polygon_stream import polygon_stream
@@ -112,6 +113,7 @@ app.include_router(candlerange_router)
 app.include_router(quarterly_router)
 app.include_router(benner_router)
 app.include_router(propfirm_router)
+app.include_router(setups_router)
 app.include_router(correlation_router)
 
 
