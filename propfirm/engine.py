@@ -38,11 +38,13 @@ TRADE_TARGET = 100             # trades over which targets "lock in gradually"
 
 # Target tiers. LIMITS_PCT above is the base "6" tier (6% monthly min target).
 # Higher tiers scale the whole ladder — targets AND loss/drawdown caps rise
-# together, because chasing 8%/12% costs more risk. We default to the LEAST
-# aggressive tier ("6") as accounts scale, and only step up on request.
+# together, because chasing 8/10/12% costs more risk. We default to the LEAST
+# aggressive tier ("6") as accounts scale, and only step up on request. 10 is the
+# common prop "Phase 1" profit target (e.g. FTMO/MFF 10%).
 TARGET_TIERS = {
     "6":  {"scale": 1.0,      "monthly_target_min": 0.06, "label": "conservative (base start pack)"},
     "8":  {"scale": 8 / 6,    "monthly_target_min": 0.08, "label": "moderate"},
+    "10": {"scale": 10 / 6,   "monthly_target_min": 0.10, "label": "prop phase-1 (10% target)"},
     "12": {"scale": 12 / 6,   "monthly_target_min": 0.12, "label": "aggressive"},
 }
 DEFAULT_TIER = "6"
