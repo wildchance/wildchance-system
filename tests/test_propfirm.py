@@ -28,6 +28,28 @@ def test_max_lot_matches_sheet():
     assert max_lot(10000) == 0.08
 
 
+def test_target_tiers_scale_up():
+    base = risk_limits(2500, "6")
+    mod = risk_limits(2500, "8")
+    agg = risk_limits(2500, "12")
+    assert base["tier"] == "6"
+    assert base["monthly_target_min"] == pytest.approx(150.0)   # 6%
+    assert mod["monthly_target_min"] == pytest.approx(200.0)    # 8%
+    assert agg["monthly_target_min"] == pytest.approx(300.0)    # 12%
+    assert agg["max_drawdown_usd"] > base["max_drawdown_usd"]
+
+
+def test_unknown_tier_falls_back_to_base():
+    assert risk_limits(2500, "99")["tier"] == "6"
+
+
+def test_gate_respects_higher_tier_budget():
+    blocked = evaluate_trade(2500, 9.0, day_pnl_usd=0, open_risk_usd=0, tier="6")
+    allowed = evaluate_trade(2500, 9.0, day_pnl_usd=0, open_risk_usd=0, tier="12")
+    assert blocked["allow"] is False        # 9 > 7.5 (tier 6 cap)
+    assert allowed["allow"] is True         # 9 < 15 (tier 12 cap)
+
+
 # --- the risk gate -----------------------------------------------------------
 
 def test_gate_allows_within_budget():
