@@ -23,6 +23,7 @@ from handlers.profit_handler import handle_profit
 from handlers.wins_handler import handle_wins
 from handlers.summary_handler import handle_summary
 from handlers.admin_handler import handle_admin
+from handlers.create_signal_handler import handle_create_signal
 import os
 
 router = APIRouter()
@@ -44,6 +45,7 @@ if BOT_TOKEN:
     application.add_handler(CommandHandler("wins", handle_wins))
     application.add_handler(CommandHandler("summary", handle_summary))
     application.add_handler(CommandHandler("admin", handle_admin))
+    application.add_handler(CommandHandler("create_signal", handle_create_signal))
 
     async def echo(update, context: ContextTypes.DEFAULT_TYPE):
         if update.message and update.message.text:
