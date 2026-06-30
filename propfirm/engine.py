@@ -36,10 +36,30 @@ LIMITS_PCT = {
 LOT_DIVISOR = 125_000          # lot = balance / 125,000  (matches the sheet)
 TRADE_TARGET = 100             # trades over which targets "lock in gradually"
 
+# Target tiers. LIMITS_PCT above is the base "6" tier (6% monthly min target).
+# Higher tiers scale the whole ladder — targets AND loss/drawdown caps rise
+# together, because chasing 8%/12% costs more risk. We default to the LEAST
+# aggressive tier ("6") as accounts scale, and only step up on request.
+TARGET_TIERS = {
+    "6":  {"scale": 1.0,      "monthly_target_min": 0.06, "label": "conservative (base start pack)"},
+    "8":  {"scale": 8 / 6,    "monthly_target_min": 0.08, "label": "moderate"},
+    "12": {"scale": 12 / 6,   "monthly_target_min": 0.12, "label": "aggressive"},
+}
+DEFAULT_TIER = "6"
 
-def risk_limits(balance: float) -> Dict[str, float]:
-    """All caps/targets in USD for a given account balance."""
-    return {k: round(balance * pct, 4) for k, pct in LIMITS_PCT.items()}
+
+def risk_limits(balance: float, tier: str = DEFAULT_TIER) -> Dict[str, float]:
+    """All caps/targets in USD for a balance at a target tier (6 / 8 / 12).
+
+    The base ladder is the cheat sheet's 6% tier; 8 and 12 scale every figure by
+    the same factor so targets and drawdown move together. Unknown tier → base.
+    """
+    scale = TARGET_TIERS.get(str(tier), TARGET_TIERS[DEFAULT_TIER])["scale"]
+    out = {k: round(balance * pct * scale, 4) for k, pct in LIMITS_PCT.items()}
+    out["tier"] = str(tier) if str(tier) in TARGET_TIERS else DEFAULT_TIER
+    out["tier_label"] = TARGET_TIERS[out["tier"]]["label"]
+    out["max_drawdown_usd"] = out["monthly_loss_cap"]   # worst-case monthly cap
+    return out
 
 
 def max_lot(balance: float) -> float:
@@ -47,13 +67,14 @@ def max_lot(balance: float) -> float:
 
 
 def evaluate_trade(balance: float, proposed_risk_usd: float,
-                   day_pnl_usd: float = 0.0, open_risk_usd: float = 0.0) -> dict:
+                   day_pnl_usd: float = 0.0, open_risk_usd: float = 0.0,
+                   tier: str = DEFAULT_TIER) -> dict:
     """The risk gate. Returns {allow, reason, ...} for a proposed new trade.
 
     Blocks when the daily loss cap is already hit, when adding the trade would
     breach the cap, or when the daily MAX target is reached (lock in the day).
     """
-    lim = risk_limits(balance)
+    lim = risk_limits(balance, tier)
     loss_cap = lim["daily_loss_cap"]
     target_max = lim["daily_target_max"]
 
@@ -73,6 +94,7 @@ def evaluate_trade(balance: float, proposed_risk_usd: float,
                 "loss_cap": loss_cap, "remaining_budget": remaining}
 
     return {"allow": True, "reason": "within limits",
+            "tier": lim["tier"],
             "remaining_budget": round(loss_cap - projected_risk, 4),
             "max_lot": max_lot(balance)}
 
@@ -95,14 +117,14 @@ def active_sessions(now: datetime, keys: Optional[List[str]] = None) -> List[str
 
 
 def grid_state(now: datetime, balance: float,
-               open_trades: List[dict]) -> dict:
+               open_trades: List[dict], tier: str = DEFAULT_TIER) -> dict:
     """Session grid: group open trades by session, report on-log/off-log + budget.
 
     open_trades: [{"id", "session", "risk_usd", "symbol"}]. A trade whose session
     is no longer active is flagged to OFF-LOG (manage/close); active ones stay
     ON-LOG. Remaining risk budget = daily loss cap minus total open risk.
     """
-    lim = risk_limits(balance)
+    lim = risk_limits(balance, tier)
     loss_cap = lim["daily_loss_cap"]
     active = active_sessions(now)
 
@@ -130,7 +152,8 @@ def grid_state(now: datetime, balance: float,
     }
 
 
-def lockin(closed_trades: int, day_pnl_usd: float, balance: float) -> dict:
+def lockin(closed_trades: int, day_pnl_usd: float, balance: float,
+           tier: str = DEFAULT_TIER) -> dict:
     """Graduated lock-in toward the 100-trade goal.
 
     progress climbs to 1.0 over TRADE_TARGET trades. Once the daily MAX target is
@@ -138,7 +161,7 @@ def lockin(closed_trades: int, day_pnl_usd: float, balance: float) -> dict:
     eases down as the sample matures so size is largest while the edge is unproven
     and tapers as targets bank.
     """
-    lim = risk_limits(balance)
+    lim = risk_limits(balance, tier)
     progress = min(1.0, max(0, closed_trades) / TRADE_TARGET)
     if day_pnl_usd >= lim["daily_target_max"]:
         scale, note = 0.0, "daily target banked — locked, stop opening"
