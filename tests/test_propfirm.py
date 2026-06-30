@@ -37,6 +37,8 @@ def test_target_tiers_scale_up():
     assert mod["monthly_target_min"] == pytest.approx(200.0)    # 8%
     assert agg["monthly_target_min"] == pytest.approx(300.0)    # 12%
     assert agg["max_drawdown_usd"] > base["max_drawdown_usd"]
+    # 10% prop phase-1 tier
+    assert risk_limits(2500, "10")["monthly_target_min"] == pytest.approx(250.0)
 
 
 def test_unknown_tier_falls_back_to_base():
