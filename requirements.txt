@@ -3,9 +3,9 @@ uvicorn[standard]
 python-decouple
 sqlalchemy
 asyncpg
+psycopg2-binary
 httpx
-redis
-aioredis
+requests
+python-telegram-bot==20.3
+redis>=5
 polygon-api-client
-requests                    # ← Add this line
-# your other packages...
