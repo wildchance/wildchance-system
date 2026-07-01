@@ -20,6 +20,7 @@ from services.cbdr_service import fetch_cbdr_window
 from setups.engine import build_setup
 from utils.price_fetcher import get_forex_price
 from propfirm.engine import max_lot, risk_limits
+from services import flow_service
 
 router = APIRouter(prefix="/setups", tags=["setups"])
 
@@ -50,6 +51,10 @@ async def setup(symbol: str,
     plan = build_setup(box, side, price, mode)
     plan.update({"symbol": symbol, "window": win["window"],
                  "window_label": win["label"], "session": win["session"]})
+
+    # Order-flow confluence (dormant/neutral until an L2 book feed populates Redis).
+    fp = await flow_service.pressure(symbol)
+    plan["flow_confluence"] = flow_service.confluence(fp, side)
 
     if balance:
         lim = risk_limits(balance, tier)
