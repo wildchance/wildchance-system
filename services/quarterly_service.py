@@ -5,6 +5,7 @@ from typing import List, Optional
 import httpx
 from decouple import config
 from quarterly.engine import yearly_read
+from services import commodities_service as com
 
 TWELVEDATA_KEY = config("TWELVEDATA_API_KEY", default=None) or config("TWELVEDATA_KEY", default=None)
 _OUTPUTSIZE = 1600
@@ -35,14 +36,23 @@ async def _daily_rows(symbol: str) -> Optional[List[dict]]:
 
 
 async def build_yearly(symbol: str, price: Optional[float] = None) -> Optional[dict]:
-    rows = await _daily_rows(symbol)
+    # Commodities (gold / oil / silver / copper / natgas) get their yearly Q1
+    # boxes from FRED/EIA daily closes; everything else from TwelveData.
+    ckey = com.resolve_commodity(symbol)
+    if ckey:
+        rows = await com.daily_closes(ckey, _OUTPUTSIZE)
+        source = f"commodity:{ckey}"
+    else:
+        rows = await _daily_rows(symbol)
+        source = "twelvedata"
     if not rows:
         return None
     if price is None:
-        price = rows[0]["close"]
+        price = rows[-1]["close"] if source.startswith("commodity") else rows[0]["close"]
     today = _dt.datetime.now(_dt.timezone.utc).date().isoformat()
     out = yearly_read(rows, price, today)
     out["symbol"] = symbol
+    out["source"] = source
     return out
 
 
