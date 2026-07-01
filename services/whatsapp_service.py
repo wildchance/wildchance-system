@@ -58,3 +58,9 @@ async def send_text(message: str, to: Optional[str] = None) -> bool:
 
     print("[whatsapp] not configured — skipping send")
     return False
+
+
+async def send_whatsapp_message(message: str, to: Optional[str] = None) -> bool:
+    """Backward-compatible name used by core/signals.py (await'ed). Delegates to
+    send_text so both the old and new call sites work."""
+    return await send_text(message, to)
