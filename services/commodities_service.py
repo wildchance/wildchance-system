@@ -33,6 +33,38 @@ COMMODITIES = {
     "silver": {"fred": "SLVPRUSD", "unit": "USD/oz"},
 }
 
+# Trading symbols → commodity key, so /quarterly/XAU/USD, /quarterly/USOIL etc.
+# route to the FRED/EIA daily series instead of TwelveData.
+_ALIASES = {
+    "GOLD": "gold", "XAU": "gold", "XAUUSD": "gold",
+    "WTI": "wti", "USOIL": "wti", "OIL": "wti", "CL": "wti", "CRUDE": "wti",
+    "BRENT": "brent", "UKOIL": "brent",
+    "SILVER": "silver", "XAG": "silver", "XAGUSD": "silver",
+    "COPPER": "copper", "XCU": "copper",
+    "NATGAS": "natgas", "NG": "natgas", "NATURALGAS": "natgas",
+}
+
+
+def resolve_commodity(symbol: str) -> Optional[str]:
+    """Map a trading symbol to a commodity key, or None if not a commodity.
+
+    Accepts 'gold', 'XAU/USD', 'xauusd', 'USOIL', 'WTI', etc.
+    """
+    if not symbol:
+        return None
+    s = symbol.strip().upper().replace("/", "").replace(" ", "")
+    if s.lower() in COMMODITIES:
+        return s.lower()
+    return _ALIASES.get(s)
+
+
+async def daily_closes(key: str, n: int = 1600) -> Optional[List[dict]]:
+    """Commodity daily history as [{date, close}] (for the quarterly engine)."""
+    rows = await series(key, n)
+    if not rows:
+        return None
+    return [{"date": r["date"], "close": r["value"]} for r in rows]
+
 
 def parse_fred(observations: List[dict]) -> List[dict]:
     """FRED observations -> [{date, value}] oldest-first, skipping '.' gaps."""
