@@ -25,6 +25,7 @@ on:
     - cron: "5 2 * * *"         # candle-range read after the 01:00 UTC candle closes
     - cron: "5 14 * * *"        # candle-range read after the 13:00 UTC candle closes
     - cron: "0 7 1 1,4,7,10 *"  # yearly Quarterly-Theory phase (start of each quarter)
+    - cron: "30 8 * * 1"        # Benner cycle phase (Mondays 08:30 UTC)
   workflow_dispatch:             # manual run = full test (forces every digest)
 
 jobs:
@@ -59,6 +60,8 @@ jobs:
             post "/cbdr/alert/USD/JPY?window=prelondon"
             post "/candlerange/scan?force=true"
             post "/quarterly/alert/USD/JPY"
+            post "/autoalert/confluence?min_confidence=85"
+            post "/benner/alert"
             exit 0
           fi
 
@@ -82,7 +85,10 @@ jobs:
               post "/alerts/session?label=Asian%20open"
               ;;
             "0 6 * * *")        post "/wildchance/scrape?tier=daily" ;;
-            "0 0,12,18 * * *")  post "/wildchance/scrape?tier=6h" ;;
+            "0 0,12,18 * * *")
+              post "/wildchance/scrape?tier=6h"
+              post "/autoalert/confluence?min_confidence=85"
+              ;;
             "0 21 * * 5")       post "/wildchance/scrape?tier=weekly" ;;
             "0 8 1 * *")        post "/scorecard/digest" ;;
             "0 * * * *")        post "/intraday/scan" ;;
@@ -103,5 +109,6 @@ jobs:
               post "/quarterly/alert/XAU/USD"
               post "/quarterly/alert/NAS100"
               ;;
+            "30 8 * * 1")       post "/benner/alert" ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac
