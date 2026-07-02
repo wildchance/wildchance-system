@@ -43,6 +43,40 @@ async def _twelvedata_daily_close() -> Optional[Tuple[date, float]]:
         return None
 
 
+async def _twelvedata_daily_series(n: int = 40) -> list[Tuple[date, float]]:
+    """Last ``n`` completed daily closes from TwelveData, ascending by date."""
+    if not TWELVEDATA_KEY:
+        return []
+    url = "https://api.twelvedata.com/time_series"
+    params = {
+        "symbol": "USD/JPY",
+        "interval": "1day",
+        "outputsize": max(1, min(int(n), 5000)),
+        "apikey": TWELVEDATA_KEY,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get(url, params=params)
+            data = r.json()
+        values = data.get("values") or []
+        out: list[Tuple[date, float]] = []
+        for v in values:
+            try:
+                out.append((date.fromisoformat(v["datetime"][:10]), float(v["close"])))
+            except (KeyError, ValueError, TypeError):
+                continue
+        out.sort(key=lambda t: t[0])          # feed returns newest-first; want ascending
+        return out
+    except Exception:
+        return []
+
+
+async def fetch_daily_series(n: int = 40) -> list[Tuple[date, float, str]]:
+    """Range of real daily closes for backfilling gaps. Empty list on failure."""
+    series = await _twelvedata_daily_series(n)
+    return [(d, c, "auto:twelvedata") for d, c in series]
+
+
 async def _frankfurter_close() -> Optional[Tuple[date, float]]:
     """Free ECB reference rate fallback (USD->JPY). Daily, no key required."""
     try:
