@@ -38,6 +38,7 @@ from routes.flow import router as flow_router
 from routes.autoalert import router as autoalert_router
 from routes.mmm import router as mmm_router
 from routes.calendar import router as calendar_router
+from routes.edgefinder import router as edgefinder_router
 
 # Real-time streaming
 from services.polygon_stream import polygon_stream
@@ -126,6 +127,7 @@ app.include_router(flow_router)
 app.include_router(autoalert_router)
 app.include_router(mmm_router)
 app.include_router(calendar_router)
+app.include_router(edgefinder_router)
 app.include_router(correlation_router)
 
 
