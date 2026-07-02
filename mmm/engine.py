@@ -209,3 +209,82 @@ def weekly_setup(symbol: str, weekday: int, prev_week: OHLC,
         "taylor_day": taylor_day(prev, today) if (prev and today) else None,
         "peak_formation": peak_formation(daily_bars),
     }
+
+
+# ----------------------------------------------------------------------------
+# Confluence — turn a weekly_setup read into a directional bias + a side verdict
+# ----------------------------------------------------------------------------
+def directional_bias(setup: dict) -> dict:
+    """Net long/short lean of an MMM read, with the reasons that drove it.
+
+    Combines the strongest MMM signals: the Taylor day, a confirmed peak/trough
+    reversal, and where price sits vs the weekly grid. ADR-used only annotates
+    (a stretched move lowers conviction) — it does not flip the bias.
+    """
+    score = 0
+    reasons: List[str] = []
+
+    day = setup.get("taylor_day")
+    if day == "BUY DAY":
+        score += 2
+        reasons.append("Taylor BUY DAY (low-first rally) → long")
+    elif day == "SHORT SELL DAY":
+        score -= 2
+        reasons.append("Taylor SHORT SELL DAY (high-first decline) → short")
+
+    rev = (setup.get("peak_formation") or {}).get("reversal") or ""
+    if "bullish_reversal" in rev:
+        score += 2
+        reasons.append("bullish reversal off a trough → long")
+    elif "bearish_reversal" in rev:
+        score -= 2
+        reasons.append("bearish reversal off a peak → short")
+
+    lvl = setup.get("level_context") or ""
+    if "below prior-week low" in lvl:
+        score -= 1
+        reasons.append("below prior-week low (breakdown)")
+    elif "above prior-week high" in lvl:
+        score += 1
+        reasons.append("above prior-week high (breakout)")
+    elif "upper half" in lvl:
+        score += 1
+    elif "lower half" in lvl:
+        score -= 1
+
+    stretched = None
+    used = setup.get("adr_used")
+    if used is not None and used >= 1.0:
+        stretched = True
+        reasons.append(f"ADR {used}x used — stretched/late, lower conviction")
+
+    bias = "long" if score > 0 else "short" if score < 0 else "neutral"
+    return {"bias": bias, "score": score, "stretched": stretched,
+            "reasons": reasons}
+
+
+def confluence(setup: Optional[dict], side: str) -> dict:
+    """Does the MMM read confirm, diverge from, or stay neutral on ``side``?
+
+    status: confirms | diverges | neutral | none
+    """
+    if not setup:
+        return {"status": "none", "reason": "no MMM data"}
+    b = directional_bias(setup)
+    want = side.lower()
+    want = "long" if want in ("long", "buy") else "short" if want in ("short", "sell") else want
+    if b["bias"] == "neutral":
+        status = "neutral"
+    elif b["bias"] == want:
+        status = "confirms"
+    else:
+        status = "diverges"
+    return {
+        "status": status,
+        "bias": b["bias"],
+        "score": b["score"],
+        "stretched": b["stretched"],
+        "taylor_day": setup.get("taylor_day"),
+        "weekly_cycle": setup.get("weekly_cycle_bias"),
+        "reasons": b["reasons"],
+    }
