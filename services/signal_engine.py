@@ -12,12 +12,17 @@ Two builders:
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 from typing import List, Optional
 
 from cbdr.engine import build_cbdr
 from setups.engine import build_setup
 from services.cbdr_service import fetch_cbdr_window
+from services.ohlc_service import fetch_ohlc, to_hlc
+from services.news_guard import news_flag
+from services import mmm_service
+from indicators.atr import atr as compute_atr, is_spike
 from utils.price_fetcher import get_forex_price
 from propfirm.engine import evaluate_trade, max_lot, risk_limits
 
@@ -51,7 +56,8 @@ def _assemble(symbol: str, side: str, entry: float, stop: float,
 
 async def build_auto(symbol: str, side: str, window: str = "cbdr",
                      mode: str = "continuation", balance: float = 2500.0,
-                     tier: str = "6", entry: Optional[float] = None) -> dict:
+                     tier: str = "6", entry: Optional[float] = None,
+                     atr_period: int = 14, atr_mult: float = 1.5) -> dict:
     win = await fetch_cbdr_window(symbol, window)
     if not win:
         return {"error": f"no '{window}' box for {symbol}"}
@@ -63,11 +69,36 @@ async def build_auto(symbol: str, side: str, window: str = "cbdr",
             entry = None
     if entry is None:
         entry = box.mid
-    plan = build_setup(box, side, entry, mode)
+
+    # Volatility overlay: ATR-floored stop + spike filter from daily OHLC.
+    atr_val = None
+    spike = None
+    bars = await fetch_ohlc(symbol, "1day", max(atr_period + 5, 30))
+    if len(bars) >= atr_period + 1:
+        hlc = to_hlc(bars)
+        atr_val = compute_atr(hlc, atr_period)
+        spike = is_spike(hlc[-1], atr_val)
+
+    plan = build_setup(box, side, entry, mode,
+                       atr=atr_val, atr_mult=atr_mult, spike=spike)
     tps = [t["price"] for t in plan["targets"]]
+    extra = {"source": "auto", "window": win["window"],
+             "window_label": win["label"], "session": win["session"]}
+    if plan.get("atr"):
+        extra["atr"] = plan["atr"]
+    if plan.get("spike") is not None:
+        extra["spike"] = plan["spike"]
+    if plan.get("entry_warning"):
+        extra["entry_warning"] = plan["entry_warning"]
+    news = await news_flag(_dt.date.today(), symbol)
+    if news:
+        extra["news_warning"] = news
+    mmm_conf = mmm_service.confluence(
+        await mmm_service.read_with_daily(symbol, bars), side)
+    if mmm_conf.get("status") != "none":
+        extra["mmm_confluence"] = mmm_conf
     return _assemble(symbol, side, entry, plan["stop_loss"], tps, balance, tier, mode,
-                     extra={"source": "auto", "window": win["window"],
-                            "window_label": win["label"], "session": win["session"]})
+                     extra=extra)
 
 
 def build_manual(symbol: str, side: str, entry: float, stop: float,
@@ -83,6 +114,12 @@ def format_card(sig: dict) -> str:
     lines = [
         f"📡 *Wildchance Signal* — {sig['symbol']}  {arrow}",
         f"_{sig.get('source','')}{('/' + sig['window_label']) if sig.get('window_label') else ''} · {sig['mode']}_",
+    ]
+    if sig.get("entry_warning"):
+        lines += ["", sig["entry_warning"]]
+    if sig.get("news_warning"):
+        lines += ["", sig["news_warning"]]
+    lines += [
         "",
         f"Entry:  `{sig['entry']}`",
         f"Stop:   `{sig['stop_loss']}`",
@@ -90,6 +127,14 @@ def format_card(sig: dict) -> str:
     for t in sig["targets"]:
         r = f"  (R {t['r']})" if t["r"] is not None else ""
         lines.append(f"{t['name']}:    `{t['price']}`{r}")
+    atr = sig.get("atr")
+    if atr:
+        floored = "  (stop floored to ATR)" if atr.get("stop_floored_to_atr") else ""
+        lines.append(f"ATR({atr['atr']}) ×{atr['atr_mult']}{floored}")
+    mc = sig.get("mmm_confluence")
+    if mc and mc.get("status") in ("confirms", "diverges", "neutral"):
+        icon = {"confirms": "✅", "diverges": "⚠️", "neutral": "➖"}[mc["status"]]
+        lines.append(f"MMM: {icon} {mc['status']} ({mc.get('taylor_day') or '—'})")
     s = sig["sizing"]
     lines += ["", f"Lot ≤ {s['max_lot']}  ·  tier {s['tier']}  ·  bal ${s['balance']}"]
     g = sig["gate"]
