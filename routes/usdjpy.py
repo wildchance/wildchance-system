@@ -5,6 +5,8 @@ without the spreadsheet:
 
   POST /usdjpy/close          paste a daily close (manual) -> signal + sizing
   POST /usdjpy/scan           auto-fetch today's close from the feed and run it
+  POST /usdjpy/seed           warm-start from the built-in workbook closes
+  POST /usdjpy/backfill       fill gaps from the feed's time_series (real closes)
   GET  /usdjpy/signal         latest evaluated row (today's BUY/SELL/NO TRADE)
   GET  /usdjpy/scoreboard     live tally + PASS/FAIL/INCONCLUSIVE verdict
   GET  /usdjpy/trades         trade journal (open + closed)
@@ -25,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.db import get_db
 from services import usdjpy_service as svc
-from services.usdjpy_close_service import fetch_daily_close
+from services.usdjpy_close_service import fetch_daily_close, fetch_daily_series
 from services.usdjpy_alert import alert_signal
 from usdjpy.engine import FROZEN_RULES
 from usdjpy.seed_from_workbook import WORKBOOK_CLOSES
@@ -98,6 +100,33 @@ async def seed(db: AsyncSession = Depends(get_db)):
         await svc.ingest_close(db, date.fromisoformat(d), close, source="workbook")
     return {
         "seeded": len(WORKBOOK_CLOSES),
+        "latest_signal": await svc.latest_signal(db),
+        "scoreboard": await svc.get_scoreboard(db),
+    }
+
+
+@router.post("/backfill")
+async def backfill(
+    days: int = Query(40, ge=1, le=500, description="how many recent daily bars to pull"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Backfill the daily log from the feed's time_series with REAL closes.
+
+    Fixes calendar gaps (e.g. the month between the workbook's last close and the
+    first live scan) so the MA20/SD20 window is contiguous. Idempotent — upserts
+    by date and recomputes each row from its own ≤date window.
+    """
+    series = await fetch_daily_series(days)
+    if not series:
+        raise HTTPException(status_code=502,
+                            detail="could not fetch USD/JPY time_series")
+    for d, close, source in series:
+        await svc.ingest_close(db, d, close, source=source)
+    return {
+        "requested_days": days,
+        "ingested": len(series),
+        "first": str(series[0][0]),
+        "last": str(series[-1][0]),
         "latest_signal": await svc.latest_signal(db),
         "scoreboard": await svc.get_scoreboard(db),
     }
