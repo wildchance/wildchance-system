@@ -11,6 +11,7 @@ window picks the session: 'cbdr' = Asian/NY CBDR (2pm-8pm NY), 'prelondon' =
 
 from __future__ import annotations
 
+import datetime as _dt
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -21,6 +22,10 @@ from setups.engine import build_setup
 from utils.price_fetcher import get_forex_price
 from propfirm.engine import max_lot, risk_limits
 from services import flow_service
+from services import mmm_service
+from services.ohlc_service import fetch_ohlc, to_hlc
+from services.news_guard import news_flag
+from indicators.atr import atr as compute_atr, is_spike
 
 router = APIRouter(prefix="/setups", tags=["setups"])
 
@@ -32,7 +37,9 @@ async def setup(symbol: str,
                 mode: str = Query("continuation", pattern="^(continuation|reversal)$"),
                 entry: Optional[float] = Query(None),
                 balance: Optional[float] = Query(None),
-                tier: str = Query("6")):
+                tier: str = Query("6"),
+                atr_period: int = Query(14, ge=2, le=100),
+                atr_mult: float = Query(1.5, gt=0)):
     win = await fetch_cbdr_window(symbol, window)
     if not win:
         raise HTTPException(status_code=502,
@@ -48,9 +55,26 @@ async def setup(symbol: str,
     if price is None:
         price = box.mid        # fall back to box mid if no live price
 
-    plan = build_setup(box, side, price, mode)
+    # Volatility overlay: ATR-floored stop + spike filter from daily OHLC.
+    atr_val = None
+    spike = None
+    bars = await fetch_ohlc(symbol, "1day", max(atr_period + 5, 30))
+    if len(bars) >= atr_period + 1:
+        hlc = to_hlc(bars)
+        atr_val = compute_atr(hlc, atr_period)
+        spike = is_spike(hlc[-1], atr_val)
+
+    plan = build_setup(box, side, price, mode,
+                       atr=atr_val, atr_mult=atr_mult, spike=spike)
     plan.update({"symbol": symbol, "window": win["window"],
                  "window_label": win["label"], "session": win["session"]})
+
+    # News guard for the pair's currencies (flag-only).
+    plan["news_warning"] = await news_flag(_dt.date.today(), symbol)
+
+    # Market Maker Methods confluence (weekly cycle / peak formation) for the side.
+    mmm_read = await mmm_service.read_with_daily(symbol, bars)
+    plan["mmm_confluence"] = mmm_service.confluence(mmm_read, side)
 
     # Order-flow confluence (dormant/neutral until an L2 book feed populates Redis).
     fp = await flow_service.pressure(symbol)
