@@ -7,6 +7,7 @@ without the spreadsheet:
   POST /usdjpy/scan           auto-fetch today's close from the feed and run it
   POST /usdjpy/seed           warm-start from the built-in workbook closes
   POST /usdjpy/backfill       fill gaps from the feed's time_series (real closes)
+  GET  /usdjpy/audit          inverse-rate of recent signals + NFP proximity
   GET  /usdjpy/signal         latest evaluated row (today's BUY/SELL/NO TRADE)
   GET  /usdjpy/scoreboard     live tally + PASS/FAIL/INCONCLUSIVE verdict
   GET  /usdjpy/trades         trade journal (open + closed)
@@ -18,7 +19,7 @@ without the spreadsheet:
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -29,6 +30,7 @@ from database.db import get_db
 from services import usdjpy_service as svc
 from services.usdjpy_close_service import fetch_daily_close, fetch_daily_series
 from services.usdjpy_alert import alert_signal
+from services.news_guard import news_flag, nfp_window
 from usdjpy.engine import FROZEN_RULES
 from usdjpy.seed_from_workbook import WORKBOOK_CLOSES
 from usdjpy.risk_engine import (
@@ -64,8 +66,11 @@ async def submit_close(payload: CloseIn, db: AsyncSession = Depends(get_db)):
     d = payload.date or date.today().isoformat()
     result = await svc.ingest_close(db, d, payload.close, source="manual")
     result = _attach_sizing(result, payload.account_size)
-    if payload.notify and (result.get("signal") or {}).get("is_trade"):
-        await alert_signal(result["signal"], result.get("trade_risk"))
+    sig = result.get("signal") or {}
+    if sig.get("is_trade"):
+        sig["news_warning"] = await news_flag(date.fromisoformat(str(d)[:10]), "USD/JPY")
+    if payload.notify and sig.get("is_trade"):
+        await alert_signal(sig, result.get("trade_risk"))
     return result
 
 
@@ -83,8 +88,12 @@ async def scan(
     result = await svc.ingest_close(db, d, close, source=source)
     result["fetched"] = {"date": str(d), "close": close, "source": source}
     result = _attach_sizing(result, account_size)
-    if notify and (result.get("signal") or {}).get("is_trade"):
-        await alert_signal(result["signal"], result.get("trade_risk"))
+    sig = result.get("signal") or {}
+    if sig.get("is_trade"):
+        d_obj = d if isinstance(d, date) else date.fromisoformat(str(d)[:10])
+        sig["news_warning"] = await news_flag(d_obj, "USD/JPY")
+    if notify and sig.get("is_trade"):
+        await alert_signal(sig, result.get("trade_risk"))
     return result
 
 
@@ -137,7 +146,53 @@ async def signal(db: AsyncSession = Depends(get_db)):
     latest = await svc.latest_signal(db)
     if latest is None:
         return {"signal": None, "message": "no closes ingested yet"}
+    if latest.get("signal") in ("BUY", "SELL"):
+        latest["news_warning"] = await news_flag(
+            date.fromisoformat(str(latest["trade_date"])[:10]), "USD/JPY"
+        )
     return latest
+
+
+@router.get("/audit")
+async def audit(days: int = Query(14, ge=1, le=365), db: AsyncSession = Depends(get_db)):
+    """Audit fired signals over the last ``days``: inverse-rate + NFP proximity.
+
+    A fade that closes negative is an 'inverse' trade (price continued against the
+    fade). Tags which of those landed in an NFP jobs window to quantify how much
+    of the damage is news-driven.
+    """
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    trades = [t for t in await svc.list_trades(db, 500) if t["entry_date"] >= cutoff]
+
+    rows, wins, inverse, inverse_nfp, open_n = [], 0, 0, 0, 0
+    for t in trades:
+        r = t.get("result_r")
+        nfp = nfp_window(date.fromisoformat(t["entry_date"]))
+        if r is None:
+            outcome, open_n = "OPEN", open_n + 1
+        elif r > 0:
+            outcome, wins = "win", wins + 1
+        else:
+            outcome, inverse = "inverse", inverse + 1
+            if nfp:
+                inverse_nfp += 1
+        rows.append({
+            "entry_date": t["entry_date"], "action": t["action"],
+            "entry": t["entry"], "exit_price": t.get("exit_price"),
+            "result_r": r, "outcome": outcome,
+            "stop_breached": t.get("stop_breached"), "nfp_window": nfp,
+        })
+
+    closed = wins + inverse
+    return {
+        "window_days": days, "signals": len(trades), "closed": closed,
+        "open": open_n, "wins": wins, "inverse": inverse,
+        "inverse_rate": round(inverse / closed, 3) if closed else None,
+        "inverse_in_nfp_window": inverse_nfp,
+        "note": ("Inverse trades clustered in NFP windows confirm news-driven "
+                 "inversion — the flag-only news guard now warns on these."),
+        "trades": rows,
+    }
 
 
 @router.get("/scoreboard")
