@@ -24,6 +24,8 @@ import statistics
 from dataclasses import dataclass, asdict
 from typing import List, Optional, Sequence
 
+from decouple import config
+
 # --- FROZEN RULES (locked 2026-06-04 — see FROZEN RULES sheet) ---------------
 FROZEN_RULES = {
     "instrument": "USD/JPY",
@@ -43,11 +45,27 @@ FROZEN_RULES = {
 LOOKBACK = FROZEN_RULES["lookback"]
 Z_BUY = FROZEN_RULES["z_entry_buy"]
 Z_SELL = FROZEN_RULES["z_entry_sell"]
-STOP_MULT = FROZEN_RULES["stop_sd_multiple"]
 HOLD_DAYS = FROZEN_RULES["hold_trading_days"]
 
 # USD/JPY: one pip = 0.01.
 PIP = 0.01
+
+# --- LIVE-STOP OVERLAY (opt-in — defaults reproduce the frozen backtest) ------
+# The frozen R-unit stop is 0.5*SD20. For LIVE execution that can be too tight
+# when SD20 is small (low-vol warm-up windows), so a 3-day hold gets wicked out
+# by normal noise. These env knobs widen the *executed* stop WITHOUT touching the
+# z-entry logic. Defaults keep 0.5*SD20 and no floor → identical to the frozen
+# backtest unless you set them.
+#   USDJPY_STOP_SD_MULT   stop = MULT * SD20        (frozen default 0.5)
+#   USDJPY_MIN_STOP_PIPS  floor in pips; never tighter than this  (default 0=off)
+STOP_MULT = config("USDJPY_STOP_SD_MULT", default=FROZEN_RULES["stop_sd_multiple"],
+                   cast=float)
+MIN_STOP_PIPS = config("USDJPY_MIN_STOP_PIPS", default=0.0, cast=float)
+
+
+def _stop_distance(sd: float) -> float:
+    """Price distance for the stop: MULT*SD20, floored at MIN_STOP_PIPS pips."""
+    return max(STOP_MULT * sd, MIN_STOP_PIPS * PIP)
 
 
 @dataclass
@@ -107,12 +125,13 @@ def evaluate_close(
 
     z = (close - ma) / sd
 
+    stop_dist = _stop_distance(sd)
     if z <= Z_BUY:
         action = "BUY"
-        stop = close - STOP_MULT * sd
+        stop = close - stop_dist
     elif z >= Z_SELL:
         action = "SELL"
-        stop = close + STOP_MULT * sd
+        stop = close + stop_dist
     else:
         return Signal(date, close, ma, sd, z, "NO TRADE", None, None, None)
 
