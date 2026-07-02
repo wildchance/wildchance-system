@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from services.ohlc_service import fetch_ohlc, to_ohlc, to_hlc
 from services.news_guard import news_flag
-from mmm.engine import weekly_setup
+from mmm.engine import weekly_setup, confluence as mmm_confluence
 from indicators.atr import atr, atr_stop, atr_targets, is_spike, spike_ratio
 
 router = APIRouter(prefix="/mmm", tags=["mmm"])
@@ -21,6 +21,7 @@ router = APIRouter(prefix="/mmm", tags=["mmm"])
 
 @router.get("/{symbol:path}")
 async def mmm(symbol: str,
+              side: str = Query("", description="long|short → include confluence"),
               atr_period: int = Query(14, ge=2, le=100),
               atr_mult: float = Query(1.5, gt=0),
               adr_n: int = Query(5, ge=1, le=30)):
@@ -57,5 +58,7 @@ async def mmm(symbol: str,
             "mult": atr_mult,
         }
     setup["news_warning"] = await news_flag(last_date, symbol)
+    if side.lower() in ("long", "short", "buy", "sell"):
+        setup["confluence"] = mmm_confluence(setup, side)
     setup["as_of"] = str(last_date)
     return setup
