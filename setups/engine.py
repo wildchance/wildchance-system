@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 
 from cbdr.engine import CBDR
+from indicators.atr import atr_targets
 
 # Which SD multiples become TP1/TP2/TP3 in each mode.
 CONT_TP_SDS = (1, 2, 4)        # run toward the far extremes
@@ -36,8 +37,17 @@ def _r_multiple(entry: float, stop: float, target: float) -> Optional[float]:
 
 
 def build_setup(box: CBDR, side: str, entry: float,
-                mode: str = "continuation") -> dict:
-    """Build Entry/SL/TP1-3 for a side ('long'/'short') against a CBDR box."""
+                mode: str = "continuation",
+                atr: Optional[float] = None, atr_mult: float = 1.5,
+                atr_floor_stop: bool = True,
+                spike: Optional[bool] = None) -> dict:
+    """Build Entry/SL/TP1-3 for a side ('long'/'short') against a CBDR box.
+
+    ATR overlay (optional): pass ``atr`` to floor the protective stop at
+    ``atr_mult * ATR`` — a narrow box can't then produce a sub-volatility stop
+    that noise wicks out — and to add ATR scale-out targets. ``spike`` (from
+    indicators.atr.is_spike on the entry bar) flags a >k*ATR news/expansion bar.
+    """
     side = side.lower()
     rng = box.range
     if rng <= 0:
@@ -60,6 +70,24 @@ def build_setup(box: CBDR, side: str, entry: float,
             stop = box.high + SL_BUFFER_SD * rng
             tps = [box.levels.get(f"-{n}SD", box.low - n * rng) for n in CONT_TP_SDS]
 
+    # ATR overlay — floor the stop at atr_mult*ATR so no market gets a
+    # sub-volatility stop, and expose ATR scale-out targets. Applied BEFORE the
+    # R-multiples so they reflect the (possibly widened) protective stop.
+    atr_overlay = None
+    if atr and atr > 0:
+        atr_dist = atr_mult * atr
+        floored = False
+        if atr_floor_stop and abs(entry - stop) < atr_dist:
+            stop = entry - atr_dist if side == "long" else entry + atr_dist
+            floored = True
+        atr_overlay = {
+            "atr": round(atr, 6),
+            "atr_mult": atr_mult,
+            "stop_distance": round(atr_dist, 6),
+            "stop_floored_to_atr": floored,
+            "targets": atr_targets(entry, atr, "BUY" if side == "long" else "SELL"),
+        }
+
     targets = []
     for i, tp in enumerate(tps, start=1):
         targets.append({
@@ -68,7 +96,7 @@ def build_setup(box: CBDR, side: str, entry: float,
             "r": _r_multiple(entry, stop, tp),
         })
 
-    return {
+    plan = {
         "side": side,
         "mode": mode,
         "entry": round(entry, 5),
@@ -77,6 +105,16 @@ def build_setup(box: CBDR, side: str, entry: float,
         "targets": targets,             # TP1, TP2, TP3 with R multiples
         "box": {"high": box.high, "mid": box.mid, "low": box.low, "range": rng},
     }
+    if atr_overlay is not None:
+        plan["atr"] = atr_overlay
+    if spike is not None:
+        plan["spike"] = spike
+        if spike:
+            plan["entry_warning"] = (
+                "⚠️ entry bar is a >2×ATR expansion (news/spike) — avoid chasing; "
+                "wait for a pullback or reduce size."
+            )
+    return plan
 
 
 def crt_to_setup(candle_dir: str, state: str) -> Optional[Dict[str, str]]:
