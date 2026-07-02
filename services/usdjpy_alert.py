@@ -21,9 +21,11 @@ async def alert_signal(signal: dict, trade_risk: Optional[dict] = None) -> bool:
         return False
 
     action = signal.get("action")
-    lines = [
-        "📢 *USD/JPY Mean-Reversion Signal*",
-        "",
+    lines = ["📢 *USD/JPY Mean-Reversion Signal*", ""]
+    news = signal.get("news_warning")
+    if news:
+        lines += [news, ""]
+    lines += [
         f"🔹 *Action:* {action}",
         f"🔹 *Date:* {signal.get('date')}",
         f"🔹 *Entry (close):* {signal.get('entry')}",
