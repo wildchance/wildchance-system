@@ -28,6 +28,7 @@ from services import usdjpy_service as svc
 from services.usdjpy_close_service import fetch_daily_close
 from services.usdjpy_alert import alert_signal
 from usdjpy.engine import FROZEN_RULES
+from usdjpy.seed_from_workbook import WORKBOOK_CLOSES
 from usdjpy.risk_engine import (
     ACCOUNT_SIZES,
     risk_profile,
@@ -83,6 +84,23 @@ async def scan(
     if notify and (result.get("signal") or {}).get("is_trade"):
         await alert_signal(result["signal"], result.get("trade_risk"))
     return result
+
+
+@router.post("/seed")
+async def seed(db: AsyncSession = Depends(get_db)):
+    """Warm-start the forward test with the built-in workbook closes (idempotent).
+
+    Ingests the 25 DAILY-LOG closes from usdjpy/seed_from_workbook.py so the live
+    system boots with the same ~20-day warm-up the workbook had — no Render Shell
+    needed. Re-running is safe: ingest_close upserts by date.
+    """
+    for d, close in WORKBOOK_CLOSES:
+        await svc.ingest_close(db, date.fromisoformat(d), close, source="workbook")
+    return {
+        "seeded": len(WORKBOOK_CLOSES),
+        "latest_signal": await svc.latest_signal(db),
+        "scoreboard": await svc.get_scoreboard(db),
+    }
 
 
 @router.get("/signal")
