@@ -65,7 +65,11 @@ async def ingest_close(
 
     # Full chronological history including this close.
     history = await _ordered_closes(db)
-    closes = [c.close for c in history]
+    # Stats window = the closes up to AND INCLUDING this row's date, so
+    # re-ingesting an out-of-order (older) date recomputes its ma20/sd20/z from
+    # its OWN ≤date window instead of the latest tail. Makes seed/backfill
+    # order-independent; for the normal daily append it's a no-op.
+    closes = [c.close for c in history if c.trade_date <= trade_date]
     sig = evaluate_close(closes, date=trade_date.isoformat())
 
     row.ma20 = sig.ma20
