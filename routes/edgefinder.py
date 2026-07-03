@@ -1,8 +1,12 @@
 """EdgeFinder endpoints — per-pair macro bias scoreboard.
 
-  GET /edgefinder            ranked bias board (retail + COT + confluence)
-  GET /edgefinder?mmm=true   also fold in the MMM weekly-cycle bias (slower)
-  GET /edgefinder/{symbol}   deep single-pair read (always includes MMM + news)
+  GET  /edgefinder                 ranked bias board (retail + COT)
+  GET  /edgefinder?mmm=true&season=true   fold in MMM cycle + seasonality (slower)
+  POST /edgefinder/digest          push top biases to Telegram
+  POST /edgefinder/snapshot        persist today's board (daily cron)
+  GET  /edgefinder/shifts          pairs whose bias flipped since the last snapshot
+  GET  /edgefinder/history/{pair}  score/bias trend for a pair
+  GET  /edgefinder/{symbol}        deep single-pair read (MMM + seasonality + news)
 
 Aggregates the layers the system already computes into one signed bias score per
 pair, most-conviction first.
@@ -11,9 +15,11 @@ pair, most-conviction first.
 from __future__ import annotations
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 from decouple import config
 
+from database.db import get_db
 from services import edgefinder_service
 
 router = APIRouter(prefix="/edgefinder", tags=["edgefinder"])
@@ -36,8 +42,9 @@ async def _send(text: str) -> bool:
 
 
 @router.get("")
-async def board(mmm: bool = Query(False, description="fold in MMM weekly cycle (slower)")):
-    return await edgefinder_service.scoreboard(with_mmm=mmm)
+async def board(mmm: bool = Query(False, description="fold in MMM weekly cycle (slower)"),
+                season: bool = Query(False, description="fold in seasonality (slower)")):
+    return await edgefinder_service.scoreboard(with_mmm=mmm, with_season=season)
 
 
 @router.post("/digest")
@@ -53,6 +60,25 @@ async def digest(top: int = Query(5, ge=1, le=20),
             return {"sent": False, "reason": f"no bias ≥ {min_score}"}
         text = "🧭 *EdgeFinder* — no strong biases right now."
     return {"sent": await _send(text)}
+
+
+@router.post("/snapshot")
+async def snapshot(db: AsyncSession = Depends(get_db)):
+    """Persist today's board so bias trend/shift can be tracked (daily cron)."""
+    return await edgefinder_service.snapshot(db)
+
+
+@router.get("/shifts")
+async def shifts(db: AsyncSession = Depends(get_db)):
+    """Pairs whose bias flipped between the two most recent daily snapshots."""
+    return await edgefinder_service.shifts(db)
+
+
+@router.get("/history/{pair:path}")
+async def history(pair: str, days: int = Query(30, ge=1, le=365),
+                  db: AsyncSession = Depends(get_db)):
+    """Score/bias trend for one pair over the trailing ``days``."""
+    return await edgefinder_service.history(db, pair, days)
 
 
 @router.get("/{symbol:path}")
