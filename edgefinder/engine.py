@@ -63,6 +63,18 @@ def _mmm_factor(mmm_bias: Optional[dict]) -> dict:
             "note": f"MMM weekly-cycle {mmm_bias.get('bias', 'neutral')}"}
 
 
+def agreement(score: int, side: str) -> str:
+    """Does an EdgeFinder score agree with a proposed side?
+
+    confirms | diverges | neutral — used to gate/annotate alerts.
+    """
+    want = 1 if side.lower() in ("long", "buy") else -1 if side.lower() in ("short", "sell") else 0
+    d = 1 if score > 0 else -1 if score < 0 else 0
+    if d == 0 or want == 0:
+        return "neutral"
+    return "confirms" if d == want else "diverges"
+
+
 def label(total: int) -> str:
     if total >= 3:
         return "STRONG LONG"
