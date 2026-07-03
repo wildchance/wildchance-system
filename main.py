@@ -1,5 +1,8 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from decouple import config
 import uvicorn
 import asyncio
@@ -129,6 +132,11 @@ app.include_router(mmm_router)
 app.include_router(calendar_router)
 app.include_router(edgefinder_router)
 app.include_router(correlation_router)
+
+# Serve the static dashboards (EdgeFinder board at /static/dashboard/edgefinder.html).
+# Guarded so a missing directory never blocks boot.
+if os.path.isdir("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 if __name__ == "__main__":
