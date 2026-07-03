@@ -63,6 +63,17 @@ def _mmm_factor(mmm_bias: Optional[dict]) -> dict:
             "note": f"MMM weekly-cycle {mmm_bias.get('bias', 'neutral')}"}
 
 
+def _seasonality_factor(seasonal: Optional[dict]) -> dict:
+    if not seasonal or not seasonal.get("dir"):
+        return {"name": "seasonality", "score": 0,
+                "note": (seasonal or {}).get("note", "no seasonal data")}
+    w = 2 if seasonal.get("strength") == "strong" else 1
+    d = seasonal["dir"]
+    lbl = "long" if d > 0 else "short"
+    return {"name": "seasonality", "score": d * w,
+            "note": f"seasonality {lbl} — {seasonal.get('note')} (×{w})"}
+
+
 def agreement(score: int, side: str) -> str:
     """Does an EdgeFinder score agree with a proposed side?
 
@@ -88,11 +99,14 @@ def label(total: int) -> str:
 
 
 def score_pair(sig: dict, mmm_bias: Optional[dict] = None,
+               seasonal: Optional[dict] = None,
                news: Optional[str] = None) -> dict:
-    """Aggregate a wildchance signal (+ optional MMM bias, news) into a bias row."""
+    """Aggregate a wildchance signal (+ optional MMM bias, seasonality, news)."""
     factors: List[dict] = [_retail_factor(sig), _cot_factor(sig)]
     if mmm_bias is not None:
         factors.append(_mmm_factor(mmm_bias))
+    if seasonal is not None:
+        factors.append(_seasonality_factor(seasonal))
     total = sum(f["score"] for f in factors)
     return {
         "pair": sig.get("pair"),
