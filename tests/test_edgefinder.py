@@ -1,4 +1,13 @@
-from edgefinder.engine import score_pair, label, _retail_factor, _cot_factor
+from edgefinder.engine import score_pair, label, agreement, _retail_factor, _cot_factor
+
+
+def test_agreement_confirms_diverges_neutral():
+    assert agreement(4, "long") == "confirms"
+    assert agreement(4, "short") == "diverges"
+    assert agreement(-3, "sell") == "confirms"
+    assert agreement(-3, "buy") == "diverges"
+    assert agreement(0, "long") == "neutral"      # no edge → don't block
+    assert agreement(2, "flat") == "neutral"
 
 
 def _sig(**kw):
