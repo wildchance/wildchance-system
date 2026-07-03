@@ -56,6 +56,28 @@ async def scoreboard(with_mmm: bool = False) -> dict:
     }
 
 
+_BIAS_ICON = {"STRONG LONG": "🟢🟢", "LONG": "🟢", "NEUTRAL": "➖",
+              "SHORT": "🔴", "STRONG SHORT": "🔴🔴"}
+
+
+async def digest_text(top_n: int = 5, min_score: int = 2,
+                      with_mmm: bool = False) -> Optional[str]:
+    """Telegram-ready 'top bias' digest, or None if nothing meets ``min_score``."""
+    board = (await scoreboard(with_mmm=with_mmm)).get("board", [])
+    strong = [r for r in board if abs(r["score"]) >= min_score][:top_n]
+    if not strong:
+        return None
+    lines = ["🧭 *EdgeFinder — Top Bias*", ""]
+    for r in strong:
+        news = " ⚠️" if r.get("news") else ""
+        lines.append(
+            f"{_BIAS_ICON.get(r['bias'], '')} *{r['pair']}* {r['bias']} "
+            f"({r['score']:+d})  ·  sys {r.get('system_verdict') or '—'}{news}"
+        )
+    lines += ["", "_retail + COT aggregate, most-conviction first. ⚠️ = news-adjacent._"]
+    return "\n".join(lines)
+
+
 async def pair_read(symbol: str) -> Optional[dict]:
     """Deep single-pair read: always includes the MMM bias + news."""
     feed = await get_latest_feed()
