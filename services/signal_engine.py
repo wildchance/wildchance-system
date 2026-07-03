@@ -135,6 +135,10 @@ def format_card(sig: dict) -> str:
     if mc and mc.get("status") in ("confirms", "diverges", "neutral"):
         icon = {"confirms": "✅", "diverges": "⚠️", "neutral": "➖"}[mc["status"]]
         lines.append(f"MMM: {icon} {mc['status']} ({mc.get('taylor_day') or '—'})")
+    ef = sig.get("edgefinder")
+    if ef and ef.get("status"):
+        icon = {"confirms": "✅", "diverges": "⚠️", "neutral": "➖"}.get(ef["status"], "➖")
+        lines.append(f"Edge: {icon} {ef.get('bias')} ({ef.get('score'):+d})")
     s = sig["sizing"]
     lines += ["", f"Lot ≤ {s['max_lot']}  ·  tier {s['tier']}  ·  bal ${s['balance']}"]
     g = sig["gate"]
