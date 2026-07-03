@@ -63,6 +63,7 @@ jobs:
             post "/quarterly/alert/USD/JPY"
             post "/autoalert/confluence?min_confidence=85"
             post "/benner/alert"
+            post "/edgefinder/snapshot"
             post "/edgefinder/digest?force=true"
             exit 0
           fi
@@ -112,6 +113,9 @@ jobs:
               post "/quarterly/alert/NAS100"
               ;;
             "30 8 * * 1")       post "/benner/alert" ;;
-            "30 6 * * *")       post "/edgefinder/digest" ;;
+            "30 6 * * *")
+              post "/edgefinder/snapshot"
+              post "/edgefinder/digest"
+              ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac
