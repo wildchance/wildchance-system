@@ -24,6 +24,9 @@ from handlers.wins_handler import handle_wins
 from handlers.summary_handler import handle_summary
 from handlers.admin_handler import handle_admin
 from handlers.create_signal_handler import handle_create_signal
+from handlers.edge_handler import (
+    handle_edge, handle_bias, handle_setup, handle_calendar,
+)
 import os
 
 router = APIRouter()
@@ -46,6 +49,12 @@ if BOT_TOKEN:
     application.add_handler(CommandHandler("summary", handle_summary))
     application.add_handler(CommandHandler("admin", handle_admin))
     application.add_handler(CommandHandler("create_signal", handle_create_signal))
+    # On-demand market reads
+    application.add_handler(CommandHandler("edge", handle_edge))
+    application.add_handler(CommandHandler("board", handle_edge))      # alias
+    application.add_handler(CommandHandler("bias", handle_bias))
+    application.add_handler(CommandHandler("setup", handle_setup))
+    application.add_handler(CommandHandler("calendar", handle_calendar))
 
     async def echo(update, context: ContextTypes.DEFAULT_TYPE):
         if update.message and update.message.text:
@@ -104,9 +113,20 @@ async def telegram_webhook(request: Request):
     # Verify Telegram's secret-token header if a secret is configured.
     if WEBHOOK_SECRET and request.headers.get("X-Telegram-Bot-Api-Secret-Token") != WEBHOOK_SECRET:
         raise HTTPException(status_code=403, detail="invalid secret token")
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        data = None
+    if not data:
+        return {"ok": True, "skipped": "empty update"}
     update = Update.de_json(data, application.bot)
-    await application.process_update(update)
+    if update is None:
+        return {"ok": True, "skipped": "unparseable update"}
+    try:
+        await application.process_update(update)
+    except Exception as e:
+        print(f"[telegram] process_update failed: {e}")
+        return {"ok": True, "error": str(e)}
     return {"ok": True}
 
 
