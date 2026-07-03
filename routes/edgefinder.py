@@ -21,6 +21,7 @@ from decouple import config
 
 from database.db import get_db
 from services import edgefinder_service
+from services import concentration_service
 
 router = APIRouter(prefix="/edgefinder", tags=["edgefinder"])
 
@@ -79,6 +80,14 @@ async def history(pair: str, days: int = Query(30, ge=1, le=365),
                   db: AsyncSession = Depends(get_db)):
     """Score/bias trend for one pair over the trailing ``days``."""
     return await edgefinder_service.history(db, pair, days)
+
+
+@router.get("/concentration")
+async def concentration(threshold: float = Query(0.7, ge=0.1, le=1.0),
+                        min_score: int = Query(2, ge=1, le=6)):
+    """Warn when strong biases stack correlated exposure (concentration risk)."""
+    return await concentration_service.concentration(threshold=threshold,
+                                                     min_score=min_score)
 
 
 @router.get("/{symbol:path}")
