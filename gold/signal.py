@@ -16,6 +16,37 @@ from gold.risk_engine import (
 from propfirm.engine import evaluate_trade, max_lot, DEFAULT_TIER
 
 
+def assemble_structured(profile: dict, entry: float, stop: float, balance: float,
+                        tier: str = DEFAULT_TIER, risk_usd: float = 20.0,
+                        rr: Sequence[float] = (2, 3, 4)) -> dict:
+    """Size a trade from a REAL entry+stop (Wade OTE/OB structure), money-first."""
+    bias = (profile or {}).get("bias")
+    if bias not in ("long", "short"):
+        return {"signal": "NO TRADE", "instrument": "XAU/USD",
+                "reason": (profile or {}).get("reason", "no directional profile")}
+    dist = abs(entry - stop)
+    if dist <= 0:
+        return {"signal": "NO TRADE", "instrument": "XAU/USD",
+                "reason": "invalid structure stop distance"}
+    lot = max(0.01, min(size_for_risk(entry, stop, risk_usd), max_lot(balance)))
+    risk_actual = round(lot * dist * GOLD_USD_PER_POINT, 2)
+    tps = targets(entry, stop, bias, rr)
+    for t in tps:
+        t["usd"] = round(lot * abs(t["price"] - entry) * GOLD_USD_PER_POINT, 2)
+    return {
+        "signal": bias.upper(), "instrument": "XAU/USD",
+        "profile": profile.get("profile"), "profile_id": profile.get("profile_id"),
+        "justification": profile.get("reason"), "zone": profile.get("zone"),
+        "entry": round(entry, 2), "stop": round(stop, 2),
+        "stop_distance": round(dist, 2), "entry_mode": "structure",
+        "lot": lot, "risk_usd": risk_actual,
+        "targets": tps,
+        "breakeven": breakeven_price(entry, tps[0]["price"]) if tps else None,
+        "gate": evaluate_trade(balance, risk_actual, tier=tier),
+        "balance": balance, "tier": tier,
+    }
+
+
 def assemble(profile: dict, entry: float, balance: float,
              tier: str = DEFAULT_TIER, risk_usd: float = 20.0,
              sl_pips: float = 200.0, rr: Sequence[float] = (2, 3, 4)) -> dict:
@@ -71,7 +102,9 @@ def format_card(sig: dict) -> str:
         f"_Profile: {sig['profile']} ({sig['signal'].lower()})_",
         f"_{sig.get('justification', '')}_",
         "",
-        f"Lot: `{sig['lot']}`  ·  Risk: `${sig['risk_usd']}`  ·  SL: `{sig['stop']}` ({int(sig['sl_pips'])}p)",
+        (f"Lot: `{sig['lot']}`  ·  Risk: `${sig['risk_usd']}`  ·  SL: `{sig['stop']}`"
+         + (f" ({int(sig['sl_pips'])}p)" if sig.get('sl_pips')
+            else f" (Δ{sig.get('stop_distance', '')})")),
     ]
     for i, t in enumerate(sig.get("targets", []), start=1):
         lines.append(f"TP{i}  `{t['price']}`  (1:{t['rr']} · ${t['usd']})")
