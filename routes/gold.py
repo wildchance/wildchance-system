@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from gold import risk_engine as gr
 from gold.weekly import weekly_bias
+from gold.ict import classify_week
 from services.ohlc_service import fetch_ohlc
 
 router = APIRouter(prefix="/gold", tags=["gold"])
@@ -30,6 +31,22 @@ async def scaling():
     return {"instrument": "XAU/USD",
             "ladder": [{"balance": b, **gr.lot_ladder(b),
                         "prop_6pct": gr.prop_pass_math(b, "6")} for b in _LADDER]}
+
+
+@router.get("/phases")
+async def phases(balance: float = Query(5000, gt=0)):
+    """6% → 12% → 18% (Payout) trade-count ladder (the handwritten phase plan)."""
+    return {"instrument": "XAU/USD", "balance": balance, **gr.phase_plan(balance)}
+
+
+@router.get("/profile")
+async def profile():
+    """Active ICT Weekly Profile for XAU/USD (1 of 12) — full trend justification."""
+    daily = await fetch_ohlc("XAU/USD", "1day", 25)
+    if len(daily) < 3:
+        raise HTTPException(status_code=502, detail="could not fetch XAU/USD daily bars")
+    read = classify_week(daily)
+    return {"instrument": "XAU/USD", **(read or {})}
 
 
 @router.get("/bias")
