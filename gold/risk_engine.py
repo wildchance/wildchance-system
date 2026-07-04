@@ -102,6 +102,23 @@ def prop_pass_math(balance: float, tier: str = DEFAULT_TIER) -> dict:
     }
 
 
+def phase_plan(balance: float) -> dict:
+    """The screenshot's phase ladder: base ($60-lot) & agg ($120-lot) trade counts
+    to clear 6% → 12% → 18% (Payout). Per-trade $ scales with balance:
+    base ≈1.2%, agg ≈2.4% (→ $60/$120 at $5k), so the counts hold at every size."""
+    return {
+        "per_trade_usd": {"base_60": round(balance * 0.012, 2),
+                          "agg_120": round(balance * 0.024, 2)},
+        "phase1_6pct": {"target_usd": round(balance * 0.06, 2),
+                        "trades_base": 6, "trades_agg": 3},
+        "cumulative_12pct": {"target_usd": round(balance * 0.12, 2),
+                             "trades_base": 12, "trades_agg": 6},
+        "payout_18pct": {"target_usd": round(balance * 0.18, 2),
+                         "trades_base": 18, "trades_agg": 9},
+        "note": "counts carry a buffer over each milestone → Payout",
+    }
+
+
 def plan(balance: float, tier: str = DEFAULT_TIER,
          risk_usd: float = 20.0) -> dict:
     """Full computed gold sheet for a balance: lots, target moves, prop math."""
@@ -120,6 +137,7 @@ def plan(balance: float, tier: str = DEFAULT_TIER,
             "note": f"lot to risk ${risk_usd} depends on SL distance — use size_for_risk(entry, stop, {risk_usd})",
         },
         "prop": prop_pass_math(balance, tier),
+        "phases": phase_plan(balance),
         "rules": {
             "base_rr": "1:2 – 1:4",
             "breakeven_at": "50% to TP (move SL → entry)",
