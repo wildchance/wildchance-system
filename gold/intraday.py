@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from gold.signal import assemble, format_card as _format_base
+from gold.signal import assemble, assemble_structured, format_card as _format_base
 
 
 def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
@@ -24,17 +24,28 @@ def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
                       risk_usd: float = 20.0, sl_pips: float = 200.0,
                       weekday_q: Optional[dict] = None,
                       require_fld: bool = True,
-                      require_distribution: bool = False) -> dict:
-    """Combine the three scales into one gated intraday signal."""
+                      require_distribution: bool = False,
+                      entry_read: Optional[dict] = None) -> dict:
+    """Combine the three scales into one gated intraday signal.
+
+    If ``entry_read`` (from gold.entry.refined_entry) has a valid BMS/OTE, the
+    trade is sized off that structure entry+stop; otherwise the fixed-pip entry.
+    """
     bias = (weekly_profile or {}).get("bias")
     if bias not in ("long", "short"):
         return {"signal": "NO TRADE", "instrument": "XAU/USD",
                 "reason": f"no weekly direction ({(weekly_profile or {}).get('profile')})",
                 "layers": {"weekly": weekly_profile, "session": session_q, "fld": fld_sig}}
 
-    # base sized card (direction from the weekly profile)
-    card = assemble(weekly_profile, entry, balance, tier=tier,
-                    risk_usd=risk_usd, sl_pips=sl_pips)
+    # base sized card — structure entry (Wade OTE/OB) if available, else fixed-pip
+    if entry_read and entry_read.get("ok") and entry_read.get("entry") and entry_read.get("stop"):
+        card = assemble_structured(weekly_profile, entry_read["entry"], entry_read["stop"],
+                                   balance, tier=tier, risk_usd=risk_usd)
+        card["structure"] = {k: entry_read.get(k) for k in
+                             ("bms", "broke_level", "zone", "order_block", "fvg")}
+    else:
+        card = assemble(weekly_profile, entry, balance, tier=tier,
+                        risk_usd=risk_usd, sl_pips=sl_pips)
     card["layers"] = {"weekly": weekly_profile, "session": session_q, "fld": fld_sig,
                       "weekday": weekday_q}
     if card.get("signal") == "NO TRADE":
@@ -45,6 +56,8 @@ def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
         f"session Q{session_q.get('quarter')} {session_q.get('phase')} ({session_q.get('session')})",
         f"FLD {fld_sig.get('cross') or fld_sig.get('position')}",
     ]
+    if card.get("entry_mode") == "structure":
+        reasons.append(f"BMS {card['structure']['bms']} + OTE zone {card['structure']['zone']}")
 
     # weekly QT gate — Friday is reversal / no-trade
     if weekday_q is not None and not weekday_q.get("tradeable", True):
@@ -84,4 +97,9 @@ def format_card(sig: dict) -> str:
         base += (f"\n🕐 Q{sess.get('quarter')} {sess.get('phase')} · "
                  f"FLD {fld.get('cross') or fld.get('position')}"
                  f"{' ✅' if sig.get('fld_confirms') else ''}")
+        st = sig.get("structure")
+        if st:
+            base += f"\n🏗️ BMS {st.get('bms')} · OTE {st.get('zone')}"
+            if st.get("order_block"):
+                base += f" · OB {st['order_block']['ob_low']}–{st['order_block']['ob_high']}"
     return base
