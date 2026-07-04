@@ -1,8 +1,12 @@
-"""Gold (XAU/USD) prop-firm endpoints — the computed risk/lot/target sheet.
+"""Gold (XAU/USD) prop-firm endpoints — risk sheet + ICT profiles + live scan.
 
-  GET /gold/plan?balance=5000&tier=6      full computed sheet for a balance
-  GET /gold/scaling                        the 5k→1M lot ladder table
-  GET /gold/size?entry=4325&stop=4310&risk_usd=20   money-first lot + TP prices
+  POST /gold/scan?balance=5000&notify=true   real-time signal (ICT→entry/SL/TP→gate→Telegram)
+  GET  /gold/plan?balance=5000&tier=6        full computed sheet for a balance
+  GET  /gold/scaling                          the 5k→1M lot ladder table
+  GET  /gold/phases?balance=5000              6%→12%→18% (Payout) trade counts
+  GET  /gold/profile                          active ICT weekly profile (1 of 12)
+  GET  /gold/bias                             quick Monday-sweep bias
+  GET  /gold/size?entry=&stop=&risk_usd=      money-first lot + TP/BE prices
 """
 
 from __future__ import annotations
@@ -13,8 +17,23 @@ from gold import risk_engine as gr
 from gold.weekly import weekly_bias
 from gold.ict import classify_week
 from services.ohlc_service import fetch_ohlc
+from services import gold_scan
 
 router = APIRouter(prefix="/gold", tags=["gold"])
+
+
+@router.post("/scan")
+async def scan(balance: float = Query(5000, gt=0),
+               tier: str = Query("6"),
+               risk_usd: float = Query(20.0, gt=0),
+               sl_pips: float = Query(200.0, gt=0),
+               require_confluence: bool = Query(False,
+                   description="suppress when wildchance retail+COT opposes the profile"),
+               notify: bool = Query(False)):
+    """Real-time gold signal: ICT profile → entry/SL/TP/lot → prop gate → Telegram."""
+    return await gold_scan.scan(balance=balance, tier=tier, risk_usd=risk_usd,
+                                sl_pips=sl_pips, require_confluence=require_confluence,
+                                notify=notify)
 
 _LADDER = [5000, 10000, 25000, 50000, 100000, 200000, 500000, 1000000]
 
