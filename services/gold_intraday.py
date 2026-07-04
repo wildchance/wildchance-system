@@ -15,7 +15,9 @@ from utils.price_fetcher import get_forex_price
 from gold.ict import classify_week
 from gold.quarterly_session import session_quarter, weekday_quarter
 from gold.hurst import fld_signal
+from gold.entry import refined_entry
 from gold.intraday import assemble_intraday, format_card
+from gold.risk_engine import GOLD_PIP
 
 
 async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
@@ -45,10 +47,18 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
     if entry is None:
         entry = daily[-1][4]
 
+    # Wade structure entry (BMS → OTE → OB/FVG) off the H1 bars, if a BMS exists.
+    entry_read = None
+    bias = (profile or {}).get("bias")
+    if bias in ("long", "short") and len(h1) >= 8:
+        ohlc = [(o, hh, ll, c) for (_d, o, hh, ll, c) in h1]
+        entry_read = refined_entry(ohlc, bias, buffer=10 * GOLD_PIP)   # ~10-pip buffer
+
     sig = assemble_intraday(profile, sess, fsig, entry, balance, tier=tier,
                             risk_usd=risk_usd, sl_pips=sl_pips, weekday_q=wq,
                             require_fld=require_fld,
-                            require_distribution=require_distribution)
+                            require_distribution=require_distribution,
+                            entry_read=entry_read)
 
     if notify and sig.get("signal") in ("LONG", "SHORT"):
         sig["sent"] = await _tg(format_card(sig))
