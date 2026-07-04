@@ -44,6 +44,7 @@ from routes.calendar import router as calendar_router
 from routes.edgefinder import router as edgefinder_router
 from routes.backtest import router as backtest_router
 from routes.gold import router as gold_router
+from routes.execution import router as execution_router
 
 # Real-time streaming
 from services.polygon_stream import polygon_stream
@@ -135,6 +136,7 @@ app.include_router(calendar_router)
 app.include_router(edgefinder_router)
 app.include_router(backtest_router)
 app.include_router(gold_router)
+app.include_router(execution_router)
 app.include_router(correlation_router)
 
 # Serve the static dashboards (EdgeFinder board at /static/dashboard/edgefinder.html).
