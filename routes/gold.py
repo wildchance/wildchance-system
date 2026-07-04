@@ -11,9 +11,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from database.db import get_db
+from services import trade_executor as te
 from gold import risk_engine as gr
+from gold import compounding as gc
 from gold.weekly import weekly_bias
 from gold.ict import classify_week
 from services.ohlc_service import fetch_ohlc
@@ -46,13 +50,31 @@ async def intraday(balance: float = Query(5000, gt=0),
                    require_fld: bool = Query(True),
                    require_distribution: bool = Query(False,
                        description="only fire in the NY-AM distribution quarter (Q3)"),
-                   notify: bool = Query(False)):
+                   notify: bool = Query(False),
+                   execute: bool = Query(False,
+                       description="enqueue the order for the MT5 bridge to place"),
+                   db: AsyncSession = Depends(get_db)):
     """Intraday signal: weekly profile × QT session quarter × Hurst FLD → prop gate → Telegram."""
-    return await gold_intraday.scan(balance=balance, tier=tier, risk_usd=risk_usd,
-                                    sl_pips=sl_pips, cycle_len=cycle_len,
-                                    require_fld=require_fld,
-                                    require_distribution=require_distribution,
-                                    notify=notify)
+    sig = await gold_intraday.scan(balance=balance, tier=tier, risk_usd=risk_usd,
+                                   sl_pips=sl_pips, cycle_len=cycle_len,
+                                   require_fld=require_fld,
+                                   require_distribution=require_distribution,
+                                   notify=notify)
+    if execute:
+        order = te.build_order(sig, source="gold_intraday")
+        if order:
+            sig["queued_order"] = await te.enqueue(db, order)
+    return sig
+
+@router.get("/compound")
+async def compound(deposit: float = Query(700, gt=0),
+                   currency: str = Query("USD", pattern="^(USD|KES|KWD|usd|kes|kwd)$"),
+                   mode: str = Query("", description="swing|low|mixed (blank = full plan)")):
+    """Deposit growth ladder (swing ×10 / low-income doubling / mixed) per currency."""
+    if mode:
+        return gc.ladder(deposit, mode, currency)
+    return gc.plan(deposit, currency)
+
 
 _LADDER = [5000, 10000, 25000, 50000, 100000, 200000, 500000, 1000000]
 
