@@ -18,6 +18,7 @@ from gold.weekly import weekly_bias
 from gold.ict import classify_week
 from services.ohlc_service import fetch_ohlc
 from services import gold_scan
+from services import gold_intraday
 
 router = APIRouter(prefix="/gold", tags=["gold"])
 
@@ -34,6 +35,24 @@ async def scan(balance: float = Query(5000, gt=0),
     return await gold_scan.scan(balance=balance, tier=tier, risk_usd=risk_usd,
                                 sl_pips=sl_pips, require_confluence=require_confluence,
                                 notify=notify)
+
+
+@router.post("/intraday")
+async def intraday(balance: float = Query(5000, gt=0),
+                   tier: str = Query("6"),
+                   risk_usd: float = Query(20.0, gt=0),
+                   sl_pips: float = Query(200.0, gt=0),
+                   cycle_len: int = Query(20, ge=4, le=200),
+                   require_fld: bool = Query(True),
+                   require_distribution: bool = Query(False,
+                       description="only fire in the NY-AM distribution quarter (Q3)"),
+                   notify: bool = Query(False)):
+    """Intraday signal: weekly profile × QT session quarter × Hurst FLD → prop gate → Telegram."""
+    return await gold_intraday.scan(balance=balance, tier=tier, risk_usd=risk_usd,
+                                    sl_pips=sl_pips, cycle_len=cycle_len,
+                                    require_fld=require_fld,
+                                    require_distribution=require_distribution,
+                                    notify=notify)
 
 _LADDER = [5000, 10000, 25000, 50000, 100000, 200000, 500000, 1000000]
 
