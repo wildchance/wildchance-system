@@ -27,6 +27,8 @@ on:
     - cron: "0 7 1 1,4,7,10 *"  # yearly Quarterly-Theory phase (start of each quarter)
     - cron: "30 8 * * 1"        # Benner cycle phase (Mondays 08:30 UTC)
     - cron: "30 6 * * *"        # EdgeFinder top-bias digest (after the 06:00 daily scrape)
+    - cron: "0 7 * * 1-5"       # GOLD scan — London open (weekdays)
+    - cron: "0 13 * * 1-5"      # GOLD scan — New York open (weekdays)
   workflow_dispatch:             # manual run = full test (forces every digest)
 
 jobs:
@@ -65,6 +67,7 @@ jobs:
             post "/benner/alert"
             post "/edgefinder/snapshot"
             post "/edgefinder/digest?force=true"
+            post "/gold/scan?balance=5000&notify=true"
             exit 0
           fi
 
@@ -117,5 +120,7 @@ jobs:
               post "/edgefinder/snapshot"
               post "/edgefinder/digest"
               ;;
+            "0 7 * * 1-5")      post "/gold/scan?balance=5000&notify=true" ;;
+            "0 13 * * 1-5")     post "/gold/scan?balance=5000&notify=true" ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac
