@@ -76,6 +76,7 @@ async def init_db():
     import models.usdjpy_model
     import models.wildchance_model
     import models.edge_snapshot_model
+    import models.execution_model
     async with engine.begin() as conn:
         # create_all only — never drop. The forward test accumulates months of
         # data; dropping on startup would silently wipe it. create_all is
