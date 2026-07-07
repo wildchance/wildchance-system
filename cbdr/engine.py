@@ -151,6 +151,29 @@ def build_cbdr(high: float, low: float,
     return CBDR(high=high, low=low, mid=mid, range=rng, levels=levels)
 
 
+def sd_ladder(high: float, low: float, step: float = 0.5,
+              max_units: float = 4.0) -> dict:
+    """Full 0.5-step standard-deviation ladder around a CBDR box (the LuxAlgo view).
+
+    The box range is 1 unit. Levels are on a single scale where **0 = the box high**
+    and **−1 = the box low**, projected both ways in ``step`` increments to
+    ±``max_units`` — so ``value(k) = high + k·range``. The **mean** (box mid) sits at
+    k = −0.5. Matches the on-chart ladder: 0/−1 the box, −0.5 the mean, +4/−4 the
+    extremes.
+    """
+    rng = high - low
+    if rng <= 0:
+        return {"box": [low, high], "mean": high, "unit": 0.0, "levels": {}}
+    levels: Dict[str, float] = {}
+    k = -max_units
+    while k <= max_units + 1e-9:
+        levels[f"{k:g}"] = round(high + k * rng, 3)
+        k = round(k + step, 6)
+    return {"box": [round(low, 3), round(high, 3)],
+            "mean": round((high + low) / 2.0, 3), "unit": round(rng, 3),
+            "levels": levels, "note": "0 = box high, -1 = box low; k = units of the range"}
+
+
 def prelondon_limits(box: CBDR) -> dict:
     """Pre-London limit-order plan off a CBDR box (02:45-03:00 ET window).
 
