@@ -1,79 +1,66 @@
-"""Premium / discount entry-location gate (pure, stdlib-only).
+"""Quarterly Theory — daily session (AMD) model for XAU/USD (pure).
 
-The single structural fix behind "every trade loses except the weekly open": the
-old engine market-filled at the LIVE price, so continuation profiles bought
-*premium* (the expensive upper half) and sold *discount* (the cheap lower half) —
-chasing the move right before it retraced. ICT is the opposite: buy discount,
-sell premium.
+Time is fractal: the trading day splits into four 6-hour quarters that follow the
+Accumulation → Manipulation → Distribution → Continuation/Reversal cycle. The
+edge is timing: the London manipulation (Q2, the 'Judas swing') sets up the New
+York distribution (Q3, the real expansion) — that's the prime intraday window.
 
-This module scores where a price sits inside a reference range (the session /
-weekly range, or an OTE leg) and answers ONE question: is this a valid entry
-LOCATION for the proposed side? Direction still comes from the weekly + macro
-bias; this only vetoes entering at the wrong side of the range.
-
-  equilibrium = (high + low) / 2
-  pos         = (price − low) / (high − low)     0 at the low … 1 at the high
-  discount    = lower half (pos < 0.5)  → the place to BUY
-  premium     = upper half (pos ≥ 0.5)  → the place to SELL
-
-`deep` (default 0.5) is the fraction of the range that still counts as a valid
-entry: 0.5 = anywhere in the correct half; tighten toward the −1SD/OTE style
-"deep discount" by lowering it (e.g. 0.33 = only the cheapest third for a long).
+Sessions (UTC). Asia is the 8h ACCUMULATION, London the MANIPULATION (Judas /
+no-entry — the pre-London CBDR limits sit here), New York the DISTRIBUTION. Entries
+fire in Asia + New York; London is setup only.
+  Q1  Accumulation           Asia     00:00–08:00   (8h — entries)
+  Q2  Manipulation (Judas)   London   08:00–13:00   (setup only, no entries)
+  Q3  Distribution           NY       13:00–21:00   (entries)
+  Q4  Rollover / close       Sydney   21:00–24:00
 """
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Optional
 
-
-def discount_premium(price: float, high: float, low: float) -> dict:
-    """Where a price sits inside [low, high]: pos, zone, equilibrium."""
-    rng = high - low
-    if rng <= 0:
-        return {"pos": None, "zone": "unknown", "equilibrium": high,
-                "high": high, "low": low}
-    pos = (price - low) / rng
-    return {
-        "pos": round(pos, 4),
-        "zone": "premium" if pos >= 0.5 else "discount",
-        "equilibrium": round((high + low) / 2.0, 4),
-        "high": high, "low": low,
-    }
+# (quarter, phase, session, start_hour_utc, end_hour_utc)
+_QUARTERS = [
+    (1, "accumulation", "Asia", 0, 8),
+    (2, "manipulation", "London", 8, 13),
+    (3, "distribution", "New York", 13, 21),
+    (4, "rollover", "Sydney/close", 21, 24),
+]
 
 
-def location_gate(side: str, price: float, high: float, low: float,
-                  deep: float = 0.5) -> dict:
-    """Is `price` a valid entry LOCATION for `side` inside [low, high]?
+def session_quarter(now: dt.datetime) -> dict:
+    """Which daily quarter/phase/session is live for a UTC datetime."""
+    h = now.hour
+    for q, phase, sess, a, b in _QUARTERS:
+        if a <= h < b:
+            return {
+                "quarter": q, "phase": phase, "session": sess,
+                "window_utc": f"{a:02d}:00-{b:02d}:00",
+                "is_distribution": q == 3,
+                "is_manipulation": q == 2,
+            }
+    # h == 24 never happens; fallback to Q4
+    q, phase, sess, a, b = _QUARTERS[-1]
+    return {"quarter": q, "phase": phase, "session": sess,
+            "window_utc": f"{a:02d}:00-24:00", "is_distribution": False,
+            "is_manipulation": False}
 
-    Longs must be in discount (pos ≤ deep); shorts must be in premium
-    (pos ≥ 1 − deep). Returns {ok, reason, zone, pos, equilibrium, ...}.
+
+def is_trade_window(now: dt.datetime, allow_accumulation: bool = True) -> bool:
+    """True in an ENTRY session: NY distribution (Q3), or Asia accumulation (Q1).
+
+    London manipulation (Q2) is NOT an entry window — it's the Judas / setup that
+    the pre-London CBDR limits cover.
     """
-    dp = discount_premium(price, high, low)
-    if dp["pos"] is None:
-        # No usable range (flat/degenerate) — don't block on location.
-        return {"ok": True, "reason": "no reference range — location gate skipped",
-                **dp}
-
-    long = side.lower() in ("long", "buy")
-    pos = dp["pos"]
-    if long:
-        ok = pos <= deep
-        want = f"discount (pos ≤ {deep:g})"
-    else:
-        ok = pos >= (1.0 - deep)
-        want = f"premium (pos ≥ {1.0 - deep:g})"
-
-    if ok:
-        reason = f"entry in {dp['zone']} (pos {pos:.2f}) — valid {('buy' if long else 'sell')} location"
-    else:
-        reason = (f"price in {dp['zone']} (pos {pos:.2f}); a "
-                  f"{'long' if long else 'short'} needs {want} — no chasing, wait for the pullback")
-    return {"ok": ok, "reason": reason, "want": want, **dp}
+    q = session_quarter(now)["quarter"]
+    return q == 3 or (allow_accumulation and q == 1)
 
 
-def in_zone(price: Optional[float], zone: Optional[list]) -> bool:
-    """Is price within an explicit [lo, hi] zone (e.g. the OTE band)?"""
-    if price is None or not zone or len(zone) != 2:
-        return False
-    lo, hi = sorted(zone)
-    return lo <= price <= hi
+def weekday_quarter(now: dt.datetime) -> dict:
+    """Weekly Quarterly Theory: Mon=Q1 … Thu=Q4 (Fri = reversal/no-trade)."""
+    wd = now.weekday()          # 0=Mon
+    m = {0: (1, "accumulation"), 1: (2, "manipulation"),
+         2: (3, "distribution"), 3: (4, "continuation_or_reversal")}
+    q, phase = m.get(wd, (0, "friday_reversal"))
+    return {"weekday": wd, "quarter": q, "phase": phase,
+            "tradeable": wd <= 3}     # Mon–Thu
