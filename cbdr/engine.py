@@ -29,8 +29,11 @@ CBDR_END_HOUR = 20     # 8:00 PM (exclusive — hourly bars 14,15,16,17,18,19)
 # and yearly). 2.5 and 4 are the EXTREME extensions used to catch breakouts /
 # exhaustion reversals — a tag of +/-2.5 or +/-4 is the trigger to consult the
 # look-back of past boxes for a likely peak/bottom before the next range forms.
-DEFAULT_DEVIATIONS: Tuple[float, ...] = (1, 2, 2.5, 3, 4)
+DEFAULT_DEVIATIONS: Tuple[float, ...] = (1, 1.5, 2, 2.5, 3, 4)
 EXTREME_SD = 2.5   # at/above this deviation a move is in "extreme" territory
+# The 1–1.5 SD band on either side is the "grey zone" — where a pre-London reversal
+# is watched for before the London manipulation begins.
+GREY_ZONE_SD: Tuple[float, float] = (1.0, 1.5)
 
 
 # ---------------------------------------------------------------------------
@@ -64,9 +67,12 @@ WINDOWS: Dict[str, Window] = {
     # Classic ICT CBDR — 2:00pm–8:00pm New York, hourly bars.
     "cbdr": Window("cbdr", "America/New_York", _hm(14), _hm(20), "1h",
                    "2:00pm-8:00pm NY (CBDR)"),
-    # Pre-London accumulation box — 18:00–02:45 UTC, 15m bars for the 02:45 edge.
-    "prelondon": Window("prelondon", "UTC", _hm(18), _hm(2, 45), "15min",
-                        "18:00-02:45 UTC (pre-London)"),
+    # Pre-London accumulation box — defined in NEW YORK time so it stays aligned
+    # through DST: 19:00 NY (prior evening) → 02:45 AM NY, i.e. it CLOSES at 02:45
+    # ET = 06:45 UTC (EDT), right before London. Trade its ±SD limits at 02:45-03:00
+    # ET. (The old UTC-anchored 18:00–02:45 box closed ~4h too early — 10:45 PM ET.)
+    "prelondon": Window("prelondon", "America/New_York", _hm(19), _hm(2, 45), "15min",
+                        "19:00-02:45 NY (pre-London accumulation, closes 02:45 ET)"),
 
     # Six recurring intraday session boxes. Defined in NEW YORK local time so the
     # data layer (timezone=America/New_York) shifts them with DST automatically —
@@ -143,6 +149,38 @@ def build_cbdr(high: float, low: float,
         levels[f"+{n}SD"] = high + n * rng
         levels[f"-{n}SD"] = low - n * rng
     return CBDR(high=high, low=low, mid=mid, range=rng, levels=levels)
+
+
+def prelondon_limits(box: CBDR) -> dict:
+    """Pre-London limit-order plan off a CBDR box (02:45-03:00 ET window).
+
+    Buy limit at −1SD (discount); sell limits at +1SD and the +3SD extreme; and
+    the 1–1.5SD grey zone on each side flagged for pre-London reversals. The grey
+    zone is the "notice reversals before London" band.
+    """
+    lv = box.levels
+    orders = []
+    if "-1SD" in lv:
+        orders.append({"side": "long", "kind": "limit", "level": "-1SD",
+                       "entry": round(lv["-1SD"], 2),
+                       "reason": "buy limit at −1SD (discount / low of range)"})
+    if "+1SD" in lv:
+        orders.append({"side": "short", "kind": "limit", "level": "+1SD",
+                       "entry": round(lv["+1SD"], 2),
+                       "reason": "sell limit at +1SD"})
+    if "+3SD" in lv:
+        orders.append({"side": "short", "kind": "limit", "level": "+3SD",
+                       "entry": round(lv["+3SD"], 2),
+                       "reason": "sell limit at +3SD (extreme)"})
+    lo_sd, hi_sd = GREY_ZONE_SD
+    grey = {
+        "buy_grey": [lv.get(f"-{lo_sd:g}SD"), lv.get(f"-{hi_sd:g}SD")],
+        "sell_grey": [lv.get(f"+{lo_sd:g}SD"), lv.get(f"+{hi_sd:g}SD")],
+        "sd_band": [lo_sd, hi_sd],
+        "note": f"{lo_sd:g}–{hi_sd:g}SD grey zone — watch reversals before London",
+    }
+    return {"orders": orders, "grey_zone": grey,
+            "box": {"high": box.high, "low": box.low, "mid": box.mid, "range": box.range}}
 
 
 def read_bias(price: float, box: CBDR) -> dict:
