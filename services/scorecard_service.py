@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.usdjpy_model import UsdJpyTrade
+from models.gold_position_model import GoldPosition
 from usdjpy.engine import realized_r
 from usdjpy.scorecard import build_scorecard, by_group
 
@@ -120,6 +121,70 @@ async def window_report(db: AsyncSession, days: int = 7,
         "scorecard": build_scorecard([r["result_r"] for r in rows]).to_dict(),
         "by_action": by_group(rows, "action"),
     }
+
+
+async def gold_report(db: AsyncSession, month: Optional[str] = None) -> dict:
+    """Scorecard over CLOSED gold swing positions (realized R), all-time + monthly.
+
+    Reuses the same reflection engine as USD/JPY so gold finally has the feedback
+    loop it was missing — every closed position carries a result_r.
+    """
+    res = await db.execute(
+        select(GoldPosition)
+        .where(GoldPosition.status == "CLOSED")
+        .order_by(GoldPosition.opened_at.asc()))
+    trades = list(res.scalars().all())
+    rows = []
+    for t in trades:
+        if t.result_r is None:
+            continue
+        rows.append({
+            "month": _month(t.opened_at),
+            "action": t.action,
+            "result_r": t.result_r,
+            "exit_reason": t.exit_reason,
+            "opened_at": str(t.opened_at),
+        })
+    all_r = [r["result_r"] for r in rows]
+    by_month = by_group(rows, "month")
+    current_month = month or (max(by_month) if by_month else None)
+    return {
+        "instrument": "XAU/USD",
+        "closed_trades": len(rows),
+        "all_time": build_scorecard(all_r).to_dict(),
+        "current_month": current_month,
+        "current_month_scorecard": by_month.get(current_month) if current_month else None,
+        "by_month": dict(sorted(by_month.items())),
+        "by_action": by_group(rows, "action"),
+        "by_exit": by_group(rows, "exit_reason"),
+    }
+
+
+async def gold_digest_text(db: AsyncSession) -> Optional[str]:
+    """Human-readable gold scorecard for Telegram, or None if nothing closed."""
+    rep = await gold_report(db)
+    card = rep["all_time"]
+    if not card["n"]:
+        return None
+    icon = {"GREEN": "🟢", "AMBER": "🟡", "RED": "🔴",
+            "INCONCLUSIVE": "⚪"}.get(card["verdict"], "⚪")
+    pf = card["profit_factor"]
+    pf_str = "∞" if pf is None else f"{pf:.2f}"
+    wr = card["win_rate"]
+    wr_str = "—" if wr is None else f"{wr:.0%}"
+    exits = "  ".join(f"{k} {v['n']}" for k, v in rep["by_exit"].items())
+    lines = [
+        "🏆 *GOLD Scorecard — all-time*",
+        "",
+        f"{icon} *{card['verdict']}*  ·  confidence ×{card['confidence_factor']}",
+        f"Trades: {card['n']}  (W {card['wins']} / L {card['losses']})  ·  win {wr_str}",
+        f"Expectancy: {card['expectancy']:+.2f}R   ·   Total: {card['total_r']:+.2f}R",
+        f"Profit factor: {pf_str}   ·   Max DD: {card['max_drawdown_r']:.2f}R",
+        (f"Exits: {exits}" if exits else ""),
+        "",
+        f"_{card['lesson']}_",
+    ]
+    return "\n".join(l for l in lines if l != "")
 
 
 async def window_digest_text(db: AsyncSession, days: int = 7,
