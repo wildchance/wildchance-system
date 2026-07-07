@@ -18,6 +18,7 @@ from typing import Optional
 
 from gold.signal import assemble, assemble_structured, format_card as _format_base
 from gold import macro as gmacro
+from gold import macro_cycle as gcycle
 from gold.location import location_gate
 
 
@@ -32,6 +33,7 @@ def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
                       ref_low: Optional[float] = None,
                       require_macro: bool = True,
                       require_location: bool = True,
+                      require_regime: bool = True,
                       loc_deep: float = 0.5) -> dict:
     """Combine the three scales into one gated intraday signal.
 
@@ -100,6 +102,16 @@ def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
             return card
         reasons.append(f"location {loc['zone']} (pos {loc['pos']:.2f})")
 
+    # --- REGIME gate — dollar (DXY inverse) + COT positioning confluence ----
+    # No live DXY here → the gate uses the anticipated dollar structure.
+    reg = gcycle.regime_gate(bias)
+    card["regime"] = reg
+    if require_regime and not reg["ok"]:
+        card["signal"] = "NO TRADE"
+        card["reason"] = reg["reason"]
+        return card
+    reasons.append(f"regime {reg['status']} (dollar {reg['dollar']})")
+
     # weekly QT gate — Friday is reversal / no-trade
     if weekday_q is not None and not weekday_q.get("tradeable", True):
         card["signal"] = "NO TRADE"
@@ -151,4 +163,7 @@ def format_card(sig: dict) -> str:
             base += f"\n🌍 macro {mac['status']}"
             if mac.get("in_accumulation"):
                 base += " · in accumulation band"
+        reg = sig.get("regime")
+        if reg:
+            base += f"\n💵 dollar {reg['dollar']} · COT {reg['cot_zone']}"
     return base
