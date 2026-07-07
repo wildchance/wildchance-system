@@ -71,6 +71,9 @@ jobs:
             post "/candlerange/scan?force=true"
             post "/candlerange/friday?force=true"
             post "/candlerange/crt?session=ny&force=true"
+            post "/gold/prelondon?track=true"
+            post "/gold/sd-fade?track=true"
+            post "/gold/news"
             post "/quarterly/alert/USD/JPY"
             post "/autoalert/confluence?min_confidence=85"
             post "/benner/alert"
@@ -103,7 +106,10 @@ jobs:
               post "/wildchance/scrape?tier=6h"
               post "/alerts/session?label=Asian%20open"
               ;;
-            "0 6 * * *")        post "/wildchance/scrape?tier=daily" ;;
+            "0 6 * * *")
+              post "/wildchance/scrape?tier=daily"
+              post "/gold/news"        # refresh the tier-1 news calendar daily
+              ;;
             "0 0,12,18 * * *")
               post "/wildchance/scrape?tier=6h"
               post "/autoalert/confluence?min_confidence=85"
@@ -134,6 +140,7 @@ jobs:
               post "/cbdr/alert/EUR/USD?window=prelondon"
               post "/cbdr/alert/GBP/USD?window=prelondon"
               post "/cbdr/limits/XAU/USD?window=prelondon&notify=true"
+              post "/gold/prelondon?track=true"    # arm the limits as tracked positions
               ;;
             "0 2 * * 1-5")
               # Asia accumulation window — gold intrasession scan
