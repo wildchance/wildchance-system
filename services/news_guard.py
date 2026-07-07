@@ -139,11 +139,13 @@ async def high_impact_calendar(currencies: Optional[Set[str]] = None) -> List[di
     return filter_high_impact(events, currencies)
 
 
-async def news_flag(for_date: dt.date, symbol: str = "USD/JPY") -> Optional[str]:
-    """Warning string if a tier-1 event for ``symbol``'s currencies is within the
-    window, else None. FLAG-ONLY — never blocks a signal.
+async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
+                    win: Optional[int] = None) -> Optional[str]:
+    """Warning string if a tier-1 event for ``symbol``'s currencies is within
+    ``win`` days (default USDJPY_NEWS_WINDOW_DAYS), else None. Callers decide
+    whether to flag or block — pass win=0 to test same-day only.
     """
-    win = max(0, NEWS_WINDOW_DAYS)
+    win = max(0, NEWS_WINDOW_DAYS if win is None else win)
     ccys = symbol_currencies(symbol)
     hits: List[str] = []
 
