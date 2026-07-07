@@ -1,7 +1,11 @@
 """SD ladder + 8-hour session range + protraction detection."""
 
+import datetime as dt
+
 from cbdr.engine import sd_ladder
-from gold.session_levels import eight_hour_range, detect_protraction, protraction_gate
+from gold.session_levels import (eight_hour_range, detect_protraction, protraction_gate,
+                                 most_recent_at_hour, prior_day_hl, prior_week_hl,
+                                 build_liquidity, opposite_liquidity)
 
 
 # --- SD ladder (validated against the on-chart numbers) ---------------------
@@ -61,3 +65,46 @@ def test_protraction_gate_confirms_and_blocks():
     assert protraction_gate("long", p)["target"] == 105
     assert protraction_gate("short", p)["ok"] is False
     assert protraction_gate("long", {"direction": None})["ok"] is False
+
+
+# --- 1am/7am/PDH/PDL/PWH levels ---------------------------------------------
+
+def test_most_recent_at_hour_picks_newest():
+    hourly = [{"date": "2026-07-06", "hour": 1, "high": 10, "low": 9},
+              {"date": "2026-07-07", "hour": 1, "high": 20, "low": 18},
+              {"date": "2026-07-07", "hour": 7, "high": 25, "low": 22}]
+    assert most_recent_at_hour(hourly, 1) == {"high": 20, "low": 18, "date": "2026-07-07"}
+    assert most_recent_at_hour(hourly, 7)["high"] == 25
+    assert most_recent_at_hour(hourly, 13) is None
+
+
+def _dbars(seq):
+    base = dt.date(2026, 6, 29)   # Monday
+    return [(base + dt.timedelta(days=i), o, h, l, c) for i, (o, h, l, c) in enumerate(seq)]
+
+
+def test_prior_day_hl():
+    daily = _dbars([(10, 12, 9, 11), (11, 15, 10, 14), (14, 16, 13, 15)])
+    assert prior_day_hl(daily) == {"high": 15, "low": 10}   # -2 bar
+
+
+def test_prior_week_hl():
+    # 5 days this-week + 5 days last week; last week's extreme = 20/5
+    last = _dbars([(6, 20, 5, 8)] + [(8, 9, 7, 8)] * 4)          # Mon-Fri last week
+    this = [(dt.date(2026, 7, 6) + dt.timedelta(days=i), 8, 12, 7, 10) for i in range(2)]
+    pw = prior_week_hl(last + this)
+    assert pw == {"high": 20, "low": 5}
+
+
+def test_build_liquidity_and_opposite_target():
+    hourly = [{"date": "2026-07-07", "hour": 1, "high": 4167, "low": 4140, "open": 4150, "close": 4160},
+              {"date": "2026-07-07", "hour": 7, "high": 4160, "low": 4150, "open": 4152, "close": 4158}]
+    daily = _dbars([(4100, 4200, 4090, 4180), (4180, 4210, 4120, 4145)])
+    liq = build_liquidity(hourly, daily, hours=(1, 7))
+    assert liq["1am"]["high"] == 4167 and liq["7am"]["low"] == 4150
+    assert liq["PDH"] == 4200 and liq["PDL"] == 4090
+    # a long from 4145 draws to the nearest liquidity above — the 7am low at 4150
+    tgt = opposite_liquidity("long", 4145, liq)
+    assert tgt == {"level": "7amL", "price": 4150}
+    # a short from 4200 draws down to the nearest below — the 1am high at 4167
+    assert opposite_liquidity("short", 4200, liq)["price"] == 4167
