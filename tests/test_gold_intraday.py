@@ -11,17 +11,17 @@ def _t(h):  # UTC datetime at hour h (a Tuesday)
 
 
 def test_session_quarters():
-    assert session_quarter(_t(2))["quarter"] == 1      # Asia accumulation
-    assert session_quarter(_t(8))["quarter"] == 2      # London manipulation
-    assert session_quarter(_t(14))["quarter"] == 3     # NY-AM distribution
-    assert session_quarter(_t(20))["quarter"] == 4     # NY-PM
+    assert session_quarter(_t(2))["quarter"] == 1      # Asia accumulation 00-08
+    assert session_quarter(_t(10))["quarter"] == 2     # London manipulation 08-13
+    assert session_quarter(_t(14))["quarter"] == 3     # NY distribution 13-21
+    assert session_quarter(_t(22))["quarter"] == 4     # rollover 21-24
     assert session_quarter(_t(14))["is_distribution"] is True
 
 
 def test_trade_window():
-    assert is_trade_window(_t(14)) is True             # Q3
-    assert is_trade_window(_t(8)) is True              # Q2 allowed
-    assert is_trade_window(_t(2)) is False             # Q1 accumulation
+    assert is_trade_window(_t(14)) is True             # NY distribution (Q3)
+    assert is_trade_window(_t(2)) is True              # Asia accumulation (Q1) — entry
+    assert is_trade_window(_t(10)) is False            # London manipulation (Q2) — no entry
 
 
 def test_weekday_quarter():
@@ -58,8 +58,9 @@ def _profile(bias="long"):
     return {"bias": bias, "profile": "Classic Tuesday Low", "reason": "Tue low into discount",
             "zone": "discount"}
 
-_Q3 = {"quarter": 3, "phase": "distribution", "session": "New York AM"}
+_Q3 = {"quarter": 3, "phase": "distribution", "session": "New York"}
 _Q1 = {"quarter": 1, "phase": "accumulation", "session": "Asia"}
+_Q2 = {"quarter": 2, "phase": "manipulation", "session": "London"}
 _BULL = {"cross": "bull", "position": "above", "position_dir": "bull"}
 _BEAR = {"cross": "bear", "position": "below", "position_dir": "bear"}
 
@@ -69,8 +70,15 @@ def test_intraday_fires_when_all_align():
     assert s["signal"] == "LONG" and s["fld_confirms"] is True and "justification" in s
 
 
-def test_intraday_waits_wrong_quarter():
+def test_intraday_fires_in_asia_accumulation():
+    # Asia (Q1) is now an entry window too.
     s = assemble_intraday(_profile("long"), _Q1, _BULL, 4316.0, 5000.0)
+    assert s["signal"] == "LONG"
+
+
+def test_intraday_waits_in_london_manipulation():
+    # London (Q2) is manipulation / setup — no direct entry.
+    s = assemble_intraday(_profile("long"), _Q2, _BULL, 4316.0, 5000.0)
     assert s["signal"] == "NO TRADE" and "quarter" in s["reason"]
 
 
