@@ -2,9 +2,13 @@
 from __future__ import annotations
 from typing import Optional
 import httpx
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from decouple import config
+from sqlalchemy.ext.asyncio import AsyncSession
+from database.db import get_db
 from services import candlerange_service as crs
+from services import gold_positions as gp
+from gold.limit_orders import size_limit
 
 router = APIRouter(prefix="/candlerange", tags=["candlerange"])
 
@@ -37,12 +41,17 @@ async def candlerange(symbol: str, price: Optional[float] = Query(None)):
 @router.post("/crt")
 async def crt(symbols: str = Query(None),
               session: str = Query(None, description="asia | ny (default: by UTC hour)"),
-              force: bool = Query(False)):
+              balance: float = Query(5000, gt=0),
+              risk_usd: float = Query(20.0, gt=0),
+              track: bool = Query(True, description="open a tracked gold position on a confirmed XAU/USD CRT"),
+              force: bool = Query(False),
+              db: AsyncSession = Depends(get_db)):
     """1-5-9 CRT scan: arm the session's limit ladder + check 5-o'clock confirmation.
 
-    Call at 05:00 UTC (Asian) and 17:00 UTC (New York)."""
+    On a CONFIRMED XAU/USD trigger, the confirmed limit is money-sized and opened
+    as a tracked position (monitored to TP/SL). Call at 05:00 (Asian) / 17:00 (NY)."""
     watch = ([s.strip() for s in symbols.split(",") if s.strip()] if symbols else DEFAULT_WATCH)
-    reads, alerts = [], []
+    reads, alerts, opened = [], [], []
     for sym in watch:
         r = await crs.crt_read(sym, session=session)
         if r is None:
@@ -51,12 +60,18 @@ async def crt(symbols: str = Query(None),
         text = crs.format_crt_alert(r)
         if text:
             alerts.append(text)
+        conf = (r.get("confirmation") or {})
+        if track and sym.upper().replace("-", "/") == "XAU/USD" and conf.get("confirmed"):
+            card = size_limit(conf["order"], balance, risk_usd)   # confirmed = fills now
+            pos = await gp.open_from_signal(db, card, source="gold_crt")
+            if pos:
+                opened.append(pos)
     sent = False
     if alerts:
         sent = await _send("\n\n".join(alerts))
     elif force:
         sent = await _send("🎯 *CRT 1-5-9* — no confirmations at the limits right now.")
-    return {"scanned": len(watch), "reads": reads, "sent": sent}
+    return {"scanned": len(watch), "reads": reads, "opened": opened, "sent": sent}
 
 
 @router.post("/friday")
