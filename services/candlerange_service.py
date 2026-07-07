@@ -14,6 +14,7 @@ import httpx
 from decouple import config
 
 from candlerange.engine import analyze, friday_gap_read, weekday_confidence
+from candlerange.crt import crt_setup, crt_confirm, session_for_hour, SESSIONS
 
 TWELVEDATA_KEY = config("TWELVEDATA_API_KEY", default=None) or config("TWELVEDATA_KEY", default=None)
 ANCHOR_HOURS = (1, 13)
@@ -117,6 +118,76 @@ async def friday_close_read(symbol: str) -> Optional[dict]:
     read["symbol"] = symbol
     read["candle_time"] = fri["datetime"]
     return read
+
+
+async def crt_read(symbol: str, session: Optional[str] = None,
+                   price: Optional[float] = None) -> Optional[dict]:
+    """1-5-9 CRT read: build the session's limit ladder off its 1-o'clock range
+    candle and check the 5-o'clock confirmation against the live price.
+
+    ``session`` defaults from the current UTC hour (05:00→asia, 17:00→ny).
+    """
+    if not TWELVEDATA_KEY:
+        return None
+    if session is None:
+        session = session_for_hour(_dt.datetime.now(_dt.timezone.utc).hour) or "asia"
+    meta = SESSIONS.get(session)
+    if meta is None:
+        return None
+    range_hour = meta["range_hour"]
+
+    url = "https://api.twelvedata.com/time_series"
+    params = {"symbol": symbol, "interval": "1h", "outputsize": 48,
+              "timezone": "UTC", "apikey": TWELVEDATA_KEY}
+    try:
+        async with httpx.AsyncClient(timeout=12) as c:
+            data = (await c.get(url, params=params)).json()
+    except Exception:
+        return None
+    values = data.get("values")
+    if not values:
+        return None
+    if price is None:
+        latest = _ohlc(values[0])
+        price = latest["close"] if latest else None
+
+    candle = None
+    for v in values:                       # newest-first → most recent range candle
+        ts = v.get("datetime", "")
+        if len(ts) < 13:
+            continue
+        try:
+            hour = int(ts[11:13])
+        except ValueError:
+            continue
+        if hour == range_hour:
+            candle = _ohlc(v)
+            if candle:
+                candle["datetime"] = ts
+                break
+    if candle is None:
+        return None
+
+    setup = crt_setup(candle, session)
+    out = {"symbol": symbol, "session": session, "range_candle": candle, **setup}
+    if price is not None and setup.get("ok"):
+        out["confirmation"] = crt_confirm(setup, price)
+        out["price"] = price
+    return out
+
+
+def format_crt_alert(read: Optional[dict]) -> Optional[str]:
+    """Telegram text when a CRT confirmation triggers, else None."""
+    if not read or not read.get("ok"):
+        return None
+    conf = read.get("confirmation") or {}
+    if not conf.get("confirmed"):
+        return None
+    o = conf["order"]
+    arrow = "🟢 BUY" if o["side"] == "long" else "🔴 SELL"
+    return (f"🎯 *CRT 1-5-9 — {read['symbol']}*  ({read['label']})\n"
+            f"{arrow} limit `{o['entry']}` at {o['dev']:+g} dev — confirmed @ {read['price']}\n"
+            f"_{conf['note']}_")
 
 
 def format_friday_alert(read: Optional[dict]) -> Optional[str]:
