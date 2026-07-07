@@ -159,19 +159,23 @@ def prelondon_limits(box: CBDR) -> dict:
     zone is the "notice reversals before London" band.
     """
     lv = box.levels
+    mid = round(box.mid, 2)
     orders = []
-    if "-1SD" in lv:
+    if {"-1SD", "-2SD", "+1SD"} <= set(lv):
         orders.append({"side": "long", "kind": "limit", "level": "-1SD",
-                       "entry": round(lv["-1SD"], 2),
+                       "entry": round(lv["-1SD"], 2), "stop": round(lv["-2SD"], 2),
+                       "targets": [mid, round(lv["+1SD"], 2)], "trade_type": "prelondon",
                        "reason": "buy limit at −1SD (discount / low of range)"})
-    if "+1SD" in lv:
+    if {"+1SD", "+2SD", "-1SD"} <= set(lv):
         orders.append({"side": "short", "kind": "limit", "level": "+1SD",
-                       "entry": round(lv["+1SD"], 2),
+                       "entry": round(lv["+1SD"], 2), "stop": round(lv["+2SD"], 2),
+                       "targets": [mid, round(lv["-1SD"], 2)], "trade_type": "prelondon",
                        "reason": "sell limit at +1SD"})
-    if "+3SD" in lv:
+    if {"+3SD", "+4SD", "+1SD"} <= set(lv):
         orders.append({"side": "short", "kind": "limit", "level": "+3SD",
-                       "entry": round(lv["+3SD"], 2),
-                       "reason": "sell limit at +3SD (extreme)"})
+                       "entry": round(lv["+3SD"], 2), "stop": round(lv["+4SD"], 2),
+                       "targets": [round(lv["+1SD"], 2), mid], "trade_type": "prelondon",
+                       "reason": "sell limit at +3SD (extreme reversal)"})
     lo_sd, hi_sd = GREY_ZONE_SD
     grey = {
         "buy_grey": [lv.get(f"-{lo_sd:g}SD"), lv.get(f"-{hi_sd:g}SD")],
