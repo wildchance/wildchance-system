@@ -63,6 +63,40 @@ async def fetch_ohlc(symbol: str, interval: str = "1day",
         return []
 
 
+async def fetch_hourly_raw(symbol: str, timezone: str = "UTC",
+                           outputsize: int = 48) -> List[dict]:
+    """1h bars WITH the hour preserved, in ``timezone``, oldest-first.
+
+    fetch_ohlc collapses timestamps to a date; the session-level map needs the hour
+    (1am / 7am) in the chart's timezone (e.g. America/New_York), so this keeps it.
+    Returns [{date, hour, open, high, low, close}]. Empty on any failure.
+    """
+    if not TWELVEDATA_KEY:
+        return []
+    params = {"symbol": normalize_symbol(symbol), "interval": "1h",
+              "outputsize": max(1, min(int(outputsize), 5000)),
+              "timezone": timezone, "apikey": TWELVEDATA_KEY}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            data = (await client.get("https://api.twelvedata.com/time_series",
+                                     params=params)).json()
+        out: List[dict] = []
+        for v in data.get("values") or []:
+            ts = v.get("datetime", "")
+            if len(ts) < 13:
+                continue
+            try:
+                out.append({"date": ts[:10], "hour": int(ts[11:13]),
+                            "open": float(v["open"]), "high": float(v["high"]),
+                            "low": float(v["low"]), "close": float(v["close"])})
+            except (KeyError, ValueError, TypeError):
+                continue
+        out.sort(key=lambda b: (b["date"], b["hour"]))
+        return out
+    except Exception:
+        return []
+
+
 def to_ohlc(bars: List[DatedOHLC]) -> List[Tuple[float, float, float, float]]:
     """Strip dates → (open, high, low, close) tuples for the MMM engine."""
     return [(o, h, l, c) for (_d, o, h, l, c) in bars]
