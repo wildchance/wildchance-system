@@ -1,4 +1,4 @@
-name: scheduled-scans
+zname: scheduled-scans
 
 # Robust scheduling: each cron does ONE job, dispatched by github.event.schedule
 # (the cron expression that fired) — NOT by wall-clock hour, because GitHub's
