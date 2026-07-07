@@ -34,6 +34,31 @@ async def candlerange(symbol: str, price: Optional[float] = Query(None)):
     return result
 
 
+@router.post("/crt")
+async def crt(symbols: str = Query(None),
+              session: str = Query(None, description="asia | ny (default: by UTC hour)"),
+              force: bool = Query(False)):
+    """1-5-9 CRT scan: arm the session's limit ladder + check 5-o'clock confirmation.
+
+    Call at 05:00 UTC (Asian) and 17:00 UTC (New York)."""
+    watch = ([s.strip() for s in symbols.split(",") if s.strip()] if symbols else DEFAULT_WATCH)
+    reads, alerts = [], []
+    for sym in watch:
+        r = await crs.crt_read(sym, session=session)
+        if r is None:
+            continue
+        reads.append(r)
+        text = crs.format_crt_alert(r)
+        if text:
+            alerts.append(text)
+    sent = False
+    if alerts:
+        sent = await _send("\n\n".join(alerts))
+    elif force:
+        sent = await _send("🎯 *CRT 1-5-9* — no confirmations at the limits right now.")
+    return {"scanned": len(watch), "reads": reads, "sent": sent}
+
+
 @router.post("/friday")
 async def friday(symbols: str = Query(None), force: bool = Query(False)):
     """Friday pre-close 1h read → Monday-gap anticipation (call ~20:55 UTC Fri)."""
