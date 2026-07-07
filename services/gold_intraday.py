@@ -98,6 +98,19 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
     if sig.get("signal") in ("LONG", "SHORT") and trade_type:
         sig["session_end_hour"] = _SESSION_END.get(sess.get("quarter"), 24)
 
+    # NEWS gate — block same-day tier-1 (NFP/CPI/FOMC), flag within the window.
+    if sig.get("signal") in ("LONG", "SHORT"):
+        from services import news_guard
+        today = now.date()
+        block = await news_guard.news_flag(today, "XAU/USD", win=0)
+        warn = block or await news_guard.news_flag(today, "XAU/USD")
+        if warn:
+            sig["news"] = warn
+        if block:
+            sig["signal"] = "NO TRADE"
+            sig["reason"] = block
+            return sig
+
     if notify and sig.get("signal") in ("LONG", "SHORT"):
         sig["sent"] = await _tg(format_card(sig))
     return sig
