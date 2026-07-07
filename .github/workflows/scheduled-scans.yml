@@ -21,8 +21,11 @@ on:
     - cron: "0 8 1 * *"         # monthly performance scorecard (1st of month, 08:00 UTC)
     - cron: "0 * * * *"         # hourly intraday breach scan (1h z-score) + gold swing monitor
     - cron: "0 22 * * 0"        # weekly review + Sunday/weekly-open gold swing + Asian gold CBDR
-    - cron: "0 7 * * *"         # pre-London CBDR box + limits (window closes 06:45 UTC / 02:45 ET)
+    - cron: "0 7 * 3-10 *"      # pre-London limits — summer (EDT): 07:00 UTC = 03:00 ET
+    - cron: "0 8 * 11,12,1,2 *" # pre-London limits — winter (EST): 08:00 UTC = 03:00 ET
     - cron: "0 2 * * 1-5"       # Asia accumulation — gold intrasession scan
+    - cron: "0 5 * * 1-5"       # CRT 1-5-9 confirmation — Asian session (01:00 range candle)
+    - cron: "0 17 * * 1-5"      # CRT 1-5-9 confirmation — New York session (13:00 range candle)
     - cron: "55 20 * * 5"       # Friday pre-close 1h read — Monday-gap anticipation
     - cron: "5 2 * * *"         # candle-range read after the 01:00 UTC candle closes
     - cron: "5 14 * * *"        # candle-range read after the 13:00 UTC candle closes
@@ -67,6 +70,7 @@ jobs:
             post "/cbdr/limits/XAU/USD?window=prelondon&notify=true"
             post "/candlerange/scan?force=true"
             post "/candlerange/friday?force=true"
+            post "/candlerange/crt?session=ny&force=true"
             post "/quarterly/alert/USD/JPY"
             post "/autoalert/confluence?min_confidence=85"
             post "/benner/alert"
@@ -104,7 +108,10 @@ jobs:
               post "/wildchance/scrape?tier=6h"
               post "/autoalert/confluence?min_confidence=85"
               ;;
-            "0 21 * * 5")       post "/wildchance/scrape?tier=weekly" ;;
+            "0 21 * * 5")
+              post "/wildchance/scrape?tier=weekly"
+              post "/gold/regime/refresh"    # pull live FRED + CFTC gold COT
+              ;;
             "0 8 1 * *")        post "/scorecard/digest" ;;
             "0 * * * *")
               post "/intraday/scan"
@@ -119,10 +126,10 @@ jobs:
               post "/gold/monitor"
               post "/gold/scorecard/digest"
               ;;
-            "0 7 * * *")
-              # Pre-London CBDR (window closes 06:45 UTC / 02:45 ET). FX get the box
-              # + SD levels; gold gets the actionable limit plan (buy −1SD, sell
-              # +1/+3SD, 1–1.5SD grey reversal zone) at the 02:45-03:00 ET window.
+            "0 7 * 3-10 *"|"0 8 * 11,12,1,2 *")
+              # Pre-London CBDR at 03:00 ET year-round (summer 07:00 UTC / winter
+              # 08:00 UTC; window closes 02:45 ET). FX get the box + SD levels; gold
+              # gets the limit plan (buy −1SD, sell +1/+3SD, 1–1.5SD grey zone).
               post "/cbdr/alert/USD/JPY?window=prelondon"
               post "/cbdr/alert/EUR/USD?window=prelondon"
               post "/cbdr/alert/GBP/USD?window=prelondon"
@@ -131,6 +138,14 @@ jobs:
             "0 2 * * 1-5")
               # Asia accumulation window — gold intrasession scan
               post "/gold/intraday?balance=5000&notify=true"
+              ;;
+            "0 5 * * 1-5")
+              # CRT 1-5-9 — Asian confirmation (01:00 range candle → 05:00 entry)
+              post "/candlerange/crt?session=asia"
+              ;;
+            "0 17 * * 1-5")
+              # CRT 1-5-9 — New York confirmation (13:00 range candle → 17:00 entry)
+              post "/candlerange/crt?session=ny"
               ;;
             "55 20 * * 5")
               # Friday pre-close — Monday-gap anticipation (the reliable candle read)
