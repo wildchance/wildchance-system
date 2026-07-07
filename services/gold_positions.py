@@ -89,10 +89,73 @@ async def open_from_signal(db: AsyncSession, sig: dict,
     return _to_dict(row)
 
 
+async def open_limit(db: AsyncSession, card: dict, source: str,
+                     expires_at: Optional[_dt.datetime] = None) -> Optional[dict]:
+    """Persist a sized limit card as a PENDING position (fills when price touches).
+
+    Deduped per (symbol, side, trade_type) per day. The monitor activates it to
+    OPEN on touch, or cancels it at ``expires_at``.
+    """
+    if card.get("signal") not in ("LONG", "SHORT"):
+        return None
+    if not card.get("gate", {}).get("allow", False):
+        return {"skipped": "gate blocked", "reason": card.get("gate", {}).get("reason")}
+    entry, stop = card.get("entry"), card.get("stop")
+    if entry is None or stop is None:
+        return None
+    side = "long" if card["signal"] == "LONG" else "short"
+    symbol = card.get("instrument", "XAU/USD")
+    trade_type = card.get("trade_type") or "limit"
+    dup = await _open_same_side_today(db, symbol, side, trade_type)
+    if dup is not None:
+        return {"skipped": "duplicate — same side/type already pending/open today", "id": dup.id}
+
+    tps = [t.get("price") for t in card.get("targets", [])]
+    tps += [None] * (4 - len(tps))
+    row = GoldPosition(
+        symbol=symbol, side=side, trade_type=trade_type,
+        entry=float(entry), stop=float(stop), stop_initial=float(stop),
+        limit_price=float(entry), expires_at=expires_at,
+        tp1=tps[0], tp2=tps[1], tp3=tps[2], tp4=tps[3],
+        lot=card.get("lot"), risk_usd=card.get("risk_usd"),
+        profile=card.get("profile"), source=source,
+        justification=(card.get("justification") or "")[:480],
+        action="BUY" if side == "long" else "SELL",
+        status="PENDING",
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return _to_dict(row)
+
+
 async def monitor(db: AsyncSession, price: float,
                   now: Optional[_dt.datetime] = None) -> dict:
-    """Advance every OPEN position against ``price``; close the ones that hit."""
+    """Advance PENDING (fill/cancel) and OPEN (TP/SL/time-stop) positions."""
     now = now or _utcnow()
+
+    # 1) PENDING limits — fill on touch, cancel at expiry.
+    pres = await db.execute(select(GoldPosition).where(GoldPosition.status == "PENDING"))
+    filled, cancelled = [], []
+    for row in list(pres.scalars().all()):
+        exp = row.expires_at
+        if exp is not None and exp.tzinfo is None:
+            exp = exp.replace(tzinfo=_dt.timezone.utc)
+        action = pos.evaluate_pending(
+            {"side": row.side, "limit_price": row.limit_price, "expires_at": exp}, price, now)
+        if action["action"] == "fill":
+            row.status = "OPEN"
+            row.opened_at = now
+            row.deadline = deadline_for(row.trade_type, now)
+            filled.append({"id": row.id, "trade_type": row.trade_type, "entry": row.entry})
+        elif action["action"] == "cancel":
+            row.status = "CANCELLED"
+            row.closed_at = now
+            cancelled.append({"id": row.id, "trade_type": row.trade_type})
+    if filled or cancelled:
+        await db.commit()
+
+    # 2) OPEN positions — trail/close.
     res = await db.execute(select(GoldPosition).where(GoldPosition.status == "OPEN"))
     rows = list(res.scalars().all())
     closed, updated = [], []
@@ -124,7 +187,9 @@ async def monitor(db: AsyncSession, price: float,
             updated.append({"id": row.id, "tp_hit": row.tp_hit,
                             "be_active": row.be_active, "note": action["note"]})
     await db.commit()
-    return {"price": price, "checked": len(rows), "closed": closed, "still_open": updated}
+    return {"price": price, "checked": len(rows),
+            "filled": filled, "cancelled": cancelled,
+            "closed": closed, "still_open": updated}
 
 
 async def list_positions(db: AsyncSession, status: Optional[str] = None,
@@ -144,8 +209,10 @@ def _to_dict(r: GoldPosition) -> dict:
         "targets": [t for t in (r.tp1, r.tp2, r.tp3, r.tp4) if t is not None],
         "lot": r.lot, "risk_usd": r.risk_usd, "be_active": r.be_active,
         "tp_hit": r.tp_hit, "profile": r.profile, "source": r.source,
-        "status": r.status, "exit_price": r.exit_price, "exit_reason": r.exit_reason,
+        "status": r.status, "limit_price": r.limit_price,
+        "exit_price": r.exit_price, "exit_reason": r.exit_reason,
         "result_r": r.result_r,
+        "expires_at": str(r.expires_at) if r.expires_at else None,
         "opened_at": str(r.opened_at) if r.opened_at else None,
         "deadline": str(r.deadline) if r.deadline else None,
         "closed_at": str(r.closed_at) if r.closed_at else None,
