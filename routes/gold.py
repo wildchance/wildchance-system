@@ -52,13 +52,20 @@ def _week_end() -> _dt.datetime:
     return fri if fri > now else fri + _dt.timedelta(days=7)
 
 
-async def _arm_limits(db, orders, source, balance, risk_usd, expires_at):
-    """Size limit specs and persist each as a PENDING tracked position."""
+async def _arm_limits(db, orders, source, balance, risk_usd, expires_at,
+                      execute: bool = False):
+    """Size limit specs, persist each as a PENDING tracked position, and — when
+    ``execute`` — enqueue the matching MT5 LIMIT order for the bridge to place."""
     out = []
     for o in orders:
         card = size_limit(o, balance, risk_usd)
         opened = await gp.open_limit(db, card, source, expires_at)
-        out.append(opened or {"skipped": "not sizeable", "order": o})
+        entry = {"tracked": opened or {"skipped": "not sizeable", "order": o}}
+        if execute and card.get("signal") in ("LONG", "SHORT"):
+            order = te.build_order(card, source=source)
+            if order:
+                entry["queued_order"] = await te.enqueue(db, order)
+        out.append(entry)
     return out
 
 
@@ -224,6 +231,7 @@ async def scorecard_digest(force: bool = Query(False, description="send even if 
 async def prelondon(balance: float = Query(5000, gt=0),
                     risk_usd: float = Query(20.0, gt=0),
                     track: bool = Query(True, description="arm the limits as PENDING positions"),
+                    execute: bool = Query(False, description="also enqueue MT5 limit orders"),
                     db: AsyncSession = Depends(get_db)):
     """Arm the pre-London CBDR limits (buy −1SD / sell +1,+3SD) as tracked PENDING
     positions that fill on touch and are monitored to TP/SL through the NY session."""
@@ -236,7 +244,7 @@ async def prelondon(balance: float = Query(5000, gt=0),
     plan = prelondon_limits(box)
     if track:
         plan["tracked"] = await _arm_limits(db, plan["orders"], "gold_prelondon",
-                                            balance, risk_usd, _ny_close())
+                                            balance, risk_usd, _ny_close(), execute=execute)
     plan["session"] = win["session"]
     return plan
 
@@ -290,6 +298,7 @@ async def sd_fade(extreme_sd: float = Query(3.0, ge=1.5, le=6.0,
                   balance: float = Query(5000, gt=0),
                   risk_usd: float = Query(20.0, gt=0),
                   track: bool = Query(False, description="persist the fade limits as PENDING positions"),
+                  execute: bool = Query(False, description="also enqueue MT5 limit orders"),
                   db: AsyncSession = Depends(get_db)):
     """Seek & Destroy fade plan — extreme limits outside the week's range on the
     HTF-trend side (monthly/quarterly), to catch liquidity sweeps in a ranging week."""
@@ -313,7 +322,7 @@ async def sd_fade(extreme_sd: float = Query(3.0, ge=1.5, le=6.0,
     plan = seek_destroy_plan(high, low, htf, extreme_sd=extreme_sd)
     if track:
         plan["tracked"] = await _arm_limits(db, plan["orders"], "gold_sd_fade",
-                                            balance, risk_usd, _week_end())
+                                            balance, risk_usd, _week_end(), execute=execute)
     return {"applicable": True, "profile": profile["profile"],
             "basis": basis, "range": [low, high], "htf_bias": htf, **plan}
 
