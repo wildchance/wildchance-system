@@ -21,6 +21,8 @@ from services.wildchance_service import get_latest_feed
 from utils.price_fetcher import get_forex_price
 from gold.ict import classify_week, confluence as ict_confluence
 from gold.signal import assemble, format_card
+from gold import macro as gmacro
+from gold.location import location_gate
 
 BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default=None) or config("BOT_TOKEN", default=None)
 CHAT_ID = config("TELEGRAM_CHAT_ID", default=None)
@@ -54,7 +56,8 @@ async def _wildchance_gold_side() -> str:
 
 async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
                sl_pips: float = 200.0, require_confluence: bool = False,
-               notify: bool = False) -> dict:
+               require_macro: bool = True, require_location: bool = True,
+               loc_deep: float = 0.5, notify: bool = False) -> dict:
     """Build (and optionally send) the current gold signal."""
     daily = await fetch_ohlc("XAU/USD", "1day", 25)
     if len(daily) < 3:
@@ -70,6 +73,32 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
         entry = daily[-1][4]                       # fall back to last close
 
     sig = assemble(profile, entry, balance, tier=tier, risk_usd=risk_usd, sl_pips=sl_pips)
+
+    bias = (profile or {}).get("bias")
+
+    # --- MACRO ANCHOR — align with the standing macro bias, respect invalidation.
+    if sig.get("signal") in ("LONG", "SHORT"):
+        macro = gmacro.macro_confluence(bias, entry)
+        sig["macro"] = macro
+        if require_macro and macro["invalidated"]:
+            sig["signal"] = "NO TRADE"
+            sig["suppressed"] = macro["note"]
+            return sig
+        if require_macro and macro["status"] == "diverges":
+            sig["signal"] = "NO TRADE"
+            sig["suppressed"] = (f"weekly {bias} diverges from macro {macro['bias']} "
+                                 "anchor — stand aside (no mid-week flip)")
+            return sig
+
+    # --- LOCATION — buy discount / sell premium (today's range), never chase.
+    if sig.get("signal") in ("LONG", "SHORT") and require_location:
+        d_high, d_low = daily[-1][2], daily[-1][3]
+        loc = location_gate(bias, entry, d_high, d_low, deep=loc_deep)
+        sig["location"] = loc
+        if not loc["ok"]:
+            sig["signal"] = "NO TRADE"
+            sig["suppressed"] = loc["reason"]
+            return sig
 
     # Wildchance gold confluence (retail + COT) — justification, and optional gate.
     wc_side = await _wildchance_gold_side()
