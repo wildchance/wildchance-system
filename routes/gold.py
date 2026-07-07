@@ -16,10 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.db import get_db
 from services import trade_executor as te
+from services import gold_positions as gp
+from services import scorecard_service as sc
 from gold import risk_engine as gr
 from gold import compounding as gc
+from gold import macro as gmacro
 from gold.weekly import weekly_bias
 from gold.ict import classify_week
+from utils.price_fetcher import get_forex_price
 from services.ohlc_service import fetch_ohlc
 from services import gold_scan
 from services import gold_intraday
@@ -34,11 +38,24 @@ async def scan(balance: float = Query(5000, gt=0),
                sl_pips: float = Query(200.0, gt=0),
                require_confluence: bool = Query(False,
                    description="suppress when wildchance retail+COT opposes the profile"),
-               notify: bool = Query(False)):
-    """Real-time gold signal: ICT profile → entry/SL/TP/lot → prop gate → Telegram."""
-    return await gold_scan.scan(balance=balance, tier=tier, risk_usd=risk_usd,
-                                sl_pips=sl_pips, require_confluence=require_confluence,
-                                notify=notify)
+               require_macro: bool = Query(True,
+                   description="require alignment with the standing macro bias"),
+               require_location: bool = Query(True,
+                   description="only enter in discount (long) / premium (short)"),
+               track: bool = Query(True,
+                   description="persist a fired signal as a monitored swing position"),
+               notify: bool = Query(False),
+               db: AsyncSession = Depends(get_db)):
+    """Real-time gold signal: ICT profile → macro+location gate → entry/SL/TP/lot → prop gate → Telegram."""
+    sig = await gold_scan.scan(balance=balance, tier=tier, risk_usd=risk_usd,
+                               sl_pips=sl_pips, require_confluence=require_confluence,
+                               require_macro=require_macro, require_location=require_location,
+                               notify=notify)
+    if track and sig.get("signal") in ("LONG", "SHORT"):
+        opened = await gp.open_from_signal(db, sig, source="gold_scan")
+        if opened:
+            sig["tracked_position"] = opened
+    return sig
 
 
 @router.post("/intraday")
@@ -50,16 +67,22 @@ async def intraday(balance: float = Query(5000, gt=0),
                    require_fld: bool = Query(True),
                    require_distribution: bool = Query(False,
                        description="only fire in the NY-AM distribution quarter (Q3)"),
+                   track: bool = Query(True,
+                       description="persist a fired signal as a monitored swing position"),
                    notify: bool = Query(False),
                    execute: bool = Query(False,
                        description="enqueue the order for the MT5 bridge to place"),
                    db: AsyncSession = Depends(get_db)):
-    """Intraday signal: weekly profile × QT session quarter × Hurst FLD → prop gate → Telegram."""
+    """Intraday signal: weekly profile × QT session quarter × Hurst FLD → macro+location gate → prop gate → Telegram."""
     sig = await gold_intraday.scan(balance=balance, tier=tier, risk_usd=risk_usd,
                                    sl_pips=sl_pips, cycle_len=cycle_len,
                                    require_fld=require_fld,
                                    require_distribution=require_distribution,
                                    notify=notify)
+    if track and sig.get("signal") in ("LONG", "SHORT"):
+        opened = await gp.open_from_signal(db, sig, source="gold_intraday")
+        if opened:
+            sig["tracked_position"] = opened
     if execute:
         order = te.build_order(sig, source="gold_intraday")
         if order:
@@ -117,6 +140,57 @@ async def bias():
         raise HTTPException(status_code=502, detail="could not fetch XAU/USD daily bars")
     read = weekly_bias(daily)
     return {"instrument": "XAU/USD", **(read or {})}
+
+
+@router.post("/monitor")
+async def monitor(price: float = Query(None, gt=0,
+                      description="override live price (else fetched)"),
+                  db: AsyncSession = Depends(get_db)):
+    """Advance every OPEN gold swing: trail to BE after TP1, close on TP/SL/time-stop.
+
+    Cron-friendly — call frequently through Mon/Tue so the weekend swing is closed
+    at target or at the Monday-close/Tuesday-open time-stop.
+    """
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            price = None
+    if price is None:
+        raise HTTPException(status_code=502, detail="could not fetch XAU/USD price")
+    return await gp.monitor(db, float(price))
+
+
+@router.get("/positions")
+async def positions(status: str = Query(None, description="OPEN | CLOSED (default all)"),
+                    limit: int = Query(50, ge=1, le=200),
+                    db: AsyncSession = Depends(get_db)):
+    return {"positions": await gp.list_positions(db, status=status, limit=limit)}
+
+
+@router.get("/scorecard")
+async def scorecard(db: AsyncSession = Depends(get_db)):
+    """Performance + reflection over CLOSED gold swings (realized R)."""
+    return await sc.gold_report(db)
+
+
+@router.post("/scorecard/digest")
+async def scorecard_digest(force: bool = Query(False, description="send even if nothing closed"),
+                           db: AsyncSession = Depends(get_db)):
+    """Push the gold scorecard to Telegram (cron-friendly)."""
+    text = await sc.gold_digest_text(db)
+    if not text:
+        if not force:
+            return {"sent": False, "reason": "no closed gold trades yet"}
+        text = "🏆 *GOLD Scorecard*\n\n_No closed gold trades yet._"
+    sent = await gold_scan._tg(text)
+    return {"sent": sent}
+
+
+@router.get("/macro")
+async def macro():
+    """The standing Q3/Q4 macro read that gates gold signals."""
+    return gmacro.macro_read()
 
 
 @router.get("/size")
