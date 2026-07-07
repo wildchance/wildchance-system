@@ -130,6 +130,39 @@ def regime_read() -> dict:
     }
 
 
+async def refresh_inputs() -> dict:
+    """Pull live FRED (real rate / Fed) + CFTC (gold COT) and update the regime
+    inputs in place. Each feed degrades independently — a missing key/failure just
+    leaves that input on its encoded value. Returns what was applied + the regime.
+    """
+    from services import fred_service as fred, cftc_service as cftc
+    from gold import purchases_audit as gpa
+
+    applied = {}
+    rr = await fred.real_rate_read()
+    if rr:
+        INPUTS["real_rate_direction"] = ("rising_near_term" if rr["direction"] == "rising"
+                                         else "falling" if rr["direction"] == "falling"
+                                         else "flat")
+        applied["real_rate"] = rr
+    ff = await fred.fed_funds_read()
+    if ff:
+        INPUTS["fed_cycle"] = {"hiking": "hiking", "cutting": "cutting",
+                               "hold": "hold_hawkish_risk"}[ff["cycle"]]
+        applied["fed_funds"] = ff
+    usd = await fred.dollar_read()
+    if usd:
+        applied["dollar_rbusbis"] = usd
+    cot = await cftc.gold_cot()
+    if cot:
+        gpa.SNAPSHOT["cot_noncomm_net"] = cot["noncomm_net"]
+        gpa.SNAPSHOT["cot_open_interest"] = cot["open_interest"]
+        applied["cot"] = cot
+    if applied:
+        INPUTS["as_of"] = "live-refresh"
+    return {"applied": applied, "sources_live": list(applied), "regime": regime_read()}
+
+
 def regime_gate(side: str, dxy_price: float = None) -> dict:
     """Confluence gate for a proposed gold entry vs the fused regime + dollar + COT.
 
