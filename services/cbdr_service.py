@@ -40,9 +40,22 @@ def _minute_of_day(ts: str) -> Optional[int]:
         return None
 
 
-async def fetch_cbdr_window(symbol: str, window: str = "cbdr") -> Optional[dict]:
-    """Return {session, high, low, bars, window, interval, tz, label} for the most
-    recent completed session of `window`, or None if unavailable/unknown."""
+def _monday_iso(today_iso: str) -> str:
+    """The Monday (ISO date) of the week containing ``today_iso``."""
+    import datetime as _d
+    d = _d.date.fromisoformat(today_iso)
+    return (d - _d.timedelta(days=d.weekday())).isoformat()
+
+
+async def fetch_cbdr_window(symbol: str, window: str = "cbdr",
+                            pick: str = "latest") -> Optional[dict]:
+    """Return {session, high, low, bars, window, interval, tz, label} for a session
+    of `window`, or None if unavailable/unknown.
+
+    pick="latest" (default) = the most recent completed session; pick="monday" =
+    the current week's Monday session (the CBDR that sets the weekly deviation
+    basis for the Seek & Destroy fade), falling back to latest if not present.
+    """
     if not TWELVEDATA_KEY:
         return None
     win: Optional[Window] = WINDOWS.get(window)
@@ -89,6 +102,10 @@ async def fetch_cbdr_window(symbol: str, window: str = "cbdr") -> Optional[dict]
         return None
 
     session = max(by_session_high.keys())
+    if pick == "monday":
+        monday = _monday_iso(session)          # Monday of the latest session's week
+        if monday in by_session_high:
+            session = monday
     highs, lows = by_session_high[session], by_session_low[session]
     high, low = cbdr_box(highs, lows)
     return {
