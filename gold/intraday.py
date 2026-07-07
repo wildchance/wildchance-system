@@ -17,6 +17,8 @@ from __future__ import annotations
 from typing import Optional
 
 from gold.signal import assemble, assemble_structured, format_card as _format_base
+from gold import macro as gmacro
+from gold.location import location_gate
 
 
 def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
@@ -25,17 +27,44 @@ def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
                       weekday_q: Optional[dict] = None,
                       require_fld: bool = True,
                       require_distribution: bool = False,
-                      entry_read: Optional[dict] = None) -> dict:
+                      entry_read: Optional[dict] = None,
+                      ref_high: Optional[float] = None,
+                      ref_low: Optional[float] = None,
+                      require_macro: bool = True,
+                      require_location: bool = True,
+                      loc_deep: float = 0.5) -> dict:
     """Combine the three scales into one gated intraday signal.
 
     If ``entry_read`` (from gold.entry.refined_entry) has a valid BMS/OTE, the
     trade is sized off that structure entry+stop; otherwise the fixed-pip entry.
+
+    Two gates added over the raw profile fusion:
+      • MACRO ANCHOR — the weekly bias must agree with (or be neutral to) the
+        standing macro bias, and price must not be below the macro invalidation.
+        This is the fix for the mid-week direction flip: macro is the week's
+        stable anchor, so a profile that flips against it stands aside.
+      • LOCATION — a long may only enter in discount, a short only in premium
+        (relative to ``ref_high``/``ref_low``). No more market-filling premium.
     """
     bias = (weekly_profile or {}).get("bias")
     if bias not in ("long", "short"):
         return {"signal": "NO TRADE", "instrument": "XAU/USD",
                 "reason": f"no weekly direction ({(weekly_profile or {}).get('profile')})",
                 "layers": {"weekly": weekly_profile, "session": session_q, "fld": fld_sig}}
+
+    # --- MACRO ANCHOR (mid-week-flip damper) ------------------------------
+    macro = gmacro.macro_confluence(bias, entry)
+    if require_macro:
+        if macro["invalidated"]:
+            return {"signal": "NO TRADE", "instrument": "XAU/USD",
+                    "reason": macro["note"], "macro": macro,
+                    "layers": {"weekly": weekly_profile, "session": session_q, "fld": fld_sig}}
+        if macro["status"] == "diverges":
+            return {"signal": "NO TRADE", "instrument": "XAU/USD",
+                    "reason": (f"weekly {bias} diverges from macro {macro['bias']} anchor — "
+                               "stand aside (no mid-week flip)"),
+                    "macro": macro,
+                    "layers": {"weekly": weekly_profile, "session": session_q, "fld": fld_sig}}
 
     # base sized card — structure entry (Wade OTE/OB) if available, else fixed-pip
     if entry_read and entry_read.get("ok") and entry_read.get("entry") and entry_read.get("stop"):
@@ -48,6 +77,7 @@ def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
                         risk_usd=risk_usd, sl_pips=sl_pips)
     card["layers"] = {"weekly": weekly_profile, "session": session_q, "fld": fld_sig,
                       "weekday": weekday_q}
+    card["macro"] = macro
     if card.get("signal") == "NO TRADE":
         return card
 
@@ -55,9 +85,20 @@ def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
         f"weekly {weekly_profile.get('profile')} ({bias})",
         f"session Q{session_q.get('quarter')} {session_q.get('phase')} ({session_q.get('session')})",
         f"FLD {fld_sig.get('cross') or fld_sig.get('position')}",
+        f"macro {macro['status']} ({macro['note']})",
     ]
     if card.get("entry_mode") == "structure":
         reasons.append(f"BMS {card['structure']['bms']} + OTE zone {card['structure']['zone']}")
+
+    # --- LOCATION gate — buy discount / sell premium, never chase ----------
+    if require_location and ref_high is not None and ref_low is not None:
+        loc = location_gate(bias, card.get("entry", entry), ref_high, ref_low, deep=loc_deep)
+        card["location"] = loc
+        if not loc["ok"]:
+            card["signal"] = "NO TRADE"
+            card["reason"] = loc["reason"]
+            return card
+        reasons.append(f"location {loc['zone']} (pos {loc['pos']:.2f})")
 
     # weekly QT gate — Friday is reversal / no-trade
     if weekday_q is not None and not weekday_q.get("tradeable", True):
@@ -102,4 +143,12 @@ def format_card(sig: dict) -> str:
             base += f"\n🏗️ BMS {st.get('bms')} · OTE {st.get('zone')}"
             if st.get("order_block"):
                 base += f" · OB {st['order_block']['ob_low']}–{st['order_block']['ob_high']}"
+        loc = sig.get("location")
+        if loc and loc.get("pos") is not None:
+            base += f"\n📍 {loc['zone']} entry (pos {loc['pos']:.2f})"
+        mac = sig.get("macro")
+        if mac:
+            base += f"\n🌍 macro {mac['status']}"
+            if mac.get("in_accumulation"):
+                base += " · in accumulation band"
     return base
