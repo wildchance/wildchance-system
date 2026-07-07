@@ -19,12 +19,15 @@ class GoldPosition(Base):
     opened_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     symbol = Column(String, nullable=False, default="XAU/USD")
     side = Column(String, nullable=False)            # long | short
+    trade_type = Column(String, default="swing")     # swing | intraday | intrasession
+    deadline = Column(DateTime(timezone=True))       # tier time-stop horizon
     entry = Column(Float, nullable=False)
     stop = Column(Float, nullable=False)             # current stop (trails to BE)
     stop_initial = Column(Float, nullable=False)     # for R math after BE trail
     tp1 = Column(Float)
     tp2 = Column(Float)
     tp3 = Column(Float)
+    tp4 = Column(Float)                              # swing tier runs 4 targets (5-8R)
     lot = Column(Float)
     risk_usd = Column(Float)
     be_active = Column(Boolean, default=False)       # stop trailed to break-even?
