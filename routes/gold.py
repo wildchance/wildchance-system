@@ -205,6 +205,12 @@ async def regime():
     return gcycle.regime_read()
 
 
+@router.post("/regime/refresh")
+async def regime_refresh():
+    """Pull live FRED (real rate / Fed) + CFTC (gold COT) into the regime inputs."""
+    return await gcycle.refresh_inputs()
+
+
 @router.get("/dxy")
 async def dxy(price: float = Query(None, description="live DXY weekly close (optional)")):
     """DXY regime + the dollar→gold inverse bias (Trump-term anticipation structure)."""
@@ -231,11 +237,17 @@ async def sd_fade(extreme_sd: float = Query(3.0, ge=1.5, le=6.0,
         return {"applicable": False, "profile": (profile or {}).get("profile"),
                 "reason": "not a Seek & Destroy week — use the normal tiered scan"}
     htf = gcycle.regime_read()["gold_bias"]        # monthly/quarterly fused bias
-    plan = seek_destroy_plan(profile["week_high"], profile["week_low"], htf,
-                             extreme_sd=extreme_sd)
+    # Deviation basis = MONDAY's CBDR (2-8pm NY / "20:00 range") — it sets the
+    # week's trend/range; extremes project from it. Fall back to the week hi/lo.
+    from services.cbdr_service import fetch_cbdr_window
+    mon = await fetch_cbdr_window("XAU/USD", "cbdr", pick="monday")
+    if mon:
+        high, low, basis = mon["high"], mon["low"], f"Monday CBDR ({mon['session']})"
+    else:
+        high, low, basis = profile["week_high"], profile["week_low"], "week range (CBDR unavailable)"
+    plan = seek_destroy_plan(high, low, htf, extreme_sd=extreme_sd)
     return {"applicable": True, "profile": profile["profile"],
-            "week_range": [profile["week_low"], profile["week_high"]],
-            "htf_bias": htf, **plan}
+            "basis": basis, "range": [low, high], "htf_bias": htf, **plan}
 
 
 @router.get("/size")
