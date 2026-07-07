@@ -47,16 +47,39 @@ INPUTS = {
     "cb_survey_conviction": "strong",            # ~89% expect reserves to rise
     "etf_flow_direction": "easing_outflows",     # selling pressure fading, not yet accumulation
     "dollar_funding": "loose",                   # no acute SOFR/TGA squeeze flagged
+    # Live RBUSBIS-implied gold bias (long/short/neutral) once refreshed; None →
+    # fall back to the anticipated DXY structure in gold.dxy.
+    "dollar_gold_bias": None,
+    "dollar_rbusbis_dir": None,
 }
+
+
+def dollar_gold_bias() -> str:
+    """The dollar-implied gold bias — live RBUSBIS when refreshed, else the
+    anticipated DXY structure."""
+    live = INPUTS.get("dollar_gold_bias")
+    if live in ("long", "short", "neutral"):
+        return live
+    return gdxy.gold_from_dollar()["gold_bias"]
+
+
+def _dollar_confluence(side: str) -> str:
+    want = "long" if side.lower() in ("long", "buy") else "short"
+    gb = dollar_gold_bias()
+    return "confirms" if gb == want else "diverges" if gb in ("long", "short") else "neutral"
 
 
 def _htf() -> List[dict]:
     """Higher-timeframe regime rows (read BEFORE any entry)."""
     dbias = gdxy.gold_from_dollar()
+    live = INPUTS.get("dollar_gold_bias") in ("long", "short", "neutral")
+    d_gold = dollar_gold_bias()
+    d_src = (f"RBUSBIS live ({INPUTS.get('dollar_rbusbis_dir')})" if live
+             else f"DXY anticipated ({dbias['dollar_phase']})")
     return [
-        {"step": 1, "source": "BIS/DXY", "question": "real broad dollar BMS or SMS?",
-         "reading": f"dollar {dbias['dollar_regime'].upper()} ({dbias['dollar_phase']})",
-         "gold": dbias["gold_bias"], "note": dbias["note"]},
+        {"step": 1, "source": "BIS/FRED RBUSBIS" if live else "DXY", "question": "real broad dollar rising or falling?",
+         "reading": d_src, "gold": d_gold,
+         "note": f"dollar→gold inverse ({d_src})"},
         {"step": 2, "source": "FRED", "question": "real rates rising or falling?",
          "reading": INPUTS["real_rate_direction"],
          "gold": "short" if INPUTS["real_rate_direction"].startswith("rising") else "long",
@@ -152,6 +175,8 @@ async def refresh_inputs() -> dict:
         applied["fed_funds"] = ff
     usd = await fred.dollar_read()
     if usd:
+        INPUTS["dollar_gold_bias"] = usd["gold"]          # live RBUSBIS → gold bias
+        INPUTS["dollar_rbusbis_dir"] = usd["direction"]
         applied["dollar_rbusbis"] = usd
     cot = await cftc.gold_cot()
     if cot:
@@ -173,7 +198,8 @@ def regime_gate(side: str, dxy_price: float = None) -> dict:
     the dollar + positioning edge.
     """
     want = "long" if side.lower() in ("long", "buy") else "short"
-    dollar = gdxy.confluence(side, dxy_price)
+    # Prefer the live RBUSBIS-implied bias; fall back to the DXY structure.
+    dollar = _dollar_confluence(side) if INPUTS.get("dollar_gold_bias") else gdxy.confluence(side, dxy_price)
     ps = gpa.positioning_state()
     reasons = []
     ok = True
