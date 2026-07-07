@@ -1,51 +1,120 @@
-"""CFTC Commitments of Traders (COT) for COMEX gold — guarded, additive.
+"""Fetch intraday bars for a named CBDR window and build the box.
 
-Pulls the latest weekly legacy COT for gold from the CFTC public reporting API
-(Socrata — free, no key). Feeds the regime filter's tactical positioning read:
-non-commercial net and open interest, plus a WoW change. Returns None on any
-failure so the regime stack falls back to the encoded snapshot.
+Supports multiple session windows (see cbdr.engine.WINDOWS):
+  • "cbdr"      14:00–20:00 New York, 1h bars   (classic ICT CBDR)
+  • "prelondon" 18:00–02:45 UTC, 15m bars       (pre-London accumulation box)
 
-CFTC releases Fridays 3:30pm ET for the prior Tuesday.
+Each window declares its own timezone and bar interval. We ask TwelveData for
+bars already converted to that timezone, bucket them into logical sessions
+(honouring a midnight wrap), and return the most recently completed session's
+high/low. ONE time_series request per call; returns None on any failure so the
+caller degrades gracefully.
+
+NOTE: query a window only AFTER it has closed (the schedulers do — e.g. the
+pre-London alert fires at 03:00 UTC) so the latest bucket is a complete session.
 """
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Optional
 
 import httpx
+from decouple import config
 
-# Socrata legacy futures-only COT dataset.
-CFTC_URL = "https://publicreporting.cftc.gov/resource/6dca-aqww.json"
-# COMEX gold legacy market code.
-GOLD_MARKET_CODE = "088691"
+from cbdr.engine import WINDOWS, Window, in_window, session_key, cbdr_box
+
+TWELVEDATA_KEY = config("TWELVEDATA_API_KEY", default=None) or config("TWELVEDATA_KEY", default=None)
+
+# Bars to request — enough to cover ~3 sessions at the finest interval.
+_OUTPUTSIZE = {"1h": 72, "15min": 320}
 
 
-def net_and_oi(row: dict) -> Optional[dict]:
-    """Extract non-commercial net + open interest + report date from a COT row."""
-    try:
-        long_ = float(row["noncomm_positions_long_all"])
-        short = float(row["noncomm_positions_short_all"])
-        oi = float(row["open_interest_all"])
-    except (KeyError, ValueError, TypeError):
+def _minute_of_day(ts: str) -> Optional[int]:
+    """Minutes-from-midnight from a 'YYYY-MM-DD HH:MM:SS' timestamp."""
+    if len(ts) < 16:
         return None
-    return {"noncomm_net": int(long_ - short), "open_interest": int(oi),
-            "report_date": row.get("report_date_as_yyyy_mm_dd", "")[:10]}
-
-
-async def gold_cot() -> Optional[dict]:
-    """Latest two weekly gold COT prints → net, OI, and the WoW net change."""
-    params = {"cftc_contract_market_code": GOLD_MARKET_CODE,
-              "$order": "report_date_as_yyyy_mm_dd DESC", "$limit": 2}
     try:
-        async with httpx.AsyncClient(timeout=12) as c:
-            rows = (await c.get(CFTC_URL, params=params)).json()
+        return int(ts[11:13]) * 60 + int(ts[14:16])
+    except ValueError:
+        return None
+
+
+def _monday_iso(today_iso: str) -> str:
+    """The Monday (ISO date) of the week containing ``today_iso``."""
+    import datetime as _d
+    d = _d.date.fromisoformat(today_iso)
+    return (d - _d.timedelta(days=d.weekday())).isoformat()
+
+
+async def fetch_cbdr_window(symbol: str, window: str = "cbdr",
+                            pick: str = "latest") -> Optional[dict]:
+    """Return {session, high, low, bars, window, interval, tz, label} for a session
+    of `window`, or None if unavailable/unknown.
+
+    pick="latest" (default) = the most recent completed session; pick="monday" =
+    the current week's Monday session (the CBDR that sets the weekly deviation
+    basis for the Seek & Destroy fade), falling back to latest if not present.
+    """
+    if not TWELVEDATA_KEY:
+        return None
+    win: Optional[Window] = WINDOWS.get(window)
+    if win is None:
+        return None
+
+    url = "https://api.twelvedata.com/time_series"
+    params = {
+        "symbol": symbol,
+        "interval": win.interval,
+        "outputsize": _OUTPUTSIZE.get(win.interval, 72),
+        "timezone": win.tz,
+        "apikey": TWELVEDATA_KEY,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=12) as client:
+            data = (await client.get(url, params=params)).json()
     except Exception:
         return None
-    if not isinstance(rows, list) or not rows:
+
+    values = data.get("values")
+    if not values:
         return None
-    latest = net_and_oi(rows[0])
-    if latest is None:
+
+    by_session_high = defaultdict(list)
+    by_session_low = defaultdict(list)
+    for v in values:
+        ts = v.get("datetime", "")
+        minute = _minute_of_day(ts)
+        if minute is None or len(ts) < 10:
+            continue
+        if not in_window(minute, win.start_min, win.end_min):
+            continue
+        try:
+            hi = float(v["high"])
+            lo = float(v["low"])
+        except (ValueError, KeyError):
+            continue
+        sk = session_key(ts[:10], minute, win.start_min, win.end_min)
+        by_session_high[sk].append(hi)
+        by_session_low[sk].append(lo)
+
+    if not by_session_high:
         return None
-    prev = net_and_oi(rows[1]) if len(rows) > 1 else None
-    latest["wow_net_change"] = (latest["noncomm_net"] - prev["noncomm_net"]) if prev else None
-    return latest
+
+    session = max(by_session_high.keys())
+    if pick == "monday":
+        monday = _monday_iso(session)          # Monday of the latest session's week
+        if monday in by_session_high:
+            session = monday
+    highs, lows = by_session_high[session], by_session_low[session]
+    high, low = cbdr_box(highs, lows)
+    return {
+        "session": session,
+        "high": high,
+        "low": low,
+        "bars": len(highs),
+        "window": win.key,
+        "interval": win.interval,
+        "tz": win.tz,
+        "label": win.label,
+    }
