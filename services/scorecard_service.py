@@ -141,6 +141,7 @@ async def gold_report(db: AsyncSession, month: Optional[str] = None) -> dict:
         rows.append({
             "month": _month(t.opened_at),
             "action": t.action,
+            "trade_type": t.trade_type,
             "result_r": t.result_r,
             "exit_reason": t.exit_reason,
             "opened_at": str(t.opened_at),
@@ -156,6 +157,7 @@ async def gold_report(db: AsyncSession, month: Optional[str] = None) -> dict:
         "current_month_scorecard": by_month.get(current_month) if current_month else None,
         "by_month": dict(sorted(by_month.items())),
         "by_action": by_group(rows, "action"),
+        "by_type": by_group(rows, "trade_type"),
         "by_exit": by_group(rows, "exit_reason"),
     }
 
