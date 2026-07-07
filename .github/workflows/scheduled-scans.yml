@@ -19,8 +19,8 @@ on:
     - cron: "0 0,12,18 * * *"   # wildchance 6h (prices + recompute signals)
     - cron: "0 21 * * 5"        # wildchance weekly COT (Fri, after CFTC release)
     - cron: "0 8 1 * *"         # monthly performance scorecard (1st of month, 08:00 UTC)
-    - cron: "0 * * * *"         # hourly intraday breach scan (1h z-score)
-    - cron: "0 22 * * 0"        # weekly performance review (Sun 22:00 UTC)
+    - cron: "0 * * * *"         # hourly intraday breach scan (1h z-score) + gold swing monitor
+    - cron: "0 22 * * 0"        # weekly review + Sunday/weekly-open gold swing + Asian gold CBDR
     - cron: "0 3 * * *"         # pre-London CBDR box + SD levels (after 02:45 UTC close)
     - cron: "5 2 * * *"         # candle-range read after the 01:00 UTC candle closes
     - cron: "5 14 * * *"        # candle-range read after the 13:00 UTC candle closes
@@ -70,6 +70,9 @@ jobs:
             post "/edgefinder/digest?force=true"
             post "/gold/scan?balance=5000&notify=true"
             post "/gold/intraday?balance=5000&notify=true"
+            post "/cbdr/alert/XAU/USD?window=trade4"
+            post "/gold/monitor"
+            post "/gold/scorecard/digest?force=true"
             exit 0
           fi
 
@@ -99,8 +102,19 @@ jobs:
               ;;
             "0 21 * * 5")       post "/wildchance/scrape?tier=weekly" ;;
             "0 8 1 * *")        post "/scorecard/digest" ;;
-            "0 * * * *")        post "/intraday/scan" ;;
-            "0 22 * * 0")       post "/scorecard/weekly" ;;
+            "0 * * * *")
+              post "/intraday/scan"
+              post "/gold/monitor"     # trail/close tracked gold swings (TP/SL/time-stop)
+              ;;
+            "0 22 * * 0")
+              # Weekly review + the Sunday/weekly-open gold swing (the edge: buy the
+              # discount pullback) + the Asian-hours gold CBDR box + gold scorecard.
+              post "/scorecard/weekly"
+              post "/gold/scan?balance=5000&notify=true"
+              post "/cbdr/alert/XAU/USD?window=trade4"
+              post "/gold/monitor"
+              post "/gold/scorecard/digest"
+              ;;
             "0 3 * * *")
               # Pre-London CBDR box + SD levels for the key set
               post "/cbdr/alert/USD/JPY?window=prelondon"
