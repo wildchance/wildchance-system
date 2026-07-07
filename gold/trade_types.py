@@ -4,11 +4,12 @@
 trade is, and each tier carries its own stop source, reward:risk band, and
 holding horizon.
 
-  TIER          profiles                     SL source        R:R band   horizon
-  swing         reversals 1,2,5,6,11,12      weekly hi/lo     1:5–1:8    Mon close / Tue open
-  intraday      cont. 3,4,7,8 in NY dist Q3  day hi/lo        1:2–1:3    same-day (NY close)
-  intrasession  cont. 3,4,7,8 single session session hi/lo    1:3–1:5    session end
-  (none)        Seek & Destroy 9,10 / neutral — stand aside
+  TIER          profiles                      SL source        R:R band   horizon
+  swing         reversals 1,2,5,6,11,12       weekly hi/lo     1:5–1:8    Mon close / Tue open
+  intraday      cont. 3,4,7,8 in NY dist (Q3) day hi/lo        1:2–1:3    same-day (NY close)
+  intrasession  cont. 3,4,7,8 in Asia (Q1)    session hi/lo    1:3–1:5    session end
+  (none)        cont. in London manip (Q2)    — no entry (setup); pre-London limits cover it
+  (none)        Seek & Destroy 9,10 / neutral — see seek_destroy_plan (extreme fades)
 
 The R:R band becomes the laddered scale-out targets for that tier (e.g. a swing
 carries TP at 5R/6R/7R/8R). Stops come from the *structure* of the tier's own
@@ -38,9 +39,11 @@ TIERS = {
 def classify_tier(profile: dict, session_q: Optional[dict] = None) -> Optional[dict]:
     """Which trade-type tier does this profile+session imply? None = stand aside.
 
-    Reversal profiles are swings. Continuation profiles are intraday when the live
-    session quarter is the NY distribution (Q3), otherwise intrasession. Seek &
-    Destroy and non-directional profiles return None.
+    Reversal profiles are swings (any session). Continuation profiles are intraday
+    in the NY distribution (Q3) and intrasession in the Asia accumulation (Q1);
+    during London manipulation (Q2) or rollover (Q4) they stand aside — London is
+    the Judas/setup covered by the pre-London CBDR limits. Seek & Destroy and
+    non-directional profiles return None (see seek_destroy_plan).
     """
     bias = (profile or {}).get("bias")
     if bias not in ("long", "short"):
@@ -52,7 +55,12 @@ def classify_tier(profile: dict, session_q: Optional[dict] = None) -> Optional[d
         tt = "swing"
     elif pid in CONTINUATION:
         q = (session_q or {}).get("quarter")
-        tt = "intraday" if q == 3 else "intrasession"
+        if q == 3:
+            tt = "intraday"          # NY distribution
+        elif q == 1:
+            tt = "intrasession"      # Asia accumulation
+        else:
+            return None              # London manipulation / rollover — no entry
     else:
         return None
     cfg = TIERS[tt]
@@ -82,3 +90,44 @@ def tier_ref_range(sl_source: str, ranges: dict) -> Tuple[Optional[float], Optio
     if not rng:
         return None, None
     return rng[0], rng[1]
+
+
+def seek_destroy_plan(high: float, low: float, htf_bias: str,
+                      extreme_sd: float = 3.0, buffer: float = DEFAULT_BUFFER) -> dict:
+    """Ranging-week (Seek & Destroy) fade plan — extreme limits OUTSIDE the range.
+
+    S&D weeks run both sides of the range for liquidity, so instead of chasing we
+    arm limit orders at the ±extreme_sd projection beyond the range and fade the
+    sweep back inside — but ONLY on the side aligned with the monthly/quarterly
+    HTF trend (``htf_bias``). Neutral HTF arms both sides (react to whichever
+    sweeps). Targets ladder back through the range; the stop sits beyond the
+    extreme (half a range further).
+
+    Returns {orders:[...], range, extreme_sd, htf_bias}. Each order is a LIMIT
+    spec: {side, entry, stop, targets, reason}.
+    """
+    rng = high - low
+    if rng <= 0:
+        return {"orders": [], "reason": "no valid range", "range": rng}
+    mid = (high + low) / 2.0
+    up = round(high + extreme_sd * rng, 2)      # extreme above → sell-fade zone
+    dn = round(low - extreme_sd * rng, 2)       # extreme below → buy-fade zone
+
+    buy = {"side": "long", "kind": "limit", "entry": dn,
+           "stop": round(dn - 0.5 * rng - buffer, 2),
+           "targets": [round(low, 2), round(mid, 2), round(high, 2)],
+           "reason": f"buy the {extreme_sd:g}SD downside sweep, fade back into range (HTF long)"}
+    sell = {"side": "short", "kind": "limit", "entry": up,
+            "stop": round(up + 0.5 * rng + buffer, 2),
+            "targets": [round(high, 2), round(mid, 2), round(low, 2)],
+            "reason": f"sell the {extreme_sd:g}SD upside sweep, fade back into range (HTF short)"}
+
+    want = (htf_bias or "neutral").lower()
+    if want in ("long", "buy"):
+        orders = [buy]
+    elif want in ("short", "sell"):
+        orders = [sell]
+    else:
+        orders = [buy, sell]                     # neutral HTF → both extremes
+    return {"orders": orders, "range": round(rng, 2), "extreme_sd": extreme_sd,
+            "htf_bias": want, "note": "S&D liquidity-sweep fade in anticipation of the HTF trend"}
