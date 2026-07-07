@@ -140,7 +140,7 @@ jobs:
               post "/cbdr/alert/EUR/USD?window=prelondon"
               post "/cbdr/alert/GBP/USD?window=prelondon"
               post "/cbdr/limits/XAU/USD?window=prelondon&notify=true"
-              post "/gold/prelondon?track=true"    # arm the limits as tracked positions
+              post "/gold/prelondon?track=true&execute=true"    # arm tracked + enqueue MT5 limits
               ;;
             "0 2 * * 1-5")
               # Asia accumulation window — gold intrasession scan
@@ -148,11 +148,11 @@ jobs:
               ;;
             "0 5 * * 1-5")
               # CRT 1-5-9 — Asian confirmation (01:00 range candle → 05:00 entry)
-              post "/candlerange/crt?session=asia"
+              post "/candlerange/crt?session=asia&execute=true"
               ;;
             "0 17 * * 1-5")
               # CRT 1-5-9 — New York confirmation (13:00 range candle → 17:00 entry)
-              post "/candlerange/crt?session=ny"
+              post "/candlerange/crt?session=ny&execute=true"
               ;;
             "55 20 * * 5")
               # Friday pre-close — Monday-gap anticipation (the reliable candle read)
