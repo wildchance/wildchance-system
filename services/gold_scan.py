@@ -21,9 +21,12 @@ from services.wildchance_service import get_latest_feed
 from utils.price_fetcher import get_forex_price
 from gold.ict import classify_week, confluence as ict_confluence
 from gold.signal import assemble, format_card
+import datetime as _dt
+
 from gold import macro as gmacro
 from gold import macro_cycle as gcycle
 from gold.location import location_gate
+from services import news_guard
 
 BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default=None) or config("BOT_TOKEN", default=None)
 CHAT_ID = config("TELEGRAM_CHAT_ID", default=None)
@@ -58,7 +61,7 @@ async def _wildchance_gold_side() -> str:
 async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
                sl_pips: float = 200.0, require_confluence: bool = False,
                require_macro: bool = True, require_location: bool = True,
-               require_regime: bool = True,
+               require_regime: bool = True, require_news: bool = True,
                loc_deep: float = 0.5, notify: bool = False) -> dict:
     """Build (and optionally send) the current gold signal."""
     daily = await fetch_ohlc("XAU/USD", "1day", 25)
@@ -109,6 +112,18 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
         if require_regime and not reg["ok"]:
             sig["signal"] = "NO TRADE"
             sig["suppressed"] = reg["reason"]
+            return sig
+
+    # --- NEWS gate — block same-day tier-1 (NFP/CPI/FOMC), flag within the window.
+    if sig.get("signal") in ("LONG", "SHORT"):
+        today = _dt.datetime.now(_dt.timezone.utc).date()
+        block = await news_guard.news_flag(today, "XAU/USD", win=0)   # same-day
+        warn = block or await news_guard.news_flag(today, "XAU/USD")  # within window
+        if warn:
+            sig["news"] = warn
+        if require_news and block:
+            sig["signal"] = "NO TRADE"
+            sig["suppressed"] = block
             return sig
 
     # Wildchance gold confluence (retail + COT) — justification, and optional gate.
