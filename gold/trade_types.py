@@ -113,11 +113,11 @@ def seek_destroy_plan(high: float, low: float, htf_bias: str,
     up = round(high + extreme_sd * rng, 2)      # extreme above → sell-fade zone
     dn = round(low - extreme_sd * rng, 2)       # extreme below → buy-fade zone
 
-    buy = {"side": "long", "kind": "limit", "entry": dn,
+    buy = {"side": "long", "kind": "limit", "entry": dn, "trade_type": "sd_fade",
            "stop": round(dn - 0.5 * rng - buffer, 2),
            "targets": [round(low, 2), round(mid, 2), round(high, 2)],
            "reason": f"buy the {extreme_sd:g}SD downside sweep, fade back into range (HTF long)"}
-    sell = {"side": "short", "kind": "limit", "entry": up,
+    sell = {"side": "short", "kind": "limit", "entry": up, "trade_type": "sd_fade",
             "stop": round(up + 0.5 * rng + buffer, 2),
             "targets": [round(high, 2), round(mid, 2), round(low, 2)],
             "reason": f"sell the {extreme_sd:g}SD upside sweep, fade back into range (HTF short)"}
