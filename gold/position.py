@@ -74,6 +74,25 @@ def deadline_for(trade_type: str, opened_at: dt.datetime,
     return intraday_deadline(opened_at)
 
 
+def evaluate_pending(state: dict, price: float, now: dt.datetime) -> dict:
+    """Decide a PENDING limit's fate at ``price``/``now``: fill / cancel / wait.
+
+    A long limit fills when price trades down to (or below) the limit; a short when
+    price trades up to it. If the setup's ``expires_at`` passes unfilled, cancel.
+    """
+    side = state["side"].lower()
+    long = side in ("long", "buy")
+    limit = float(state["limit_price"])
+    touched = price <= limit if long else price >= limit
+    if touched:
+        return {"action": "fill", "fill_price": limit,
+                "note": f"limit touched at {limit}"}
+    expires = state.get("expires_at")
+    if expires is not None and now >= _aware(expires):
+        return {"action": "cancel", "note": "limit expired unfilled"}
+    return {"action": "wait", "note": "waiting for the limit"}
+
+
 def _r(entry: float, exit_price: float, risk: float, long: bool) -> float:
     if risk <= 0:
         return 0.0
