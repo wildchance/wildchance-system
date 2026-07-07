@@ -25,14 +25,41 @@ from gold import macro_cycle as gcycle
 from gold import dxy as gdxy
 from gold import purchases_audit as gpa
 from gold.trade_types import seek_destroy_plan, SEEK_DESTROY
+from gold.limit_orders import size_limit
 from gold.weekly import weekly_bias
 from gold.ict import classify_week
+import datetime as _dt
 from utils.price_fetcher import get_forex_price
 from services.ohlc_service import fetch_ohlc
 from services import gold_scan
 from services import gold_intraday
 
 router = APIRouter(prefix="/gold", tags=["gold"])
+
+
+def _ny_close() -> _dt.datetime:
+    """Today's 21:00 UTC (≈ NY close) — the pre-London/CRT limit expiry."""
+    now = _dt.datetime.now(_dt.timezone.utc)
+    d = now.replace(hour=21, minute=0, second=0, microsecond=0)
+    return d if d > now else d + _dt.timedelta(days=1)
+
+
+def _week_end() -> _dt.datetime:
+    """Friday 21:00 UTC of the current week — the Seek & Destroy limit expiry."""
+    now = _dt.datetime.now(_dt.timezone.utc)
+    fri = now.replace(hour=21, minute=0, second=0, microsecond=0) + \
+        _dt.timedelta(days=(4 - now.weekday()))
+    return fri if fri > now else fri + _dt.timedelta(days=7)
+
+
+async def _arm_limits(db, orders, source, balance, risk_usd, expires_at):
+    """Size limit specs and persist each as a PENDING tracked position."""
+    out = []
+    for o in orders:
+        card = size_limit(o, balance, risk_usd)
+        opened = await gp.open_limit(db, card, source, expires_at)
+        out.append(opened or {"skipped": "not sizeable", "order": o})
+    return out
 
 
 @router.post("/scan")
@@ -193,10 +220,44 @@ async def scorecard_digest(force: bool = Query(False, description="send even if 
     return {"sent": sent}
 
 
+@router.post("/prelondon")
+async def prelondon(balance: float = Query(5000, gt=0),
+                    risk_usd: float = Query(20.0, gt=0),
+                    track: bool = Query(True, description="arm the limits as PENDING positions"),
+                    db: AsyncSession = Depends(get_db)):
+    """Arm the pre-London CBDR limits (buy −1SD / sell +1,+3SD) as tracked PENDING
+    positions that fill on touch and are monitored to TP/SL through the NY session."""
+    from services.cbdr_service import fetch_cbdr_window
+    from cbdr.engine import build_cbdr, prelondon_limits
+    win = await fetch_cbdr_window("XAU/USD", "prelondon")
+    if not win:
+        raise HTTPException(status_code=502, detail="could not fetch the pre-London box")
+    box = build_cbdr(win["high"], win["low"])
+    plan = prelondon_limits(box)
+    if track:
+        plan["tracked"] = await _arm_limits(db, plan["orders"], "gold_prelondon",
+                                            balance, risk_usd, _ny_close())
+    plan["session"] = win["session"]
+    return plan
+
+
 @router.get("/macro")
 async def macro():
     """The standing Q3/Q4 macro read that gates gold signals."""
     return gmacro.macro_read()
+
+
+@router.get("/news")
+async def news():
+    """Current gold news state — same-day block, window flag, and the live tier-1
+    USD calendar. Use to confirm the news engine is refreshing."""
+    from services import news_guard
+    today = _dt.datetime.now(_dt.timezone.utc).date()
+    same_day = await news_guard.news_flag(today, "XAU/USD", win=0)
+    window = await news_guard.news_flag(today, "XAU/USD")
+    cal = await news_guard.high_impact_calendar({"USD"})
+    return {"as_of": today.isoformat(), "same_day_block": same_day,
+            "window_flag": window, "high_impact_usd": cal}
 
 
 @router.get("/regime")
@@ -225,7 +286,11 @@ async def audit():
 
 @router.get("/sd-fade")
 async def sd_fade(extreme_sd: float = Query(3.0, ge=1.5, le=6.0,
-                      description="deviation multiple for the extreme limit")):
+                      description="deviation multiple for the extreme limit"),
+                  balance: float = Query(5000, gt=0),
+                  risk_usd: float = Query(20.0, gt=0),
+                  track: bool = Query(False, description="persist the fade limits as PENDING positions"),
+                  db: AsyncSession = Depends(get_db)):
     """Seek & Destroy fade plan — extreme limits outside the week's range on the
     HTF-trend side (monthly/quarterly), to catch liquidity sweeps in a ranging week."""
     daily = await fetch_ohlc("XAU/USD", "1day", 25)
@@ -246,6 +311,9 @@ async def sd_fade(extreme_sd: float = Query(3.0, ge=1.5, le=6.0,
     else:
         high, low, basis = profile["week_high"], profile["week_low"], "week range (CBDR unavailable)"
     plan = seek_destroy_plan(high, low, htf, extreme_sd=extreme_sd)
+    if track:
+        plan["tracked"] = await _arm_limits(db, plan["orders"], "gold_sd_fade",
+                                            balance, risk_usd, _week_end())
     return {"applicable": True, "profile": profile["profile"],
             "basis": basis, "range": [low, high], "htf_bias": htf, **plan}
 
