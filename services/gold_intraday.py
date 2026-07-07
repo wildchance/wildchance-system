@@ -19,7 +19,8 @@ from gold.entry import refined_entry
 from gold.intraday import assemble_intraday, format_card
 from gold.risk_engine import GOLD_PIP
 from gold.trade_types import classify_tier, tier_stop, tier_ref_range
-from gold.session_levels import eight_hour_range, detect_protraction, protraction_gate
+from gold.session_levels import (eight_hour_range, detect_protraction,
+                                 protraction_gate, opposite_liquidity)
 from cbdr.engine import sd_ladder
 
 # QT session quarter → its end hour UTC (Asia→8, London→13, NY→21, rollover→24).
@@ -132,6 +133,17 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
                 sig["signal"] = "NO TRADE"
                 sig["reason"] = pg["reason"]
                 return sig
+        # Full liquidity map (1am/7am/8h/PDH/PDL/PWH/PWL) + nearest opposite target.
+        try:
+            from services.gold_liquidity import liquidity_map
+            liq = await liquidity_map("XAU/USD")
+            if liq:
+                sig["liquidity"] = liq
+                tgt = opposite_liquidity(bias, entry, liq)
+                if tgt:
+                    sig["liquidity_draw"] = tgt      # nearest draw-on-liquidity target
+        except Exception:
+            pass
         # SD ladder anchored to today's 14:00-ET CBDR box (best-effort).
         try:
             from services.cbdr_service import fetch_cbdr_window
