@@ -130,13 +130,14 @@ def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
         card["reason"] = "weekly Q — Friday (reversal / stand aside)"
         return card
 
-    # timing gate — need the distribution (Q3) or manipulation set-up (Q2)
+    # timing gate — entries in NY distribution (Q3) or Asia accumulation (Q1);
+    # London manipulation (Q2) and rollover (Q4) stand aside.
     q = session_q.get("quarter")
-    timing_ok = (q == 3) if require_distribution else (q in (2, 3))
+    timing_ok = (q == 3) if require_distribution else (q in (1, 3))
     if not timing_ok:
         card["signal"] = "NO TRADE"
         card["reason"] = (f"wait — {session_q.get('phase')} quarter (Q{q}); "
-                          "trade the London→NY distribution window")
+                          "entries in Asia accumulation / NY distribution only")
         return card
 
     # FLD trigger — crossover (or at least position) must agree with the bias
