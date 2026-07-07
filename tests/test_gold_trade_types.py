@@ -5,8 +5,9 @@ import datetime as dt
 from gold import trade_types as tt
 from gold import position as pos
 
-_Q3 = {"quarter": 3, "phase": "distribution", "session": "NY AM"}
+_Q1 = {"quarter": 1, "phase": "accumulation", "session": "Asia"}
 _Q2 = {"quarter": 2, "phase": "manipulation", "session": "London"}
+_Q3 = {"quarter": 3, "phase": "distribution", "session": "New York"}
 
 
 def _prof(pid, bias):
@@ -21,19 +22,44 @@ def test_reversal_profiles_are_swings():
         assert t["trade_type"] == "swing" and t["rr"] == (5, 6, 7, 8)
 
 
-def test_continuation_in_distribution_is_intraday():
+def test_continuation_in_ny_distribution_is_intraday():
     t = tt.classify_tier(_prof(7, "long"), _Q3)
     assert t["trade_type"] == "intraday" and t["rr"] == (2, 3)
 
 
-def test_continuation_outside_distribution_is_intrasession():
-    t = tt.classify_tier(_prof(8, "short"), _Q2)
+def test_continuation_in_asia_is_intrasession():
+    t = tt.classify_tier(_prof(8, "short"), _Q1)
     assert t["trade_type"] == "intrasession" and t["rr"] == (3, 4, 5)
+
+
+def test_continuation_in_london_stands_aside():
+    # London manipulation (Q2) is setup only — no direct entry.
+    assert tt.classify_tier(_prof(7, "long"), _Q2) is None
 
 
 def test_seek_destroy_and_neutral_stand_aside():
     assert tt.classify_tier(_prof(9, "neutral"), _Q3) is None
     assert tt.classify_tier({"profile_id": None, "bias": "long"}, _Q3) is None
+
+
+# --- seek & destroy fade ----------------------------------------------------
+
+def test_sd_fade_htf_long_arms_buy_only():
+    plan = tt.seek_destroy_plan(4300, 4000, "long", extreme_sd=3.0)
+    assert len(plan["orders"]) == 1
+    o = plan["orders"][0]
+    assert o["side"] == "long" and o["entry"] == 4000 - 3 * 300  # low - 3*range
+
+
+def test_sd_fade_htf_short_arms_sell_only():
+    plan = tt.seek_destroy_plan(4300, 4000, "short", extreme_sd=3.0)
+    assert len(plan["orders"]) == 1 and plan["orders"][0]["side"] == "short"
+    assert plan["orders"][0]["entry"] == 4300 + 3 * 300
+
+
+def test_sd_fade_neutral_arms_both():
+    plan = tt.seek_destroy_plan(4300, 4000, "neutral")
+    assert {o["side"] for o in plan["orders"]} == {"long", "short"}
 
 
 # --- structural stops -------------------------------------------------------
