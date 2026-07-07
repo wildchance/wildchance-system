@@ -1,152 +1,103 @@
-"""Persist and monitor tracked gold swing positions.
+"""Real-time gold intraday scan — weekly profile × session quarter × Hurst FLD.
 
-DB glue around the pure lifecycle core (gold.position):
-  • open_from_signal — turn a fired signal card into an OPEN row (deduped so the
-    same side isn't opened twice in one day);
-  • monitor        — walk OPEN rows against the live price, trail to break-even
-    after TP1, and close on target / stop / the weekly time-stop;
-  • list_positions / open_count — read helpers for the routes.
-
-Closed rows carry a realized ``result_r`` and are read by the gold scorecard.
+Fetches daily bars (weekly profile), H1 bars (FLD), reads the live session quarter
+off the clock, and fires the fused intraday signal to Telegram. Boot-safe: returns
+NO TRADE (not an error) when any layer says wait or data is missing.
 """
 
 from __future__ import annotations
 
 import datetime as _dt
-from typing import List, Optional
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from services.ohlc_service import fetch_ohlc
+from services.gold_scan import _tg
+from utils.price_fetcher import get_forex_price
+from gold.ict import classify_week
+from gold.quarterly_session import session_quarter, weekday_quarter
+from gold.hurst import fld_signal
+from gold.entry import refined_entry
+from gold.intraday import assemble_intraday, format_card
+from gold.risk_engine import GOLD_PIP
+from gold.trade_types import classify_tier, tier_stop, tier_ref_range
 
-from models.gold_position_model import GoldPosition
-from gold import position as pos
-from gold.position import deadline_for
-
-
-def _utcnow() -> _dt.datetime:
-    return _dt.datetime.now(_dt.timezone.utc)
-
-
-async def _open_same_side_today(db: AsyncSession, symbol: str, side: str,
-                                trade_type: str) -> Optional[GoldPosition]:
-    res = await db.execute(
-        select(GoldPosition)
-        .where(GoldPosition.status == "OPEN",
-               GoldPosition.symbol == symbol,
-               GoldPosition.side == side,
-               GoldPosition.trade_type == trade_type)
-        .order_by(GoldPosition.opened_at.desc()))
-    row = res.scalars().first()
-    if row is None or row.opened_at is None:
-        return row
-    opened = row.opened_at
-    if opened.tzinfo is None:
-        opened = opened.replace(tzinfo=_dt.timezone.utc)
-    return row if opened.date() == _utcnow().date() else None
+# QT session quarter → its end hour UTC (Asia→8, London→13, NY→21, rollover→24).
+_SESSION_END = {1: 8, 2: 13, 3: 21, 4: 24}
 
 
-async def open_from_signal(db: AsyncSession, sig: dict,
-                           source: str = "gold") -> Optional[dict]:
-    """Persist a fired signal as an OPEN swing, or None if not tracked.
+async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
+               sl_pips: float = 200.0, cycle_len: int = 20,
+               require_fld: bool = True, require_distribution: bool = False,
+               notify: bool = False) -> dict:
+    daily = await fetch_ohlc("XAU/USD", "1day", 25)
+    if len(daily) < 3:
+        return {"signal": "NO TRADE", "reason": "no XAU/USD daily bars"}
 
-    Skips non-signals, gate-blocked cards, and duplicates (same side already open
-    today). Idempotent enough for a cron to call on every scan.
-    """
-    if sig.get("signal") not in ("LONG", "SHORT"):
-        return None
-    if not sig.get("gate", {}).get("allow", False):
-        return None
-    entry, stop = sig.get("entry"), sig.get("stop")
-    if entry is None or stop is None:
-        return None
+    profile = classify_week(daily)
+    now = _dt.datetime.now(_dt.timezone.utc)
+    sess = session_quarter(now)
+    wq = weekday_quarter(now)
 
-    side = "long" if sig["signal"] == "LONG" else "short"
-    symbol = sig.get("instrument", "XAU/USD")
-    trade_type = sig.get("trade_type") or "swing"
-    # One position per (symbol, side, trade_type) per day — different tiers on the
-    # same side (e.g. an intraday and a swing) are allowed to co-exist.
-    dup = await _open_same_side_today(db, symbol, side, trade_type)
-    if dup is not None:
-        return {"skipped": "duplicate — same side/type already open today", "id": dup.id}
+    # FLD on H1 (intraday cycle); fall back to daily if H1 is thin.
+    h1 = await fetch_ohlc("XAU/USD", "1h", max(cycle_len * 3, 60))
+    closes = [c for (_d, _o, _h, _l, c) in h1] if len(h1) >= cycle_len + 2 \
+        else [c for (_d, _o, _h, _l, c) in daily]
+    fsig = fld_signal(closes, cycle_len if len(h1) >= cycle_len + 2 else 10)
 
-    tps = [t.get("price") for t in sig.get("targets", [])]
-    tps += [None] * (4 - len(tps))
-    now = _utcnow()
-    deadline = deadline_for(trade_type, now, sig.get("session_end_hour"))
-    row = GoldPosition(
-        symbol=symbol, side=side, trade_type=trade_type, deadline=deadline,
-        entry=float(entry), stop=float(stop), stop_initial=float(stop),
-        tp1=tps[0], tp2=tps[1], tp3=tps[2], tp4=tps[3],
-        lot=sig.get("lot"), risk_usd=sig.get("risk_usd"),
-        profile=sig.get("profile"), source=source,
-        justification=(sig.get("justification") or "")[:480],
-        action="BUY" if side == "long" else "SELL",
-        status="OPEN",
-    )
-    db.add(row)
-    await db.commit()
-    await db.refresh(row)
-    return _to_dict(row)
+    entry = None
+    try:
+        entry = await get_forex_price("XAU/USD")
+    except Exception:
+        entry = None
+    if entry is None:
+        entry = daily[-1][4]
 
+    # Wade structure entry (BMS → OTE → OB/FVG) off the H1 bars, if a BMS exists.
+    entry_read = None
+    bias = (profile or {}).get("bias")
+    if bias in ("long", "short") and len(h1) >= 8:
+        ohlc = [(o, hh, ll, c) for (_d, o, hh, ll, c) in h1]
+        entry_read = refined_entry(ohlc, bias, buffer=10 * GOLD_PIP)   # ~10-pip buffer
 
-async def monitor(db: AsyncSession, price: float,
-                  now: Optional[_dt.datetime] = None) -> dict:
-    """Advance every OPEN position against ``price``; close the ones that hit."""
-    now = now or _utcnow()
-    res = await db.execute(select(GoldPosition).where(GoldPosition.status == "OPEN"))
-    rows = list(res.scalars().all())
-    closed, updated = [], []
-    for row in rows:
-        opened = row.opened_at
-        if opened is not None and opened.tzinfo is None:
-            opened = opened.replace(tzinfo=_dt.timezone.utc)
-        deadline = row.deadline
-        if deadline is not None and deadline.tzinfo is None:
-            deadline = deadline.replace(tzinfo=_dt.timezone.utc)
-        state = {
-            "side": row.side, "entry": row.entry, "stop": row.stop_initial,
-            "targets": [t for t in (row.tp1, row.tp2, row.tp3, row.tp4) if t is not None],
-            "be_active": bool(row.be_active), "opened_at": opened,
-            "deadline": deadline, "trade_type": row.trade_type,
-        }
-        action = pos.evaluate(state, price, now)
-        row.tp_hit = action["tp_hit"]
-        row.be_active = action["be_active"]
-        row.stop = action["stop"]
-        if action["close"]:
-            row.status = "CLOSED"
-            row.exit_price = action["exit_price"]
-            row.exit_reason = action["exit_reason"]
-            row.result_r = action["result_r"]
-            row.closed_at = now
-            closed.append(_to_dict(row))
-        else:
-            updated.append({"id": row.id, "tp_hit": row.tp_hit,
-                            "be_active": row.be_active, "note": action["note"]})
-    await db.commit()
-    return {"price": price, "checked": len(rows), "closed": closed, "still_open": updated}
-
-
-async def list_positions(db: AsyncSession, status: Optional[str] = None,
-                         limit: int = 50) -> List[dict]:
-    stmt = select(GoldPosition).order_by(GoldPosition.opened_at.desc()).limit(limit)
-    if status:
-        stmt = stmt.where(GoldPosition.status == status.upper())
-    res = await db.execute(stmt)
-    return [_to_dict(r) for r in res.scalars().all()]
-
-
-def _to_dict(r: GoldPosition) -> dict:
-    return {
-        "id": r.id, "symbol": r.symbol, "side": r.side, "action": r.action,
-        "trade_type": r.trade_type,
-        "entry": r.entry, "stop": r.stop, "stop_initial": r.stop_initial,
-        "targets": [t for t in (r.tp1, r.tp2, r.tp3, r.tp4) if t is not None],
-        "lot": r.lot, "risk_usd": r.risk_usd, "be_active": r.be_active,
-        "tp_hit": r.tp_hit, "profile": r.profile, "source": r.source,
-        "status": r.status, "exit_price": r.exit_price, "exit_reason": r.exit_reason,
-        "result_r": r.result_r,
-        "opened_at": str(r.opened_at) if r.opened_at else None,
-        "deadline": str(r.deadline) if r.deadline else None,
-        "closed_at": str(r.closed_at) if r.closed_at else None,
+    # --- TRADE-TYPE TIER: profile (+ session) → swing / intraday / intrasession.
+    # Each tier brings its own structural stop, R:R band, location range, horizon.
+    #   weekly  = the week's hi/lo (from the profile)   → swing, 1:5–1:8
+    #   day     = today's daily bar hi/lo               → intraday, 1:2–1:3
+    #   session = the current session's ~6× H1 hi/lo    → intrasession, 1:3–1:5
+    sess_bars = h1[-6:] if len(h1) >= 6 else h1
+    ranges = {
+        "weekly": ((profile or {}).get("week_high"), (profile or {}).get("week_low")),
+        "day": (daily[-1][2] if daily else None, daily[-1][3] if daily else None),
+        "session": (max((b[2] for b in sess_bars), default=None),
+                    min((b[3] for b in sess_bars), default=None)),
     }
+    tt = classify_tier(profile, sess)
+
+    stop_override = None
+    rr = (2, 3, 4)
+    trade_type = None
+    # Default location range = the day's range (fallback when no tier).
+    ref_high = ranges["day"][0]
+    ref_low = ranges["day"][1]
+    if tt:
+        trade_type = tt["trade_type"]
+        rr = tt["rr"]
+        stop_override = tier_stop(tt["sl_source"], bias, ranges)
+        rh, rl = tier_ref_range(tt["sl_source"], ranges)
+        if rh is not None and rl is not None:
+            ref_high, ref_low = rh, rl
+
+    sig = assemble_intraday(profile, sess, fsig, entry, balance, tier=tier,
+                            risk_usd=risk_usd, sl_pips=sl_pips, weekday_q=wq,
+                            require_fld=require_fld,
+                            require_distribution=require_distribution,
+                            entry_read=entry_read,
+                            ref_high=ref_high, ref_low=ref_low,
+                            stop_override=stop_override, rr=rr, trade_type=trade_type)
+
+    # Horizon hint for the tracked-position opener (deadline computed at open time).
+    if sig.get("signal") in ("LONG", "SHORT") and trade_type:
+        sig["session_end_hour"] = _SESSION_END.get(sess.get("quarter"), 24)
+
+    if notify and sig.get("signal") in ("LONG", "SHORT"):
+        sig["sent"] = await _tg(format_card(sig))
+    return sig
