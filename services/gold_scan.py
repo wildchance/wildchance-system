@@ -22,6 +22,7 @@ from utils.price_fetcher import get_forex_price
 from gold.ict import classify_week, confluence as ict_confluence
 from gold.signal import assemble, format_card
 from gold import macro as gmacro
+from gold import macro_cycle as gcycle
 from gold.location import location_gate
 
 BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default=None) or config("BOT_TOKEN", default=None)
@@ -57,6 +58,7 @@ async def _wildchance_gold_side() -> str:
 async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
                sl_pips: float = 200.0, require_confluence: bool = False,
                require_macro: bool = True, require_location: bool = True,
+               require_regime: bool = True,
                loc_deep: float = 0.5, notify: bool = False) -> dict:
     """Build (and optionally send) the current gold signal."""
     daily = await fetch_ohlc("XAU/USD", "1day", 25)
@@ -98,6 +100,15 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
         if not loc["ok"]:
             sig["signal"] = "NO TRADE"
             sig["suppressed"] = loc["reason"]
+            return sig
+
+    # --- REGIME — dollar (DXY inverse) + COT positioning confluence.
+    if sig.get("signal") in ("LONG", "SHORT"):
+        reg = gcycle.regime_gate(bias)     # DXY structure, not the gold price
+        sig["regime"] = reg
+        if require_regime and not reg["ok"]:
+            sig["signal"] = "NO TRADE"
+            sig["suppressed"] = reg["reason"]
             return sig
 
     # Wildchance gold confluence (retail + COT) — justification, and optional gate.
