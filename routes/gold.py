@@ -259,13 +259,15 @@ async def session_levels():
     from gold.session_levels import eight_hour_range, detect_protraction
     from services.cbdr_service import fetch_cbdr_window
     from cbdr.engine import sd_ladder
+    from services.gold_liquidity import liquidity_map
     h1 = await fetch_ohlc("XAU/USD", "1h", 24)
     bars = [(d, o, h, l, c) for (d, o, h, l, c) in h1]
     rng8 = eight_hour_range(bars)
     protr = detect_protraction(bars, rng8["high"], rng8["low"]) if rng8 else None
     cb = await fetch_cbdr_window("XAU/USD", "cbdr")
     ladder = sd_ladder(cb["high"], cb["low"]) if cb else None
-    return {"instrument": "XAU/USD", "session_8h": rng8,
+    liquidity = await liquidity_map("XAU/USD")   # 1am/7am/8h/PDH/PDL/PWH/PWL
+    return {"instrument": "XAU/USD", "session_8h": rng8, "liquidity": liquidity,
             "protraction": protr, "sd_ladder": ladder}
 
 
