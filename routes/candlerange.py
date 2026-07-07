@@ -34,6 +34,27 @@ async def candlerange(symbol: str, price: Optional[float] = Query(None)):
     return result
 
 
+@router.post("/friday")
+async def friday(symbols: str = Query(None), force: bool = Query(False)):
+    """Friday pre-close 1h read → Monday-gap anticipation (call ~20:55 UTC Fri)."""
+    watch = ([s.strip() for s in symbols.split(",") if s.strip()] if symbols else DEFAULT_WATCH)
+    reads, alerts = [], []
+    for sym in watch:
+        r = await crs.friday_close_read(sym)
+        if r is None:
+            continue
+        reads.append(r)
+        text = crs.format_friday_alert(r)
+        if text:
+            alerts.append(text)
+    sent = False
+    if alerts:
+        sent = await _send("\n\n".join(alerts))
+    elif force:
+        sent = await _send("📅 *Monday-gap read* — Friday closes look flat / no clear gap.")
+    return {"scanned": len(watch), "reads": reads, "sent": sent}
+
+
 @router.post("/scan")
 async def scan(symbols: str = Query(None), force: bool = Query(False)):
     watch = ([s.strip() for s in symbols.split(",") if s.strip()] if symbols else DEFAULT_WATCH)
