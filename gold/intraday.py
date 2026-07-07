@@ -14,7 +14,7 @@ FLD read, and the entry. NO TRADE (not an error) whenever a layer says wait.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, Sequence
 
 from gold.signal import assemble, assemble_structured, format_card as _format_base
 from gold import macro as gmacro
@@ -34,7 +34,10 @@ def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
                       require_macro: bool = True,
                       require_location: bool = True,
                       require_regime: bool = True,
-                      loc_deep: float = 0.5) -> dict:
+                      loc_deep: float = 0.5,
+                      stop_override: Optional[float] = None,
+                      rr: Sequence[float] = (2, 3, 4),
+                      trade_type: Optional[str] = None) -> dict:
     """Combine the three scales into one gated intraday signal.
 
     If ``entry_read`` (from gold.entry.refined_entry) has a valid BMS/OTE, the
@@ -68,28 +71,37 @@ def assemble_intraday(weekly_profile: dict, session_q: dict, fld_sig: dict,
                     "macro": macro,
                     "layers": {"weekly": weekly_profile, "session": session_q, "fld": fld_sig}}
 
-    # base sized card — structure entry (Wade OTE/OB) if available, else fixed-pip
-    if entry_read and entry_read.get("ok") and entry_read.get("entry") and entry_read.get("stop"):
+    # base sized card. Precedence:
+    #   1. tier stop_override — the structural stop for the trade-type tier, sized
+    #      to the tier's R:R band (swing 5-8R off the weekly low, etc.);
+    #   2. Wade OTE/OB structure entry, if a BMS is present;
+    #   3. fixed-pip fallback.
+    if stop_override is not None:
+        card = assemble_structured(weekly_profile, entry, stop_override, balance,
+                                   tier=tier, risk_usd=risk_usd, rr=rr)
+    elif entry_read and entry_read.get("ok") and entry_read.get("entry") and entry_read.get("stop"):
         card = assemble_structured(weekly_profile, entry_read["entry"], entry_read["stop"],
-                                   balance, tier=tier, risk_usd=risk_usd)
+                                   balance, tier=tier, risk_usd=risk_usd, rr=rr)
         card["structure"] = {k: entry_read.get(k) for k in
                              ("bms", "broke_level", "zone", "order_block", "fvg")}
     else:
         card = assemble(weekly_profile, entry, balance, tier=tier,
-                        risk_usd=risk_usd, sl_pips=sl_pips)
+                        risk_usd=risk_usd, sl_pips=sl_pips, rr=rr)
     card["layers"] = {"weekly": weekly_profile, "session": session_q, "fld": fld_sig,
                       "weekday": weekday_q}
+    if trade_type:
+        card["trade_type"] = trade_type
     card["macro"] = macro
     if card.get("signal") == "NO TRADE":
         return card
 
     reasons = [
-        f"weekly {weekly_profile.get('profile')} ({bias})",
+        (f"{trade_type} · " if trade_type else "") + f"weekly {weekly_profile.get('profile')} ({bias})",
         f"session Q{session_q.get('quarter')} {session_q.get('phase')} ({session_q.get('session')})",
         f"FLD {fld_sig.get('cross') or fld_sig.get('position')}",
         f"macro {macro['status']} ({macro['note']})",
     ]
-    if card.get("entry_mode") == "structure":
+    if card.get("structure"):
         reasons.append(f"BMS {card['structure']['bms']} + OTE zone {card['structure']['zone']}")
 
     # --- LOCATION gate — buy discount / sell premium, never chase ----------
@@ -144,6 +156,9 @@ def format_card(sig: dict) -> str:
     """Telegram card = the base gold card + the intraday layer line."""
     base = _format_base(sig)
     if sig.get("signal") in ("LONG", "SHORT"):
+        tt = sig.get("trade_type")
+        if tt:
+            base = base.replace("*GOLD XAU/USD", f"*[{tt.upper()}] GOLD XAU/USD", 1)
         layers = sig.get("layers", {})
         sess = layers.get("session", {})
         fld = layers.get("fld", {})
