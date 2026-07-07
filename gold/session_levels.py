@@ -55,6 +55,94 @@ def detect_protraction(bars: Sequence[OHLCBar], high: float, low: float,
             "note": "no session sweep+reversal yet"}
 
 
+def most_recent_at_hour(hourly: Sequence[dict], hour: int) -> Optional[dict]:
+    """High/low of the most recent hourly bar at ``hour`` (e.g. 1 = 1am, 7 = 7am).
+
+    ``hourly`` = [{date, hour, high, low}] (from ohlc_service.fetch_hourly_raw).
+    """
+    best = None
+    for b in hourly:
+        if b.get("hour") == hour:
+            if best is None or (b["date"], b["hour"]) >= (best["date"], best["hour"]):
+                best = b
+    if best is None:
+        return None
+    return {"high": round(best["high"], 3), "low": round(best["low"], 3), "date": best["date"]}
+
+
+def prior_day_hl(daily: Sequence) -> Optional[dict]:
+    """Previous COMPLETED day's high/low (PDH/PDL). daily = (date,o,h,l,c) oldest-first."""
+    if len(daily) < 2:
+        return None
+    d = daily[-2]                       # -1 is today (forming), -2 the prior day
+    return {"high": round(d[2], 3), "low": round(d[3], 3)}
+
+
+def prior_week_hl(daily: Sequence) -> Optional[dict]:
+    """Previous ISO-week high/low (PWH/PWL) from daily bars."""
+    import datetime as _dt
+    if not daily:
+        return None
+    cur = _dt.date.fromisoformat(str(daily[-1][0])[:10]).isocalendar()[:2]
+    prev_week = [b for b in daily
+                 if _dt.date.fromisoformat(str(b[0])[:10]).isocalendar()[:2] < cur]
+    if not prev_week:
+        return None
+    last_wk = max(_dt.date.fromisoformat(str(b[0])[:10]).isocalendar()[:2] for b in prev_week)
+    bars = [b for b in prev_week
+            if _dt.date.fromisoformat(str(b[0])[:10]).isocalendar()[:2] == last_wk]
+    return {"high": round(max(b[2] for b in bars), 3), "low": round(min(b[3] for b in bars), 3)}
+
+
+def build_liquidity(hourly: Sequence[dict], daily: Sequence,
+                    hours=(1, 7)) -> dict:
+    """The full session-liquidity map the chart draws: 1am/7am highs-lows, the
+    8-hour range, PDH/PDL and PWH/PWL. Missing pieces are simply omitted."""
+    out: dict = {}
+    labels = {1: "1am", 7: "7am"}
+    for h in hours:
+        lv = most_recent_at_hour(hourly, h)
+        if lv:
+            out[labels.get(h, f"{h:02d}00")] = lv
+    e8 = eight_hour_range([(b["date"], b["open"], b["high"], b["low"], b["close"])
+                           for b in hourly]) if hourly else None
+    if e8:
+        out["8h"] = e8
+    pd = prior_day_hl(daily)
+    if pd:
+        out["PDH"], out["PDL"] = pd["high"], pd["low"]
+    pw = prior_week_hl(daily)
+    if pw:
+        out["PWH"], out["PWL"] = pw["high"], pw["low"]
+    return out
+
+
+def _flat_levels(levels: dict) -> list:
+    """Flatten the liquidity map into [(name, price)] for target selection."""
+    out = []
+    for k, v in (levels or {}).items():
+        if isinstance(v, dict):
+            if "high" in v:
+                out.append((f"{k}H", v["high"]))
+            if "low" in v:
+                out.append((f"{k}L", v["low"]))
+        elif isinstance(v, (int, float)):
+            out.append((k, float(v)))
+    return out
+
+
+def opposite_liquidity(direction: str, entry: float, levels: dict) -> Optional[dict]:
+    """The nearest liquidity on the target side (above for a long, below for a
+    short) from the full map — the draw-on-liquidity target."""
+    pts = _flat_levels(levels)
+    long = direction.lower() in ("long", "buy")
+    side = [(n, p) for (n, p) in pts if (p > entry if long else p < entry)]
+    if not side:
+        return None
+    n, p = min(side, key=lambda np: abs(np[1] - entry))
+    return {"level": n, "price": round(p, 3)}
+
+
 def protraction_gate(side: str, protraction: dict) -> dict:
     """Does a proposed side line up with the detected protraction? Returns the
     opposite-liquidity target when it does."""
