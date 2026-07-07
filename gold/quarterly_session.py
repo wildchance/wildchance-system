@@ -5,11 +5,13 @@ Accumulation → Manipulation → Distribution → Continuation/Reversal cycle. 
 edge is timing: the London manipulation (Q2, the 'Judas swing') sets up the New
 York distribution (Q3, the real expansion) — that's the prime intraday window.
 
-Quarters (UTC, DST-agnostic; override via env if your prop clock differs):
-  Q1  Accumulation           Asia     00:00–06:00
-  Q2  Manipulation (Judas)   London   06:00–12:00
-  Q3  Distribution           NY AM    12:00–18:00
-  Q4  Continuation/Reversal  NY PM    18:00–24:00
+Sessions (UTC). Asia is the 8h ACCUMULATION, London the MANIPULATION (Judas /
+no-entry — the pre-London CBDR limits sit here), New York the DISTRIBUTION. Entries
+fire in Asia + New York; London is setup only.
+  Q1  Accumulation           Asia     00:00–08:00   (8h — entries)
+  Q2  Manipulation (Judas)   London   08:00–13:00   (setup only, no entries)
+  Q3  Distribution           NY       13:00–21:00   (entries)
+  Q4  Rollover / close       Sydney   21:00–24:00
 """
 
 from __future__ import annotations
@@ -19,10 +21,10 @@ from typing import Optional
 
 # (quarter, phase, session, start_hour_utc, end_hour_utc)
 _QUARTERS = [
-    (1, "accumulation", "Asia", 0, 6),
-    (2, "manipulation", "London", 6, 12),
-    (3, "distribution", "New York AM", 12, 18),
-    (4, "continuation_or_reversal", "New York PM", 18, 24),
+    (1, "accumulation", "Asia", 0, 8),
+    (2, "manipulation", "London", 8, 13),
+    (3, "distribution", "New York", 13, 21),
+    (4, "rollover", "Sydney/close", 21, 24),
 ]
 
 
@@ -44,10 +46,14 @@ def session_quarter(now: dt.datetime) -> dict:
             "is_manipulation": False}
 
 
-def is_trade_window(now: dt.datetime, allow_manipulation: bool = True) -> bool:
-    """True in the distribution quarter (Q3), or the manipulation set-up (Q2)."""
+def is_trade_window(now: dt.datetime, allow_accumulation: bool = True) -> bool:
+    """True in an ENTRY session: NY distribution (Q3), or Asia accumulation (Q1).
+
+    London manipulation (Q2) is NOT an entry window — it's the Judas / setup that
+    the pre-London CBDR limits cover.
+    """
     q = session_quarter(now)["quarter"]
-    return q == 3 or (allow_manipulation and q == 2)
+    return q == 3 or (allow_accumulation and q == 1)
 
 
 def weekday_quarter(now: dt.datetime) -> dict:
