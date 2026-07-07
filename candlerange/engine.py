@@ -45,6 +45,52 @@ def combined_range(candles: Sequence[Tuple[float, float]]) -> Optional[Tuple[flo
     return (min(pts), max(pts))
 
 
+def close_position(open_: float, high: float, low: float, close: float) -> float:
+    """Where the close sits in the candle's range: 0 = at the low, 1 = at the high."""
+    rng = high - low
+    return round((close - low) / rng, 3) if rng > 0 else 0.5
+
+
+def friday_gap_read(candle: dict) -> dict:
+    """Anticipate Monday's gap from the Friday pre-close 1h candle.
+
+    A strong bullish close into the top of its range → gap-up bias; a weak bearish
+    close into the bottom → gap-down; otherwise flat. (The Friday-close read is the
+    reliable one; mid-week the same signal is choppy — see weekday_confidence.)
+    """
+    o, h = float(candle["open"]), float(candle["high"])
+    l, c = float(candle["low"]), float(candle["close"])
+    pos = close_position(o, h, l, c)
+    bull = c >= o
+    if pos >= 0.66 and bull:
+        gap = "up"
+    elif pos <= 0.34 and not bull:
+        gap = "down"
+    else:
+        gap = "flat"
+    if gap == "flat":
+        strength = "weak"
+    elif pos >= 0.8 or pos <= 0.2:
+        strength = "strong"
+    else:
+        strength = "moderate"
+    return {"gap_bias": gap, "strength": strength, "close_position": pos,
+            "candle_dir": "bullish" if bull else "bearish",
+            "body_low": round(min(o, c), 2), "body_high": round(max(o, c), 2),
+            "note": f"Friday close {pos:.0%} up its range ({'bullish' if bull else 'bearish'}) "
+                    f"→ Monday gap {gap}"}
+
+
+def weekday_confidence(weekday: int) -> str:
+    """Confidence in the candle-range read by weekday: Friday (Monday-gap) is the
+    reliable one; Monday medium; Tue–Thu choppy / low-confidence."""
+    if weekday == 4:
+        return "high"
+    if weekday == 0:
+        return "medium"
+    return "low"
+
+
 def analyze(ref_0100: Optional[dict], ref_1300: Optional[dict], price: float) -> dict:
     out: dict = {"price": price, "anchors": {}}
     bodies: List[Tuple[float, float]] = []
