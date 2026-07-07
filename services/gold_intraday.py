@@ -19,6 +19,8 @@ from gold.entry import refined_entry
 from gold.intraday import assemble_intraday, format_card
 from gold.risk_engine import GOLD_PIP
 from gold.trade_types import classify_tier, tier_stop, tier_ref_range
+from gold.session_levels import eight_hour_range, detect_protraction, protraction_gate
+from cbdr.engine import sd_ladder
 
 # QT session quarter → its end hour UTC (Asia→8, London→13, NY→21, rollover→24).
 _SESSION_END = {1: 8, 2: 13, 3: 21, 4: 24}
@@ -27,7 +29,7 @@ _SESSION_END = {1: 8, 2: 13, 3: 21, 4: 24}
 async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
                sl_pips: float = 200.0, cycle_len: int = 20,
                require_fld: bool = True, require_distribution: bool = False,
-               notify: bool = False) -> dict:
+               require_protraction: bool = True, notify: bool = False) -> dict:
     daily = await fetch_ohlc("XAU/USD", "1day", 25)
     if len(daily) < 3:
         return {"signal": "NO TRADE", "reason": "no XAU/USD daily bars"}
@@ -113,6 +115,31 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
         sig["session_end_hour"] = _SESSION_END.get(sess.get("quarter"), 24)
     if prelondon_ote is not None:
         sig["prelondon_ote"] = prelondon_ote     # the NY entry is the London-OTE retrace
+
+    # PROTRACTION gate — require a session sweep+reversal of the 8-hour range in the
+    # trade direction; the target is the OPPOSITE liquidity. Attach the CBDR SD ladder.
+    if sig.get("signal") in ("LONG", "SHORT"):
+        h1_bars = [(d, o, h, l, c) for (d, o, h, l, c) in h1]
+        rng8 = eight_hour_range(h1_bars)
+        if rng8:
+            protr = detect_protraction(h1_bars, rng8["high"], rng8["low"])
+            pg = protraction_gate(bias, protr)
+            sig["session_8h"] = rng8
+            sig["protraction"] = protr
+            if pg["ok"]:
+                sig["liquidity_target"] = pg["target"]
+            elif require_protraction:
+                sig["signal"] = "NO TRADE"
+                sig["reason"] = pg["reason"]
+                return sig
+        # SD ladder anchored to today's 14:00-ET CBDR box (best-effort).
+        try:
+            from services.cbdr_service import fetch_cbdr_window
+            cb = await fetch_cbdr_window("XAU/USD", "cbdr")
+            if cb:
+                sig["sd_ladder"] = sd_ladder(cb["high"], cb["low"])
+        except Exception:
+            pass
 
     # NEWS gate — block same-day tier-1 (NFP/CPI/FOMC), flag within the window.
     if sig.get("signal") in ("LONG", "SHORT"):
