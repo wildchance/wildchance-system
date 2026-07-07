@@ -86,6 +86,20 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
         if rh is not None and rl is not None:
             ref_high, ref_low = rh, rl
 
+    # PRE-LONDON → NY OTE one-flow: in the NY distribution (Q3), the entry must be
+    # in the pre-London box's discount/premium — i.e. price has retraced to the OTE
+    # of the London manipulation. Gate the NY location on the pre-London box.
+    prelondon_ote = None
+    if sess.get("quarter") == 3:
+        try:
+            from services.cbdr_service import fetch_cbdr_window
+            pl = await fetch_cbdr_window("XAU/USD", "prelondon")
+        except Exception:
+            pl = None
+        if pl:
+            ref_high, ref_low = pl["high"], pl["low"]
+            prelondon_ote = {"high": pl["high"], "low": pl["low"], "session": pl["session"]}
+
     sig = assemble_intraday(profile, sess, fsig, entry, balance, tier=tier,
                             risk_usd=risk_usd, sl_pips=sl_pips, weekday_q=wq,
                             require_fld=require_fld,
@@ -97,6 +111,8 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
     # Horizon hint for the tracked-position opener (deadline computed at open time).
     if sig.get("signal") in ("LONG", "SHORT") and trade_type:
         sig["session_end_hour"] = _SESSION_END.get(sess.get("quarter"), 24)
+    if prelondon_ote is not None:
+        sig["prelondon_ote"] = prelondon_ote     # the NY entry is the London-OTE retrace
 
     # NEWS gate — block same-day tier-1 (NFP/CPI/FOMC), flag within the window.
     if sig.get("signal") in ("LONG", "SHORT"):
