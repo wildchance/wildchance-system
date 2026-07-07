@@ -35,7 +35,9 @@ class GoldPosition(Base):
     profile = Column(String)                         # weekly profile name
     source = Column(String)                          # gold_scan | gold_intraday | manual
     justification = Column(String)
-    status = Column(String, default="OPEN", index=True)   # OPEN | CLOSED
+    status = Column(String, default="OPEN", index=True)   # PENDING | OPEN | CLOSED | CANCELLED
+    limit_price = Column(Float)                            # PENDING limit fill price
+    expires_at = Column(DateTime(timezone=True))          # cancel a PENDING limit after this
     exit_price = Column(Float)
     exit_reason = Column(String)                     # TP1..TP3 | SL | BE | TIME
     result_r = Column(Float)                         # realized R (CLOSED only)
