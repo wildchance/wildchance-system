@@ -81,3 +81,20 @@ def test_regime_gate_blocks_stretched_long():
 
 def test_sources_registry_present():
     assert set(gcycle.SOURCES) == {"BIS", "FRED", "WGC", "CFTC"}
+
+
+def test_live_rbusbis_overrides_dxy_structure():
+    # No live read → anticipated DXY structure (weak dollar → gold long).
+    gcycle.INPUTS["dollar_gold_bias"] = None
+    assert gcycle.regime_gate("long")["dollar"] == "confirms"
+    # Live RBUSBIS rising = dollar strengthening → gold short: the gate flips.
+    gcycle.INPUTS["dollar_gold_bias"] = "short"
+    gcycle.INPUTS["dollar_rbusbis_dir"] = "rising"
+    try:
+        assert gcycle.dollar_gold_bias() == "short"
+        assert gcycle.regime_gate("long")["dollar"] == "diverges"
+        assert gcycle.regime_gate("short")["dollar"] == "confirms"
+        assert "RBUSBIS live" in gcycle.regime_read()["htf"][0]["reading"]
+    finally:
+        gcycle.INPUTS["dollar_gold_bias"] = None       # restore
+        gcycle.INPUTS["dollar_rbusbis_dir"] = None
