@@ -107,6 +107,8 @@ async def intraday(balance: float = Query(5000, gt=0),
                    require_fld: bool = Query(True),
                    require_distribution: bool = Query(False,
                        description="only fire in the NY-AM distribution quarter (Q3)"),
+                   require_protraction: bool = Query(True,
+                       description="require a session sweep+reversal of the 8-hour range"),
                    track: bool = Query(True,
                        description="persist a fired signal as a monitored swing position"),
                    notify: bool = Query(False),
@@ -118,6 +120,7 @@ async def intraday(balance: float = Query(5000, gt=0),
                                    sl_pips=sl_pips, cycle_len=cycle_len,
                                    require_fld=require_fld,
                                    require_distribution=require_distribution,
+                                   require_protraction=require_protraction,
                                    notify=notify)
     if track and sig.get("signal") in ("LONG", "SHORT"):
         opened = await gp.open_from_signal(db, sig, source="gold_intraday")
@@ -247,6 +250,23 @@ async def prelondon(balance: float = Query(5000, gt=0),
                                             balance, risk_usd, _ny_close(), execute=execute)
     plan["session"] = win["session"]
     return plan
+
+
+@router.get("/session-levels")
+async def session_levels():
+    """8-hour session range + the CBDR SD ladder (0.5-step, with mean) + the current
+    protraction (session sweep+reversal) read — the intraday liquidity map."""
+    from gold.session_levels import eight_hour_range, detect_protraction
+    from services.cbdr_service import fetch_cbdr_window
+    from cbdr.engine import sd_ladder
+    h1 = await fetch_ohlc("XAU/USD", "1h", 24)
+    bars = [(d, o, h, l, c) for (d, o, h, l, c) in h1]
+    rng8 = eight_hour_range(bars)
+    protr = detect_protraction(bars, rng8["high"], rng8["low"]) if rng8 else None
+    cb = await fetch_cbdr_window("XAU/USD", "cbdr")
+    ladder = sd_ladder(cb["high"], cb["low"]) if cb else None
+    return {"instrument": "XAU/USD", "session_8h": rng8,
+            "protraction": protr, "sd_ladder": ladder}
 
 
 @router.get("/macro")
