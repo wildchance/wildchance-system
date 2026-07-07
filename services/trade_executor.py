@@ -28,7 +28,10 @@ def build_order(sig: dict, symbol: str = "XAUUSD", source: str = "gold") -> Opti
     if not sig.get("gate", {}).get("allow", True):
         return None
     side = "buy" if sig["signal"] in ("LONG", "BUY") else "sell"
-    otype = "limit" if sig.get("entry_mode") == "structure" else "market"
+    # Structure/OTE entries AND pre-London/CRT/S&D limit cards become LIMIT orders
+    # at their entry price; everything else is a market order.
+    otype = "limit" if (sig.get("entry_mode") == "structure"
+                        or sig.get("kind") == "limit") else "market"
     tps = [t.get("price") for t in sig.get("targets", []) if t.get("price") is not None]
     return {
         "symbol": symbol,
