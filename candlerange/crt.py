@@ -71,15 +71,23 @@ def crt_setup(candle: dict, session: str,
     if meta is None:
         return {"ok": False, "reason": f"unknown CRT session '{session}'"}
     lv = crt_levels(candle)
-    if lv["range"] <= 0:
+    rng = lv["range"]
+    if rng <= 0:
         return {"ok": False, "reason": "flat range candle — no CRT range"}
+    body_mid = round((lv["body_low"] + lv["body_high"]) / 2.0, 2)
     orders = []
     for d in buy_devs:
-        orders.append({"side": "long", "kind": "limit", "dev": -d,
-                       "entry": lv[f"-{d:g}"], "reason": f"buy limit at −{d:g} dev"})
+        entry = lv[f"-{d:g}"]
+        stop = lv.get(f"-{d + 1:g}", round(entry - 0.5 * rng, 2))
+        orders.append({"side": "long", "kind": "limit", "dev": -d, "entry": entry,
+                       "stop": stop, "targets": [lv["body_high"], lv.get(f"+{d:g}", body_mid)],
+                       "trade_type": "crt", "reason": f"buy limit at −{d:g} dev"})
     for d in sell_devs:
-        orders.append({"side": "short", "kind": "limit", "dev": d,
-                       "entry": lv[f"+{d:g}"], "reason": f"sell limit at +{d:g} dev"})
+        entry = lv[f"+{d:g}"]
+        stop = lv.get(f"+{d + 1:g}", round(entry + 0.5 * rng, 2))
+        orders.append({"side": "short", "kind": "limit", "dev": d, "entry": entry,
+                       "stop": stop, "targets": [lv["body_low"], lv.get(f"-{d:g}", body_mid)],
+                       "trade_type": "crt", "reason": f"sell limit at +{d:g} dev"})
     return {"ok": True, "session": session, "label": meta["label"],
             "range_hour": meta["range_hour"], "confirm_hour": meta["confirm_hour"],
             "target_hour": meta["target_hour"], "levels": lv, "orders": orders}
