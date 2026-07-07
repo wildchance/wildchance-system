@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.db import get_db
 from services import candlerange_service as crs
 from services import gold_positions as gp
+from services import trade_executor as te
 from gold.limit_orders import size_limit
 
 router = APIRouter(prefix="/candlerange", tags=["candlerange"])
@@ -44,6 +45,7 @@ async def crt(symbols: str = Query(None),
               balance: float = Query(5000, gt=0),
               risk_usd: float = Query(20.0, gt=0),
               track: bool = Query(True, description="open a tracked gold position on a confirmed XAU/USD CRT"),
+              execute: bool = Query(False, description="also enqueue an MT5 order on a confirmed CRT"),
               force: bool = Query(False),
               db: AsyncSession = Depends(get_db)):
     """1-5-9 CRT scan: arm the session's limit ladder + check 5-o'clock confirmation.
@@ -65,7 +67,12 @@ async def crt(symbols: str = Query(None),
             card = size_limit(conf["order"], balance, risk_usd)   # confirmed = fills now
             pos = await gp.open_from_signal(db, card, source="gold_crt")
             if pos:
-                opened.append(pos)
+                rec = {"tracked": pos}
+                if execute and card.get("signal") in ("LONG", "SHORT"):
+                    order = te.build_order(card, source="gold_crt")
+                    if order:
+                        rec["queued_order"] = await te.enqueue(db, order)
+                opened.append(rec)
     sent = False
     if alerts:
         sent = await _send("\n\n".join(alerts))
