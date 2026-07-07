@@ -24,6 +24,7 @@ from gold import macro as gmacro
 from gold import macro_cycle as gcycle
 from gold import dxy as gdxy
 from gold import purchases_audit as gpa
+from gold.trade_types import seek_destroy_plan, SEEK_DESTROY
 from gold.weekly import weekly_bias
 from gold.ict import classify_week
 from utils.price_fetcher import get_forex_price
@@ -214,6 +215,27 @@ async def dxy(price: float = Query(None, description="live DXY weekly close (opt
 async def audit():
     """Gold purchases & positioning change audit — YoY / QoQ / MoM / WoW."""
     return gpa.audit()
+
+
+@router.get("/sd-fade")
+async def sd_fade(extreme_sd: float = Query(3.0, ge=1.5, le=6.0,
+                      description="deviation multiple for the extreme limit")):
+    """Seek & Destroy fade plan — extreme limits outside the week's range on the
+    HTF-trend side (monthly/quarterly), to catch liquidity sweeps in a ranging week."""
+    daily = await fetch_ohlc("XAU/USD", "1day", 25)
+    if len(daily) < 3:
+        raise HTTPException(status_code=502, detail="could not fetch XAU/USD daily bars")
+    profile = classify_week(daily)
+    pid = (profile or {}).get("profile_id")
+    if pid not in SEEK_DESTROY:
+        return {"applicable": False, "profile": (profile or {}).get("profile"),
+                "reason": "not a Seek & Destroy week — use the normal tiered scan"}
+    htf = gcycle.regime_read()["gold_bias"]        # monthly/quarterly fused bias
+    plan = seek_destroy_plan(profile["week_high"], profile["week_low"], htf,
+                             extreme_sd=extreme_sd)
+    return {"applicable": True, "profile": profile["profile"],
+            "week_range": [profile["week_low"], profile["week_high"]],
+            "htf_bias": htf, **plan}
 
 
 @router.get("/size")
