@@ -20,7 +20,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query
 from decouple import config
 
-from cbdr.engine import build_cbdr, read_bias, nearest_levels, WINDOWS
+from cbdr.engine import build_cbdr, read_bias, nearest_levels, prelondon_limits, WINDOWS
 from services.cbdr_service import fetch_cbdr_window
 from utils.price_fetcher import get_forex_price
 
@@ -83,6 +83,30 @@ async def windows():
 async def cbdr(symbol: str, window: str = Query("cbdr"),
                price: Optional[float] = Query(None)):
     return await _build(symbol, window, price)
+
+
+@router.post("/limits/{symbol:path}")
+async def cbdr_limits(symbol: str, window: str = Query("prelondon"),
+                      notify: bool = Query(False)):
+    """Pre-London limit-order plan: buy −1SD, sell +1/+3SD, 1–1.5SD grey zone.
+
+    Fires the 02:45-03:00 ET window's reversal-watch limits off the CBDR box.
+    """
+    out = await _build(symbol, window, None)
+    box = build_cbdr(out["box"]["high"], out["box"]["low"])
+    plan = prelondon_limits(box)
+    result = {"symbol": symbol, "window": out["window_label"],
+              "session": out["session"], **plan}
+    if notify:
+        lines = [f"🎯 *Pre-London limits — {symbol}*  ({out['session']})", ""]
+        for o in plan["orders"]:
+            arrow = "🟢 BUY" if o["side"] == "long" else "🔴 SELL"
+            lines.append(f"{arrow} limit `{o['entry']}`  ({o['level']}) — {o['reason']}")
+        g = plan["grey_zone"]
+        lines += ["", f"⚪ Grey {g['sd_band'][0]:g}–{g['sd_band'][1]:g}SD "
+                  f"buy {g['buy_grey']}  ·  sell {g['sell_grey']}", f"_{g['note']}_"]
+        result["sent"] = await _send("\n".join(lines))
+    return result
 
 
 @router.post("/alert/{symbol:path}")
