@@ -54,11 +54,17 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
         ohlc = [(o, hh, ll, c) for (_d, o, hh, ll, c) in h1]
         entry_read = refined_entry(ohlc, bias, buffer=10 * GOLD_PIP)   # ~10-pip buffer
 
+    # Reference range for the discount/premium location gate: the day's range so
+    # far (today's daily bar). Falls back to None → location gate is skipped.
+    ref_high = daily[-1][2] if daily else None
+    ref_low = daily[-1][3] if daily else None
+
     sig = assemble_intraday(profile, sess, fsig, entry, balance, tier=tier,
                             risk_usd=risk_usd, sl_pips=sl_pips, weekday_q=wq,
                             require_fld=require_fld,
                             require_distribution=require_distribution,
-                            entry_read=entry_read)
+                            entry_read=entry_read,
+                            ref_high=ref_high, ref_low=ref_low)
 
     if notify and sig.get("signal") in ("LONG", "SHORT"):
         sig["sent"] = await _tg(format_card(sig))
