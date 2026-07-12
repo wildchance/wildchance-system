@@ -87,6 +87,22 @@ def test_intraday_card_does_not_double_render_ladder():
     assert intraday_card(sig).count("Trend TPs:") == 1
 
 
+def test_usdjpy_attach_trend_handles_both_signal_shapes():
+    from services.usdjpy_alert import attach_trend
+    # Shape A: live ingest result (action/entry/ma/sd/is_trade)
+    a = {"is_trade": True, "action": "BUY", "entry": 157.2, "ma": 158.0, "sd": 0.9}
+    _run(attach_trend(a))
+    assert a.get("trend_targets", {}).get("side") == "long"
+    # Shape B: stored close row (signal/close/ma20/sd20 — no action/is_trade)
+    b = {"signal": "SELL", "close": 159.0, "ma20": 158.0, "sd20": 0.9}
+    _run(attach_trend(b))
+    assert b.get("trend_targets", {}).get("side") == "short"
+    # NO TRADE / non-signal rows are left untouched
+    c = {"signal": "NO TRADE", "close": 158.0}
+    _run(attach_trend(c))
+    assert "trend_targets" not in c
+
+
 def test_card_renders_trend_tp_ladder():
     prof = {"profile": "Bullish Expansion", "bias": "long",
             "week_high": 4116.95, "week_low": 3964.01}
