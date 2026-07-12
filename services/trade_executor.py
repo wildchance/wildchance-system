@@ -39,17 +39,23 @@ def plan_scale_out(total_volume: float, tp_prices: Sequence[float],
     as many rungs as it can afford — nearest TPs first. Empty if total < min_lot.
     """
     tps = [p for p in tp_prices if p is not None]
-    units_total = int(round(total_volume / step)) if step > 0 else 0
-    if units_total < 1 or not tps:
+    if step <= 0:
         return []
-    n = min(len(tps), units_total)                 # each rung needs ≥ 1 step
+    units_total = int(round(total_volume / step))
+    # A leg must be ≥ min_lot, i.e. ≥ this many whole lot-steps.
+    min_units = max(1, int(round(min_lot / step)))
+    if units_total < min_units or not tps:
+        return []
+    n = min(len(tps), units_total // min_units)     # rungs we can afford at ≥ min_lot
+    if n < 1:
+        return []
     w = list(weights[:n])
     if len(w) < n:                                  # pad if fewer weights than rungs
         w += [w[-1] if w else 1.0] * (n - len(w))
     sw = sum(w) or 1.0
 
-    alloc = [1] * n                                 # floor: one step per rung
-    remaining = units_total - n
+    alloc = [min_units] * n                         # floor: min_lot per rung
+    remaining = units_total - min_units * n
     if remaining > 0:
         raw = [remaining * wi / sw for wi in w]
         floors = [int(x) for x in raw]
