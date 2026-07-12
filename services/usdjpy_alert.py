@@ -15,6 +15,39 @@ BOT_TOKEN = config("BOT_TOKEN", default=None) or config("TELEGRAM_BOT_TOKEN", de
 CHAT_ID = config("TELEGRAM_CHAT_ID", default=None)
 
 
+async def attach_trend(sig: dict) -> None:
+    """Attach the trend-extension TP ladder to a USD/JPY signal (best-effort).
+
+    Shared by every USD/JPY path — the /close & /scan routes, the /signal read
+    endpoint, and the autonomous scheduler — so the projected targets show up
+    identically wherever the signal surfaces. Handles BOTH signal shapes: the live
+    ingest result (``action``/``entry``/``ma``/``sd``) and the stored close row
+    (``signal``/``close``/``ma20``/``sd20``). Direction follows the mean-reversion
+    action (BUY→long / SELL→short); the reversion band (ma±sd) is the fallback
+    reference impulse, with the 4H A→B→C swing preferred inside the helper. Never
+    raises — a data hiccup must not stop an alert.
+    """
+    action = str(sig.get("action") or sig.get("signal") or "").upper()
+    if not sig.get("is_trade") and action not in ("BUY", "SELL"):
+        return
+    try:
+        from services import structure_service as ss
+        bias = "long" if action == "BUY" else "short"
+        ma = sig.get("ma") if sig.get("ma") is not None else sig.get("ma20")
+        sd = sig.get("sd") if sig.get("sd") is not None else sig.get("sd20")
+        ref_high = (ma + sd) if (ma is not None and sd is not None) else None
+        ref_low = (ma - sd) if (ma is not None and sd is not None) else None
+        entry = sig.get("entry") if sig.get("entry") is not None else sig.get("close")
+        if entry is None:
+            return
+        tl = await ss.trend_targets("USD/JPY", bias, entry,
+                                    ref_high=ref_high, ref_low=ref_low)
+        if tl:
+            sig["trend_targets"] = tl
+    except Exception:
+        pass
+
+
 async def alert_signal(signal: dict, trade_risk: Optional[dict] = None) -> bool:
     """Send a BUY/SELL alert. Returns False if telegram isn't configured."""
     if not BOT_TOKEN or not CHAT_ID:
