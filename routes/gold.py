@@ -62,9 +62,9 @@ async def _arm_limits(db, orders, source, balance, risk_usd, expires_at,
         opened = await gp.open_limit(db, card, source, expires_at)
         entry = {"tracked": opened or {"skipped": "not sizeable", "order": o}}
         if execute and card.get("signal") in ("LONG", "SHORT"):
-            order = te.build_order(card, source=source)
-            if order:
-                entry["queued_order"] = await te.enqueue(db, order)
+            orders = te.build_orders(card, source=source)
+            if orders:
+                entry["queued_orders"] = await te.enqueue_all(db, orders)
         out.append(entry)
     return out
 
@@ -127,9 +127,9 @@ async def intraday(balance: float = Query(5000, gt=0),
         if opened:
             sig["tracked_position"] = opened
     if execute:
-        order = te.build_order(sig, source="gold_intraday")
-        if order:
-            sig["queued_order"] = await te.enqueue(db, order)
+        orders = te.build_orders(sig, source="gold_intraday")
+        if orders:
+            sig["queued_orders"] = await te.enqueue_all(db, orders)
     return sig
 
 @router.get("/compound")
