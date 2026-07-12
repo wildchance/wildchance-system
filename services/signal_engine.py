@@ -97,6 +97,20 @@ async def build_auto(symbol: str, side: str, window: str = "cbdr",
         await mmm_service.read_with_daily(symbol, bars), side)
     if mmm_conf.get("status") != "none":
         extra["mmm_confluence"] = mmm_conf
+
+    # TREND-EXTENSION TP LADDER — projected targets for this pair (EUR/USD, GBP/USD,
+    # USD/JPY, …). Prefers the 4H A→B→C swing; falls back to the CBDR box as the
+    # impulse anchored at entry. Best-effort — never blocks the signal.
+    try:
+        from services import structure_service as _ss
+        _bias = "long" if side.lower() in ("long", "buy", "bull") else "short"
+        _tl = await _ss.trend_targets(symbol, _bias, entry,
+                                      ref_high=box.high, ref_low=box.low)
+        if _tl:
+            extra["trend_targets"] = _tl
+    except Exception:
+        pass
+
     return _assemble(symbol, side, entry, plan["stop_loss"], tps, balance, tier, mode,
                      extra=extra)
 
@@ -143,7 +157,8 @@ def format_card(sig: dict) -> str:
     lines += ["", f"Lot ≤ {s['max_lot']}  ·  tier {s['tier']}  ·  bal ${s['balance']}"]
     g = sig["gate"]
     lines.append(("✅ GATE: " + g["reason"]) if g["allow"] else ("⛔ GATE: " + g["reason"]))
-    return "\n".join(lines)
+    from gold.signal import format_trend_lines
+    return "\n".join(lines) + format_trend_lines(sig)
 
 
 def qr_payload(sig: dict) -> str:
