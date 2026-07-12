@@ -91,6 +91,26 @@ def assemble(profile: dict, entry: float, balance: float,
     }
 
 
+def format_trend_lines(sig: dict) -> str:
+    """Render the trend-extension TP ladder for a card (empty string if absent).
+
+    Shared by the daily gold card, the intraday gold card, and the forex cards so
+    every instrument prints its projected targets identically. Pure — reads only
+    ``sig['trend_targets']`` (produced by services.structure_service.trend_targets).
+    """
+    tl = sig.get("trend_targets")
+    if not tl or not tl.get("targets"):
+        return ""
+    tps = "  ·  ".join(
+        f"{t['label']} {t['price']:g} ({t['ratio']:g}·{t['pct']:+.1f}%)"
+        for t in tl["targets"])
+    out = f"\n🎯 Trend TPs: {tps}"
+    mm = tl.get("measured_move")
+    if mm:
+        out += f"\n📐 measured move (1.0) {mm:g}  ·  src {tl.get('source')}"
+    return out
+
+
 def format_card(sig: dict) -> str:
     """Telegram card in the requested gold format."""
     if sig.get("signal") == "NO TRADE":
@@ -113,4 +133,4 @@ def format_card(sig: dict) -> str:
     g = sig.get("gate", {})
     lines += ["", ("✅ GATE: " + g.get("reason", "")) if g.get("allow")
               else ("⛔ GATE: " + g.get("reason", ""))]
-    return "\n".join(lines)
+    return "\n".join(lines) + format_trend_lines(sig)
