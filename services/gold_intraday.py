@@ -166,6 +166,20 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
             sig["reason"] = block
             return sig
 
+    # TREND-EXTENSION TP LADDER — every live card ships the projected targets. The
+    # 4H A→B→C swing (the chart timeframe) in the trade direction; falls back to the
+    # tier reference range anchored at entry so a ladder is always attached.
+    if sig.get("signal") in ("LONG", "SHORT"):
+        try:
+            from services import structure_service as ss
+            tl = await ss.trend_targets("XAU/USD", bias, sig.get("entry", entry),
+                                        ref_high=ref_high, ref_low=ref_low,
+                                        interval="4h")
+            if tl:
+                sig["trend_targets"] = tl
+        except Exception:
+            pass
+
     if notify and sig.get("signal") in ("LONG", "SHORT"):
         sig["sent"] = await _tg(format_card(sig))
     return sig
