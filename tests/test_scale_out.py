@@ -32,6 +32,18 @@ def test_scale_out_tiny_lot_uses_what_it_can_afford():
     assert te.plan_scale_out(0.0, [10, 20]) == []
 
 
+def test_scale_out_enforces_min_lot_above_step():
+    # broker with min lot 0.10 but 0.01 step: legs must be ≥ 0.10, never 0.01
+    legs = te.plan_scale_out(0.20, [10, 20, 30, 40], min_lot=0.10, step=0.01)
+    assert all(l["volume"] >= 0.10 for l in legs)
+    assert round(sum(l["volume"] for l in legs), 2) == 0.20
+    # 0.15 over a 0.10 floor → only ONE affordable leg (0.15), not two sub-min legs
+    legs2 = te.plan_scale_out(0.15, [10, 20, 30, 40], min_lot=0.10, step=0.01)
+    assert len(legs2) == 1 and legs2[0]["volume"] == 0.15
+    # below the floor entirely → nothing
+    assert te.plan_scale_out(0.05, [10, 20], min_lot=0.10, step=0.01) == []
+
+
 def test_scale_out_fewer_tps_than_units():
     legs = te.plan_scale_out(0.10, [10, 20])                   # 2 TPs, 10 units
     assert len(legs) == 2
