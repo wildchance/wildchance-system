@@ -46,6 +46,47 @@ def test_trend_targets_none_without_reference_or_data():
                                  ref_high=4100, ref_low=3900)) is None
 
 
+def test_format_trend_lines_shared_renderer():
+    from gold.signal import format_trend_lines
+    tl = {"targets": [{"label": "TP1", "ratio": 1.0, "price": 160.2, "pct": 1.6}],
+          "measured_move": 160.2, "source": "4h pivots LHL"}
+    out = format_trend_lines({"trend_targets": tl})
+    assert "🎯 Trend TPs:" in out and "TP1 160.2" in out and "measured move" in out
+    # absent → empty string (never crashes a card)
+    assert format_trend_lines({}) == ""
+    assert format_trend_lines({"trend_targets": {"targets": []}}) == ""
+
+
+def test_forex_card_renders_ladder():
+    # generic multi-pair card (EUR/USD, GBP/USD, …) surfaces the ladder
+    from services.signal_engine import format_card
+    sig = {"symbol": "EUR/USD", "side": "long", "mode": "continuation",
+           "source": "auto", "window_label": "CBDR", "entry": 1.085,
+           "stop_loss": 1.082, "targets": [{"name": "TP1", "price": 1.091, "r": 2.0}],
+           "sizing": {"max_lot": 0.5, "tier": 6, "balance": 2500},
+           "gate": {"allow": True, "reason": "ok"},
+           "trend_targets": {"targets": [{"label": "TP1", "ratio": 1.0,
+                                          "price": 1.093, "pct": 0.74}],
+                             "measured_move": 1.093, "source": "4h pivots LHL"}}
+    card = format_card(sig)
+    assert "🎯 Trend TPs:" in card
+
+
+def test_intraday_card_does_not_double_render_ladder():
+    # base card + intraday extras must show the ladder exactly ONCE
+    from gold.intraday import format_card as intraday_card
+    sig = assemble_structured({"profile": "Bull", "bias": "long",
+                               "week_high": 4116.95, "week_low": 3964.01},
+                              4119.68, 4090.0, 5000.0, tier="6",
+                              risk_usd=20.0, rr=(2, 3, 4))
+    sig["signal"] = "LONG"
+    sig["layers"] = {"session": {"quarter": 3, "phase": "distribution"},
+                     "fld": {"cross": "bull"}, "weekday": None}
+    sig["trend_targets"] = _run(ss.trend_targets("XAU/USD", "long", 4119.68,
+                                                 ref_high=4116.95, ref_low=3964.01))
+    assert intraday_card(sig).count("Trend TPs:") == 1
+
+
 def test_card_renders_trend_tp_ladder():
     prof = {"profile": "Bullish Expansion", "bias": "long",
             "week_high": 4116.95, "week_low": 3964.01}
