@@ -23,6 +23,11 @@ extremes ``(low, high)``. ``side`` names the trade you want to take on it:
   ote_zone(low, high, side)      the 0.618–0.786 optimal-entry band (+ 0.705 mid)
   invalidation(low, high, side, buffer)   the structural stop beyond the extreme
   plan_trade(low, high, side, …) full plan: entry + invalidation SL + ext TPs + R:R
+
+Trend-based (3-point A→B→C) extension — anticipate the continuation target zones:
+  trend_extension(a, b, c, r)    one projected price:  C + r·(B−A)
+  trend_levels(a, b, c)          full projection ladder + reaction/target zones
+  trend_plan(a, b, c, side, …)   enter at C, stop at invalidation, TP the extensions
 """
 
 from __future__ import annotations
@@ -167,5 +172,117 @@ def plan_trade(low: float, high: float, side: str,
         "rr_max": targets[-1]["rr"] if targets else 0.0,
         "leg": {"low": round(lo, 6), "high": round(hi, 6), "range": round(rng, 6)},
         "reason": (None if (targets and first_rr >= min_rr)
+                   else f"first target R:R {first_rr} < min {min_rr}"),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TREND-BASED (3-point A→B→C) fib extension — anticipate the target/extension zones
+# ─────────────────────────────────────────────────────────────────────────────
+# Two-point ``extension`` projects off a single leg. The trend-based tool (the
+# TenCapital / TradingView "Trend-Based Fib Extension") uses THREE points — an
+# impulse A→B and its retracement to C — and projects the ladder FROM C by the
+# size of the A→B leg. That is what anticipates *where a continuation runs to*:
+#
+#   price(r) = C + r · (B − A)
+#
+# r=0 sits at C, r=1.0 is a full measured move (equal leg) off the pullback, and
+# 1.618 / 2.618 are the golden continuation zones. A negative r projects the
+# other way (the −4.16 ≈ downside target on the gold chart).
+
+# The projection ladder. 1.0 = measured move; 0.618–1.0 = first reaction zone;
+# 1.272–1.618 = the golden continuation (target) zone; 2.0+ = extended runners.
+TREND_EXTENSIONS = (0.0, 0.382, 0.5, 0.618, 0.786, 1.0,
+                    1.272, 1.414, 1.618, 2.0, 2.618, 3.618, 4.236)
+
+# The two zones a trader actually aims at, as (lo_ratio, hi_ratio).
+_REACTION_ZONE = (0.618, 1.0)      # first measured-move reaction
+_TARGET_ZONE = (1.272, 1.618)      # golden continuation / primary target
+
+
+def trend_extension(a: float, b: float, c: float, r: float) -> float:
+    """One trend-based extension price: ``C + r·(B−A)`` (projected from C)."""
+    return round(c + r * (b - a), 6)
+
+
+def trend_levels(a: float, b: float, c: float,
+                 ratios: Sequence[float] = TREND_EXTENSIONS) -> dict:
+    """The full A→B→C projection ladder, plus the reaction & target zones.
+
+    ``side`` is inferred from the A→B leg: B>A is an up-impulse (continuation
+    long), B<A a down-impulse (continuation short). ``zones`` are the price bands
+    to watch for reactions / take-profits.
+    """
+    leg = b - a
+    if leg == 0:
+        return {"side": None, "leg": 0.0, "levels": {}, "zones": {}}
+    long = leg > 0
+    prices = {f"{r:.3f}": round(c + r * leg, 6) for r in ratios}
+
+    def _zone(z):
+        lo = round(c + z[0] * leg, 6)
+        hi = round(c + z[1] * leg, 6)
+        return sorted((lo, hi))
+
+    return {
+        "side": "long" if long else "short",
+        "leg": round(leg, 6),
+        "anchor": round(c, 6),
+        "levels": prices,
+        "zones": {"reaction": _zone(_REACTION_ZONE), "target": _zone(_TARGET_ZONE)},
+    }
+
+
+def trend_plan(a: float, b: float, c: float, side: Optional[str] = None,
+               entry: Optional[float] = None, buffer: float = 0.0,
+               stop_ref: str = "c", targets: Sequence[float] = (1.0, 1.618, 2.618),
+               min_rr: float = 2.0) -> dict:
+    """A continuation trade off the A→B→C swing: enter at C, target the extensions.
+
+    The pullback INTO C is the entry; the stop sits at structure invalidation —
+    beyond C (``stop_ref='c'``, the pullback is over) or beyond A (``stop_ref='a'``,
+    the whole leg is invalid). Take-profits are the trend extensions, so the trade
+    aims straight at the anticipated continuation zones. ``side`` is inferred from
+    the leg unless forced.
+    """
+    leg = b - a
+    if leg == 0:
+        return {"ok": False, "reason": "degenerate impulse (A == B)"}
+    long = (leg > 0) if side is None else _is_long(side)
+
+    px = float(entry) if entry is not None else round(c, 6)
+    # Invalidation: below the anchor for a long, above it for a short.
+    ref = c if stop_ref == "c" else a
+    stop = round((ref - buffer) if long else (ref + buffer), 6)
+    risk = abs(px - stop)
+    if risk <= 0:
+        return {"ok": False, "reason": "entry is at/through the invalidation"}
+
+    tps = []
+    for r in targets:
+        tp = round(c + (r if long else -r) * abs(leg), 6)
+        reward = (tp - px) if long else (px - tp)
+        tps.append({"ratio": r, "price": tp, "rr": round(reward / risk, 2)})
+    tps = [t for t in tps if t["rr"] > 0]
+
+    first_rr = tps[0]["rr"] if tps else 0.0
+    lv = trend_levels(a, b, c)
+    return {
+        "ok": bool(tps) and first_rr >= min_rr,
+        "kind": "trend-extension",
+        "side": "long" if long else "short",
+        "entry": px,
+        "entry_mode": "anchor(C)" if entry is None else "given",
+        "stop": stop,
+        "stop_ref": stop_ref,
+        "risk": round(risk, 6),
+        "stop_distance": round(risk, 6),
+        "targets": tps,
+        "rr_first": first_rr,
+        "rr_max": tps[-1]["rr"] if tps else 0.0,
+        "zones": lv["zones"],
+        "abc": {"a": round(a, 6), "b": round(b, 6), "c": round(c, 6),
+                "leg": round(leg, 6)},
+        "reason": (None if (tps and first_rr >= min_rr)
                    else f"first target R:R {first_rr} < min {min_rr}"),
     }
