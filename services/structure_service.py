@@ -74,3 +74,75 @@ async def plan(symbol: str, interval: str = "4h", lookback: int = 60,
     p["leg_source"] = leg["source"]
     p["levels"] = fib.levels(leg["low"], leg["high"])
     return p
+
+
+def detect_abc(bars, side: Optional[str] = None) -> Optional[dict]:
+    """The last A→B→C swing (impulse + retracement) from OHLC → {a, b, c, side}.
+
+    Reads the three most-recent alternating pivots. An up-impulse is
+    low(A)→high(B)→higher-low(C); a down-impulse high(A)→low(B)→lower-high(C).
+    Direction follows the newest impulse unless ``side`` forces it. This is the
+    3-point input the trend-based extension projects from.
+    """
+    ohlc = [(o, h, l, c) for (_d, o, h, l, c) in bars] if bars and len(bars[0]) == 5 else list(bars)
+    if len(ohlc) < 8:
+        return None
+
+    sh, sl = _swing_highs(ohlc), _swing_lows(ohlc)
+    if len(sh) < 1 or len(sl) < 1:
+        return None
+
+    # Newest pivot decides the impulse direction: if the last swing HIGH is more
+    # recent than the last swing LOW, the market last pushed UP → the C pullback
+    # we anchor from is that latest low sitting *after* the prior high... but the
+    # cleanest read is the three most recent pivots in time order.
+    piv = sorted([(i, "H", ohlc[i][1]) for i in sh] +
+                 [(i, "L", ohlc[i][2]) for i in sl])
+    if len(piv) < 3:
+        return None
+    # Walk back to the last alternating H/L/H or L/H/L triple.
+    triple = None
+    for k in range(len(piv) - 1, 1, -1):
+        p3, p2, p1 = piv[k], piv[k - 1], piv[k - 2]
+        if p1[1] != p2[1] and p2[1] != p3[1]:      # alternating
+            triple = (p1, p2, p3)
+            break
+    if triple is None:
+        return None
+    (i1, t1, v1), (i2, t2, v2), (i3, t3, v3) = triple
+    a, b, c = v1, v2, v3
+    # A→B→C = first→second→third pivot. Up-impulse when A is a Low.
+    leg_side = "long" if t1 == "L" else "short"
+    # Validity: C must be a genuine RETRACEMENT of the A→B impulse, not a fresh
+    # extreme. long → A < C < B (a higher-low pullback); short → B < C < A. If C
+    # ran past B or below A, this isn't a clean A→B→C — bail so the caller says so.
+    valid = (a < c < b) if leg_side == "long" else (b < c < a)
+    if not valid:
+        return None
+    return {"a": round(a, 6), "b": round(b, 6), "c": round(c, 6),
+            "side": side or leg_side, "source": f"pivots {t1}{t2}{t3}"}
+
+
+async def trend(symbol: str, interval: str = "4h", lookback: int = 80,
+                side: Optional[str] = None, entry: Optional[float] = None,
+                buffer: float = 0.0, min_rr: float = 2.0) -> dict:
+    """Fetch bars, detect the A→B→C swing, and project the trend-based extension.
+
+    Returns the continuation plan (enter at C, invalidation stop, extension TPs)
+    plus the full projection ladder and the reaction/target zones. Boot-safe.
+    """
+    bars = await fetch_ohlc(symbol, interval, lookback)
+    if not bars or len(bars) < 8:
+        return {"ok": False, "symbol": symbol, "reason": f"no {symbol} {interval} bars"}
+
+    abc = detect_abc(bars, side=side)
+    if not abc:
+        return {"ok": False, "symbol": symbol, "reason": "no A→B→C swing detected"}
+
+    p = fib.trend_plan(abc["a"], abc["b"], abc["c"], side=abc["side"],
+                       entry=entry, buffer=buffer, min_rr=min_rr)
+    p["symbol"] = symbol
+    p["interval"] = interval
+    p["abc_source"] = abc["source"]
+    p["ladder"] = fib.trend_levels(abc["a"], abc["b"], abc["c"])
+    return p
