@@ -20,7 +20,8 @@ from decouple import config
 from database.db import AsyncSessionLocal
 from services import usdjpy_service as svc
 from services.usdjpy_close_service import fetch_daily_close
-from services.usdjpy_alert import alert_signal
+from services.usdjpy_alert import alert_signal, attach_trend
+from services.news_guard import news_flag
 from usdjpy.risk_engine import trade_money_risk
 
 ENABLED = config("USDJPY_SCANNER_ENABLED", default="false").lower() == "true"
@@ -45,6 +46,11 @@ async def run_scan_once() -> dict:
         trade_risk = None
         if ACCOUNT_SIZE > 0 and sig.get("stop_pips"):
             trade_risk = trade_money_risk(ACCOUNT_SIZE, sig["stop_pips"], sig["close"])
+        # Same enrichment the routes apply: forward-looking news flag + trend ladder,
+        # so the AUTONOMOUS alert carries them too (was previously bare).
+        d_obj = d if isinstance(d, date) else date.fromisoformat(str(d)[:10])
+        sig["news_warning"] = await news_flag(d_obj, "USD/JPY")
+        await attach_trend(sig)
         await alert_signal(sig, trade_risk)
 
     return {"status": "ok", "date": str(d), "close": close, "signal": sig}
