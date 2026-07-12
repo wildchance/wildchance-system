@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.db import get_db
 from services import usdjpy_service as svc
 from services.usdjpy_close_service import fetch_daily_close, fetch_daily_series
-from services.usdjpy_alert import alert_signal
+from services.usdjpy_alert import alert_signal, attach_trend
 from services.news_guard import news_flag, nfp_window
 from usdjpy.engine import FROZEN_RULES
 from usdjpy.seed_from_workbook import WORKBOOK_CLOSES
@@ -61,29 +61,6 @@ def _attach_sizing(result: dict, account_size: Optional[float]) -> dict:
     return result
 
 
-async def _attach_trend(sig: dict) -> None:
-    """Attach the trend-extension TP ladder to a USD/JPY signal (best-effort).
-
-    Direction follows the mean-reversion action (BUY→long / SELL→short); the
-    reversion band (ma±sd) is the fallback reference impulse, with the 4H A→B→C
-    swing preferred inside the helper. Never raises.
-    """
-    if not sig.get("is_trade"):
-        return
-    try:
-        from services import structure_service as ss
-        bias = "long" if str(sig.get("action", "")).upper() == "BUY" else "short"
-        ma, sd = sig.get("ma"), sig.get("sd")
-        ref_high = (ma + sd) if (ma is not None and sd is not None) else None
-        ref_low = (ma - sd) if (ma is not None and sd is not None) else None
-        tl = await ss.trend_targets("USD/JPY", bias, sig.get("entry"),
-                                    ref_high=ref_high, ref_low=ref_low)
-        if tl:
-            sig["trend_targets"] = tl
-    except Exception:
-        pass
-
-
 @router.post("/close")
 async def submit_close(payload: CloseIn, db: AsyncSession = Depends(get_db)):
     d = payload.date or date.today().isoformat()
@@ -92,7 +69,7 @@ async def submit_close(payload: CloseIn, db: AsyncSession = Depends(get_db)):
     sig = result.get("signal") or {}
     if sig.get("is_trade"):
         sig["news_warning"] = await news_flag(date.fromisoformat(str(d)[:10]), "USD/JPY")
-        await _attach_trend(sig)
+        await attach_trend(sig)
     if payload.notify and sig.get("is_trade"):
         await alert_signal(sig, result.get("trade_risk"))
     return result
@@ -116,7 +93,7 @@ async def scan(
     if sig.get("is_trade"):
         d_obj = d if isinstance(d, date) else date.fromisoformat(str(d)[:10])
         sig["news_warning"] = await news_flag(d_obj, "USD/JPY")
-        await _attach_trend(sig)
+        await attach_trend(sig)
     if notify and sig.get("is_trade"):
         await alert_signal(sig, result.get("trade_risk"))
     return result
@@ -175,6 +152,7 @@ async def signal(db: AsyncSession = Depends(get_db)):
         latest["news_warning"] = await news_flag(
             date.fromisoformat(str(latest["trade_date"])[:10]), "USD/JPY"
         )
+        await attach_trend(latest)
     return latest
 
 
