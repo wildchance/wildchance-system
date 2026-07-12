@@ -182,13 +182,6 @@ def format_card(sig: dict) -> str:
         reg = sig.get("regime")
         if reg:
             base += f"\n💵 dollar {reg['dollar']} · COT {reg['cot_zone']}"
-        tl = sig.get("trend_targets")
-        if tl and tl.get("targets"):
-            tps = "  ·  ".join(
-                f"{t['label']} {t['price']:g} ({t['ratio']:g}·{t['pct']:+.1f}%)"
-                for t in tl["targets"])
-            base += f"\n🎯 Trend TPs: {tps}"
-            mm = tl.get("measured_move")
-            if mm:
-                base += f"\n📐 measured move (1.0) {mm:g}  ·  src {tl.get('source')}"
+        # NOTE: the 🎯 trend-TP ladder is rendered by the base card
+        # (gold.signal.format_card → format_trend_lines), so it is NOT repeated here.
     return base
