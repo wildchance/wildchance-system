@@ -146,3 +146,71 @@ async def trend(symbol: str, interval: str = "4h", lookback: int = 80,
     p["abc_source"] = abc["source"]
     p["ladder"] = fib.trend_levels(abc["a"], abc["b"], abc["c"])
     return p
+
+
+# Standard TP ratios surfaced on a live card: the 0.618–1.0 reaction targets, then
+# the 1.618 golden extension and the 2.618 runner.
+_CARD_TP_RATIOS = (0.618, 1.0, 1.618, 2.618)
+
+
+async def trend_targets(symbol: str, bias: str, entry: float,
+                        ref_high: Optional[float] = None,
+                        ref_low: Optional[float] = None,
+                        interval: str = "4h", lookback: int = 90,
+                        tp_ratios=_CARD_TP_RATIOS) -> Optional[dict]:
+    """A compact trend-extension TP ladder for a live signal, in the ``bias`` direction.
+
+    Preferred source is the symbol's own ``interval`` A→B→C swing (the chart the
+    trader watches). If that swing's geometry doesn't agree with ``bias`` (or data
+    is thin), it FALLS BACK to constructing A→B→C from the signal's reference range
+    (impulse = ref_low→ref_high) anchored at the live ``entry`` — so a card always
+    gets a ladder, never a blank. Returns None only when neither source is usable.
+
+    Output: {abc, source, side, measured_move, targets:[{label,ratio,price,pct}],
+             zones}. ``pct`` is the move to that target from entry.
+    """
+    if bias not in ("long", "short") or entry is None:
+        return None
+
+    abc = None
+    source = None
+    bars = await fetch_ohlc(symbol, interval, lookback)
+    if bars and len(bars) >= 8:
+        cand = detect_abc(bars)                       # natural geometry off the chart
+        if cand and cand["side"] == bias:
+            abc, source = cand, f"{interval} {cand['source']}"
+
+    # Fallback: reference range is the impulse, entry is the retracement anchor.
+    if abc is None and ref_high is not None and ref_low is not None:
+        if bias == "long":
+            abc = {"a": ref_low, "b": ref_high, "c": entry}
+        else:
+            abc = {"a": ref_high, "b": ref_low, "c": entry}
+        source = "reference range → entry anchor"
+
+    if abc is None:
+        return None
+
+    ladder = fib.trend_levels(abc["a"], abc["b"], abc["c"])
+    if not ladder.get("levels"):
+        return None
+
+    targets = []
+    for i, r in enumerate(tp_ratios, start=1):
+        price = fib.trend_extension(abc["a"], abc["b"], abc["c"], r)
+        # only forward targets (above entry for long, below for short)
+        if (bias == "long" and price <= entry) or (bias == "short" and price >= entry):
+            continue
+        pct = round((price - entry) / entry * 100, 2)
+        targets.append({"label": f"TP{i}", "ratio": r, "price": price, "pct": pct})
+
+    if not targets:
+        return None
+    return {
+        "abc": {k: round(v, 6) for k, v in abc.items()},
+        "source": source,
+        "side": bias,
+        "measured_move": fib.trend_extension(abc["a"], abc["b"], abc["c"], 1.0),
+        "targets": targets,
+        "zones": ladder["zones"],
+    }
