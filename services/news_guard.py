@@ -141,9 +141,14 @@ async def high_impact_calendar(currencies: Optional[Set[str]] = None) -> List[di
 
 async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
                     win: Optional[int] = None) -> Optional[str]:
-    """Warning string if a tier-1 event for ``symbol``'s currencies is within
-    ``win`` days (default USDJPY_NEWS_WINDOW_DAYS), else None. Callers decide
-    whether to flag or block — pass win=0 to test same-day only.
+    """Warning string if a tier-1 event for ``symbol``'s currencies is UPCOMING
+    within ``win`` days (default USDJPY_NEWS_WINDOW_DAYS), else None.
+
+    FORWARD-LOOKING: only events that are today or up to ``win`` days AHEAD are
+    flagged — ``0 <= (event - for_date).days <= win``. A print that has already
+    released is no longer a fade-inversion risk, so past events are never flagged
+    (this is the fix for the alert repeating an outcome we already had). Callers
+    decide whether to flag or block — pass win=0 to test today only.
     """
     win = max(0, NEWS_WINDOW_DAYS if win is None else win)
     ccys = symbol_currencies(symbol)
@@ -152,7 +157,7 @@ async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
     # 1) Deterministic NFP clock (only if the pair carries USD).
     if "USD" in ccys:
         for nfp in _nearby_nfp(for_date):
-            if abs((nfp - for_date).days) <= win:
+            if 0 <= (nfp - for_date).days <= win:      # today .. win days ahead
                 hits.append(f"USD NFP {nfp.isoformat()}")
 
     # 2) Live calendar feed, matched to the pair's currencies (best-effort).
@@ -163,7 +168,7 @@ async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
             d = _parse_date(ev.get("date"))
             ccy = _event_ccy(ev)
             if (d and ccy in ccys and _is_high_impact(ev)
-                    and abs((d - for_date).days) <= win):
+                    and 0 <= (d - for_date).days <= win):   # upcoming only
                 nm = ev.get("event") or ev.get("title") or "high-impact"
                 hits.append(f"{ccy} {nm}")
     except Exception:
@@ -172,8 +177,9 @@ async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
     if not hits:
         return None
     uniq = list(dict.fromkeys(hits))[:4]
+    horizon = "today" if win == 0 else f"in the next {win}d"
     return (
-        f"⚠️ High-impact news within {win}d for {'/'.join(sorted(ccys))} "
+        f"⚠️ High-impact news {horizon} for {'/'.join(sorted(ccys))} "
         f"({'; '.join(uniq)}) — scheduled prints often INVERT a fade. "
         "Trade at your discretion / reduce size."
     )
