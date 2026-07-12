@@ -44,7 +44,8 @@ async def alert_signal(signal: dict, trade_risk: Optional[dict] = None) -> bool:
             lines.append("🚨 *Stop distance exceeds daily max-loss cap — size down.*")
     lines += ["", "⏱ Exit at the close 3 trading days from entry (time-based)."]
 
-    text = "\n".join(lines)
+    from gold.signal import format_trend_lines
+    text = "\n".join(lines) + format_trend_lines(signal)
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     try:
         async with httpx.AsyncClient(timeout=10) as client:
