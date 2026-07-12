@@ -11,9 +11,10 @@ from cbdr.engine import (
 def test_windows_registered():
     assert "cbdr" in WINDOWS and "prelondon" in WINDOWS
     pl = WINDOWS["prelondon"]
-    assert pl.tz == "UTC"
+    # pre-London accumulation runs 19:00 → 02:45 ET (New York clock).
+    assert pl.tz == "America/New_York"
     assert pl.interval == "15min"
-    assert pl.start_min == _hm(18) and pl.end_min == _hm(2, 45)
+    assert pl.start_min == _hm(19) and pl.end_min == _hm(2, 45)
 
 
 def test_in_window_non_wrapping_cbdr():
@@ -26,7 +27,8 @@ def test_in_window_non_wrapping_cbdr():
 
 def test_in_window_wrapping_prelondon():
     w = WINDOWS["prelondon"]
-    assert in_window(_hm(18), w.start_min, w.end_min)        # 18:00 in
+    assert in_window(_hm(19), w.start_min, w.end_min)        # 19:00 in (open)
+    assert not in_window(_hm(18, 59), w.start_min, w.end_min)  # 18:59 out (pre-open)
     assert in_window(_hm(23, 45), w.start_min, w.end_min)    # before midnight in
     assert in_window(_hm(0), w.start_min, w.end_min)         # after midnight in
     assert in_window(_hm(2, 30), w.start_min, w.end_min)     # 02:30 bar in
