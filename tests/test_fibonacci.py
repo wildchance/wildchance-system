@@ -85,3 +85,64 @@ def test_levels_has_both_ladders():
     assert lv["retracements"]["0.705"] == 129.5
     assert lv["extensions"]["1.618"] == 261.8
     assert lv["range"] == 100
+
+
+# ── Trend-based (3-point A→B→C) extension ───────────────────────────────────
+
+def test_trend_extension_projects_from_c():
+    # Impulse A=100→B=142.19, pullback to C=125. r=0 sits at C; r=1 a full leg.
+    assert fib.trend_extension(100, 142.19, 125, 0.0) == 125
+    assert fib.trend_extension(100, 142.19, 125, 1.0) == 167.19   # C + (B-A)
+    assert fib.trend_extension(100, 142.19, 125, 2.0) == 209.38
+
+
+def test_trend_levels_reproduce_gold_chart():
+    # The TenCapital gold ladder: anchor C=4025.34, unit leg (B-A)=42.19.
+    # 0→4025.34, 1→4067.53, 2→4109.72, 4→4194.10 (chart: 4067.54/4109.73/4194.12).
+    a, b, c = 4000.0, 4042.19, 4025.34
+    lv = fib.trend_levels(a, b, c)
+    assert lv["side"] == "long"
+    assert lv["levels"]["1.000"] == 4067.53
+    assert lv["levels"]["2.000"] == 4109.72
+    assert abs(lv["levels"]["4.236"] - 4204.02) < 0.05
+    # negative projection = the downside target zone the chart's arrow points to
+    assert fib.trend_extension(a, b, c, -4.16) < 3860
+
+
+def test_trend_plan_long_targets_the_extensions():
+    plan = fib.trend_plan(100, 142.19, 125, buffer=1)
+    assert plan["ok"] is True
+    assert plan["side"] == "long"
+    assert plan["kind"] == "trend-extension"
+    assert plan["entry"] == 125                    # enter at the C anchor
+    assert plan["stop"] == 124                      # invalidation below C - buffer
+    assert plan["targets"][0]["price"] == 167.19    # 1.0 measured move
+    assert all(t["price"] > 125 for t in plan["targets"])
+    assert plan["zones"]["target"][0] < plan["zones"]["target"][1]
+
+
+def test_trend_plan_short_projects_down():
+    # Down-impulse A=200→B=100, retrace up to C=140. Targets project DOWN.
+    plan = fib.trend_plan(200, 100, 140, buffer=2)
+    assert plan["side"] == "short"
+    assert plan["stop"] == 142                      # above C + buffer
+    assert plan["targets"][0]["price"] == 40        # 140 - 1.0*100
+    assert all(t["price"] < 140 for t in plan["targets"])
+
+
+def test_trend_plan_stop_ref_a_widens_stop():
+    near = fib.trend_plan(100, 142.19, 125, buffer=1, stop_ref="c")
+    far = fib.trend_plan(100, 142.19, 125, buffer=1, stop_ref="a")
+    assert far["risk"] > near["risk"]               # A-invalidation is wider
+    assert far["stop"] == 99                          # A - buffer
+
+
+def test_trend_plan_zero_risk_when_stop_at_entry():
+    # entry == C and stop at C with no buffer → zero-risk, not ok.
+    p = fib.trend_plan(100, 142.19, 125, buffer=0, stop_ref="c")
+    assert p["ok"] is False
+
+
+def test_trend_degenerate_impulse():
+    assert fib.trend_plan(100, 100, 100)["ok"] is False
+    assert fib.trend_levels(100, 100, 100)["levels"] == {}
