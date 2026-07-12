@@ -40,5 +40,33 @@ Set **`EXECUTION_TOKEN`** in the app env (a long random string). Until it's set,
 - [ ] Only then point it at the funded account.
 
 The connector places **market** orders at signal price and **limit** orders at
-the Wade OTE entry, always with the SL/TP the app computed. Scale-out to TP2/TP3
-(`tp_levels`) can be added once single-TP fills are verified.
+the Wade OTE entry, always with the SL/TP the app computed.
+
+## Scale-out across the trend-TP ladder
+
+When a signal carries a trend-extension ladder, the app **splits the sized
+position into partial legs** (`build_orders`) — each leg is a fraction of the
+volume with its **own trend-TP** and the **same structure stop**. So one signal
+enqueues several `execution_orders` rows, and the bridge (which already places
+each pending order independently) opens them as **separate MT5 positions** that
+ladder out: bank the most at the nearest target, run a tail to the furthest
+extension. Example — a 0.20-lot gold long becomes:
+
+```
+leg 1/4   0.07 lot   TP 4214.2   ┐
+leg 2/4   0.06 lot   TP 4272.6   │  all share SL 4090
+leg 3/4   0.04 lot   TP 4367.1   │  (structure invalidation)
+leg 4/4   0.03 lot   TP 4520.1   ┘
+```
+
+The `comment` on each MT5 position reads `<profile> i/n` so you can see the legs
+in the terminal. No connector change is needed — it already loops the queue.
+
+Tuning (app env):
+- `EXECUTION_SCALE_OUT` — `true` (default) / `false` to send one full-size order.
+- `EXECUTION_SCALE_WEIGHTS` — leg weights, default `0.4,0.3,0.2,0.1` (front-loaded).
+- `EXECUTION_MIN_LOT` / `EXECUTION_LOT_STEP` — broker lot floor/step (default 0.01).
+
+If the sized lot is too small to split (e.g. 0.01 over 4 rungs), it degrades
+gracefully to as many legs as it can afford — nearest TPs first — or a single
+order. `MAX_VOLUME` on the VPS still hard-caps **each leg**.
