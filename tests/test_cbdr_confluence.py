@@ -116,3 +116,22 @@ def test_backtest_empty_when_no_asian_box():
     thin = {"2026-07-06": [_bar(6, 8, 4000, 4010, 3990, 4005)]}
     r = backtest(thin, {"2026-07-06": "short"})
     assert r["overall"]["trades"] == 0
+
+
+def test_stop_sd_tightens_the_stop():
+    # buy at London -1SD; a smaller stop_sd puts the stop CLOSER to entry → less risk
+    london = build_cbdr(4020, 4000)                       # range 20, -1SD entry = 3980
+    wide = cross_session_confluence(london, None, "long", "long", stop_sd=2.0)["orders"][0]
+    tight = cross_session_confluence(london, None, "long", "long", stop_sd=1.5)["orders"][0]
+    assert tight["stop"] > wide["stop"]                    # 1.5SD stop is higher (closer)
+    assert (tight["entry"] - tight["stop"]) < (wide["entry"] - wide["stop"])
+
+
+def test_backtest_reports_train_test_split():
+    days = {f"2026-07-{d:02d}": _down_day(d) for d in (6, 7, 8, 9)}
+    wk = {d: "short" for d in days}
+    r = backtest(days, wk, min_score=50, regime_gated=False)
+    assert "train" in r and "test" in r
+    assert r["test"]["from"] is not None                  # split point set
+    # every settled trade lands in exactly one of train/test
+    assert r["train"]["settled"] + r["test"]["settled"] == r["overall"]["settled"]
