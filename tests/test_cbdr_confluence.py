@@ -1,14 +1,14 @@
 """Cross-session CBDR confluence engine + the Asian→London backtest."""
 
-import datetime as dt
-
 from cbdr.engine import build_cbdr
 from cbdr.confluence import cross_session_confluence, conviction, _bias_num
 from backtest.cbdr_confluence_backtest import backtest
 
 
 def _bar(day, h, o, hi, lo, c):
-    return (dt.datetime(2026, 7, day, h, 0, tzinfo=dt.timezone.utc), o, hi, lo, c)
+    # matches services.ohlc_service.fetch_hourly_raw: {date, hour, open, high, low, close}
+    return {"date": f"2026-07-{day:02d}", "hour": h,
+            "open": o, "high": hi, "low": lo, "close": c}
 
 
 # ---- confluence engine -----------------------------------------------------
