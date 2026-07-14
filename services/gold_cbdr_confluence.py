@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Optional
 
-from services.ohlc_service import fetch_ohlc
+from services.ohlc_service import fetch_ohlc, fetch_hourly_raw
 from services.gold_scan import _tg
 from gold.ict import classify_week
 from gold import macro as gmacro
@@ -26,19 +26,12 @@ _ASIA = (0, 8)
 _LONDON = (8, 13)
 
 
-def _hour(ts):
-    return ts.hour if hasattr(ts, "hour") else int(str(ts).replace("T", " ").split(" ")[1][:2])
-
-
-def _day(ts):
-    return ts.date().isoformat() if hasattr(ts, "date") else str(ts)[:10]
-
-
 def _box(bars, span):
-    sel = [b for b in bars if span[0] <= _hour(b[0]) < span[1]]
+    """CBDR box from hourly dict-bars {date, hour, high, low, ...} in ``span`` (UTC)."""
+    sel = [b for b in bars if span[0] <= b["hour"] < span[1]]
     if len(sel) < 2:
         return None
-    hi, lo = cbdr_box([b[2] for b in sel], [b[3] for b in sel])
+    hi, lo = cbdr_box([b["high"] for b in sel], [b["low"] for b in sel])
     return build_cbdr(hi, lo) if hi > lo else None
 
 
@@ -56,12 +49,12 @@ async def scan(balance: float = 5000.0, risk_usd: float = 20.0,
     except Exception:
         macro = "neutral"
 
-    h1 = await fetch_ohlc("XAU/USD", "1h", 48)
+    h1 = await fetch_hourly_raw("XAU/USD", "UTC", 48)     # hour PRESERVED (UTC)
     if len(h1) < 4:
         return {"orders": [], "reason": "no XAU/USD 1h bars"}
     now = _dt.datetime.now(_dt.timezone.utc)
     today = now.date().isoformat()
-    day_bars = [b for b in h1 if _day(b[0]) == today] or h1
+    day_bars = [b for b in h1 if b["date"] == today] or h1
 
     asian = _box(day_bars, _ASIA)
     if asian is None:
@@ -87,15 +80,16 @@ async def history_for_backtest(days: int = 60):
     down-trending weeks and fail in up-trending ones?
     """
     hours = min(5000, max(days + 5, days) * 24)
-    h1 = await fetch_ohlc("XAU/USD", "1h", hours)
+    h1 = await fetch_hourly_raw("XAU/USD", "UTC", hours)     # hour PRESERVED (UTC)
     if not h1:
         return {}, {}
     grouped: dict = {}
     for b in h1:
-        grouped.setdefault(_day(b[0]), []).append(b)
+        grouped.setdefault(b["date"], []).append(b)
 
     daily = await fetch_ohlc("XAU/USD", "1day", days + 10)
-    closes = {_day(d[0]): d[4] for d in daily}
+    closes = {(d[0].isoformat() if hasattr(d[0], "isoformat") else str(d[0])[:10]): d[4]
+              for d in daily}
     dates = sorted(closes)
     bias: dict = {}
     for i, dte in enumerate(dates):
