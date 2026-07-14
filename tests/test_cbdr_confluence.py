@@ -13,13 +13,24 @@ def _bar(day, h, o, hi, lo, c):
 
 # ---- confluence engine -----------------------------------------------------
 
-def test_weekly_bias_gates_the_fade():
+def test_regime_gate_suppresses_premium_sell():
     asian = build_cbdr(4020, 4000)     # +1SD premium = 4040
     london = build_cbdr(3970, 3950)    # -1SD discount = 3930
-    # weekly SHORT → the Asian-premium SELL arms high; the buy is filtered out
-    sell = cross_session_confluence(asian, london, weekly_bias="short")["orders"]
-    assert len(sell) == 1 and sell[0]["side"] == "short" and sell[0]["score"] >= 80
-    # weekly LONG → only the discount BUY survives
+    # weekly SHORT but macro NEUTRAL → NOT a confirmed downtrend → sell SUPPRESSED
+    r = cross_session_confluence(asian, london, weekly_bias="short", macro_bias="neutral")
+    assert r["orders"] == []
+    assert r["regime"]["enable_sell"] is False
+    # CONFIRMED downtrend (weekly AND macro short) → the sell arms
+    r2 = cross_session_confluence(asian, london, weekly_bias="short", macro_bias="short")
+    assert len(r2["orders"]) == 1 and r2["orders"][0]["side"] == "short"
+    # force it on regardless of regime
+    r3 = cross_session_confluence(asian, london, "short", "neutral", enable_sell=True)
+    assert r3["orders"] and r3["orders"][0]["side"] == "short"
+
+
+def test_buy_discount_arms_in_long_weeks():
+    asian, london = build_cbdr(4020, 4000), build_cbdr(3970, 3950)
+    # weekly LONG → the proven discount BUY arms (buy is on by default)
     buy = cross_session_confluence(asian, london, weekly_bias="long")["orders"]
     assert len(buy) == 1 and buy[0]["side"] == "long"
 
@@ -27,7 +38,9 @@ def test_weekly_bias_gates_the_fade():
 def test_sell_targets_ladder_into_london_discount():
     asian = build_cbdr(4020, 4000)
     london = build_cbdr(3970, 3950)
-    o = cross_session_confluence(asian, london, weekly_bias="short")["orders"][0]
+    # force the sell on to inspect its geometry
+    o = cross_session_confluence(asian, london, "short", "short",
+                                 enable_sell=True)["orders"][0]
     assert o["entry"] == 4040                     # Asian +1SD premium
     assert o["stop"] > 4040                         # beyond +2SD
     assert o["targets"][-1] < o["targets"][0]       # ladders DOWN
@@ -38,10 +51,12 @@ def test_macro_and_geometry_and_conviction():
     assert conviction(85) == "A" and conviction(70) == "B" and conviction(55) == "C"
     assert conviction(40) == "-"
     assert _bias_num("bullish") == 1 and _bias_num("short") == -1 and _bias_num(None) == 0
-    # macro agreeing with a down fade lifts the score above weekly-only
+    # macro agreeing with a down fade lifts the score above weekly-only (force sells on)
     asian, london = build_cbdr(4020, 4000), build_cbdr(3970, 3950)
-    both = cross_session_confluence(asian, london, "short", "short")["orders"][0]
-    wk_only = cross_session_confluence(asian, london, "short", "neutral")["orders"][0]
+    both = cross_session_confluence(asian, london, "short", "short",
+                                    enable_sell=True)["orders"][0]
+    wk_only = cross_session_confluence(asian, london, "short", "neutral",
+                                       enable_sell=True)["orders"][0]
     assert both["score"] > wk_only["score"]
 
 
@@ -54,7 +69,8 @@ def test_min_score_filters_low_conviction():
 
 def test_falls_back_to_asian_downside_without_london():
     asian = build_cbdr(4020, 4000)
-    o = cross_session_confluence(asian, None, weekly_bias="short")["orders"][0]
+    o = cross_session_confluence(asian, None, "short", "short",
+                                 enable_sell=True)["orders"][0]
     # targets come from the Asian box's own downside SD (−1/−2/−3SD)
     assert o["targets"][1] == 3980 and o["targets"][-1] == 3940
 
@@ -76,14 +92,23 @@ def _down_day(day):
 def test_backtest_records_win_and_splits_by_bias():
     days = {"2026-07-06": _down_day(6), "2026-07-07": _down_day(7)}
     wk = {"2026-07-06": "short", "2026-07-07": "short"}
-    r = backtest(days, wk, min_score=50)
+    # regime_gated=False forces the sell on so we can test the sell mechanics
+    r = backtest(days, wk, min_score=50, regime_gated=False)
     ov = r["overall"]
     assert ov["filled"] >= 2 and ov["wins"] >= 2
     assert ov["hit_rate"] == 1.0
     assert ov["avg_win_pips"] and ov["avg_win_pips"] > 400        # big cross-session move
-    # the by-bias split is populated (the deliverable)
     assert r["by_bias"]["short"]["wins"] >= 2
     assert r["by_bias"]["long"]["settled"] == 0                    # no long fades on short days
+
+
+def test_backtest_regime_gate_suppresses_shorts():
+    # same down-days, but the DEFAULT regime gate suppresses the (−EV) premium-sell
+    days = {"2026-07-06": _down_day(6), "2026-07-07": _down_day(7)}
+    wk = {"2026-07-06": "short", "2026-07-07": "short"}
+    r = backtest(days, wk, min_score=50)                          # regime_gated=True
+    assert r["overall"]["trades"] == 0                            # no shorts armed
+    assert r["params"]["regime_gated"] is True
 
 
 def test_backtest_empty_when_no_asian_box():
