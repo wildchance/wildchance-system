@@ -24,6 +24,35 @@ from typing import List, Optional, Set
 from decouple import config
 
 NEWS_WINDOW_DAYS = config("USDJPY_NEWS_WINDOW_DAYS", default=1, cast=int)
+# Master switch — set NEWS_WARNINGS_ENABLED=false to remove the news line entirely
+# (also disables the same-day tier-1 block that reuses this function).
+NEWS_WARNINGS_ENABLED = config("NEWS_WARNINGS_ENABLED", default="true").lower() == "true"
+
+# Trailing release-frequency tokens — "Core CPI m/m" and "Core CPI y/y" are the SAME
+# print, so we strip these to dedupe one release down to one line.
+_FREQ_SUFFIXES = (" m/m", " y/y", " q/q", " mom", " yoy", " qoq")
+
+
+def _dedupe_events(hits: List[str]) -> List[str]:
+    """Collapse the same release listed under several frequencies into one line.
+
+    'USD Core CPI m/m', 'USD Core CPI y/y', 'USD CPI m/m' → 'USD Core CPI',
+    'USD CPI' (order preserved). Prevents one CPI day showing as three warnings.
+    """
+    out: List[str] = []
+    seen: set = set()
+    for h in hits:
+        base = h
+        low = base.lower()
+        for suf in _FREQ_SUFFIXES:
+            if low.endswith(suf):
+                base = base[: -len(suf)].rstrip()
+                break
+        key = base.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(base)
+    return out
 
 # Tier-1 event substrings (currency-agnostic). Central-bank rate decisions, CPI,
 # employment, GDP, and the Fed's own set.
@@ -150,6 +179,8 @@ async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
     (this is the fix for the alert repeating an outcome we already had). Callers
     decide whether to flag or block — pass win=0 to test today only.
     """
+    if not NEWS_WARNINGS_ENABLED:
+        return None
     win = max(0, NEWS_WINDOW_DAYS if win is None else win)
     ccys = symbol_currencies(symbol)
     hits: List[str] = []
@@ -176,10 +207,10 @@ async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
 
     if not hits:
         return None
-    uniq = list(dict.fromkeys(hits))[:4]
+    uniq = _dedupe_events(list(dict.fromkeys(hits)))[:4]
     horizon = "today" if win == 0 else f"in the next {win}d"
     return (
         f"⚠️ High-impact news {horizon} for {'/'.join(sorted(ccys))} "
-        f"({'; '.join(uniq)}) — scheduled prints often INVERT a fade. "
+        f"({'; '.join(uniq)}) — scheduled prints can whip price & widen spreads. "
         "Trade at your discretion / reduce size."
     )
