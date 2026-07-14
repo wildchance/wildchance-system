@@ -34,6 +34,7 @@ from services.ohlc_service import fetch_ohlc
 from services import gold_scan
 from services import gold_intraday
 from services import gold_session_breakout
+from services import gold_cbdr_confluence
 
 router = APIRouter(prefix="/gold", tags=["gold"])
 
@@ -165,6 +166,44 @@ async def session_breakout(balance: float = Query(5000, gt=0),
         require_profile=require_profile, min_target_pips=min_target_pips,
         require_room=require_room, adr_exhaustion=adr_exhaustion,
         notify=notify, execute=execute, db=db)
+
+
+@router.post("/cbdr-confluence")
+async def cbdr_confluence(balance: float = Query(5000, gt=0),
+                          risk_usd: float = Query(20.0, gt=0),
+                          min_score: int = Query(65, ge=0, le=100,
+                              description="min confluence score to arm (A≥80 B≥65 C≥50)"),
+                          track: bool = Query(True,
+                              description="persist each armed limit as a tracked position"),
+                          notify: bool = Query(False),
+                          execute: bool = Query(False,
+                              description="enqueue the confluence limits for the MT5 bridge"),
+                          db: AsyncSession = Depends(get_db)):
+    """Cross-session CBDR confluence — sell the Asian +1/+1.5SD premium into the
+    London discount; buy the pre-London −1/−1.5SD discount. Bias-filtered, scored,
+    armed as calculated LIMIT orders. Validate with /gold/cbdr-backtest first."""
+    conf = await gold_cbdr_confluence.scan(balance=balance, risk_usd=risk_usd,
+                                           min_score=min_score, notify=notify)
+    if (track or execute) and conf.get("orders"):
+        conf["armed"] = await _arm_limits(db, conf["orders"], "gold_cbdr_confluence",
+                                          balance, risk_usd, _ny_close(), execute=execute)
+    return conf
+
+
+@router.post("/cbdr-backtest")
+async def cbdr_backtest(days: int = Query(60, ge=5, le=400,
+                            description="how many recent daily sessions to replay"),
+                        min_score: int = Query(50, ge=0, le=100),
+                        use_london_target: bool = Query(True)):
+    """Replay the Asian→London CBDR confluence over history and report hit-rate,
+    avg pips, and the split BY WEEKLY BIAS — the evidence gate before going live."""
+    from backtest.cbdr_confluence_backtest import backtest as _bt
+    grouped, wk = await gold_cbdr_confluence.history_for_backtest(days)
+    if not grouped:
+        raise HTTPException(status_code=502, detail="could not fetch XAU/USD history")
+    res = _bt(grouped, wk, min_score=min_score, use_london_target=use_london_target)
+    res.pop("trades", None)      # keep the response light; stats only
+    return res
 
 
 @router.get("/compound")
