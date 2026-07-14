@@ -35,6 +35,9 @@ on:
     - cron: "0 7 * * 1-5"       # GOLD scan + intraday — London open Q2 (weekdays)
     - cron: "0 13 * * 1-5"      # GOLD scan + intraday — New York open Q3 (weekdays)
     - cron: "30 13 * * 1-5"     # GOLD intraday — NY-AM distribution window (weekdays)
+    - cron: "30 2 * * 1-5"      # GOLD session-OR breakout — Asia (intrasession, $15-25)
+    - cron: "0 10 * * 1-5"      # GOLD session-OR breakout — London ($50 / 500 pips)
+    - cron: "0 15 * * 1-5"      # GOLD session-OR breakout — New York ($50 / 500 pips, primary)
   workflow_dispatch:             # manual run = full test (forces every digest)
 
 jobs:
@@ -181,5 +184,19 @@ jobs:
               post "/gold/intraday?balance=5000&notify=true"
               ;;
             "30 13 * * 1-5")    post "/gold/intraday?balance=5000&require_distribution=true&notify=true" ;;
+            "30 2 * * 1-5")
+              # Asia opening-range breakout — intrasession scalps, 150 pips ($15) floor,
+              # room-filtered so exhausted Asia sessions are skipped.
+              post "/gold/session-breakout?session=asia&min_target_pips=150&notify=true"
+              ;;
+            "0 10 * * 1-5")
+              # London opening-range breakout (OR 08:00-09:00, run after it forms) —
+              # 500 pips ($50) projected-target + ADR room-to-run filter.
+              post "/gold/session-breakout?session=london&min_target_pips=500&notify=true"
+              ;;
+            "0 15 * * 1-5")
+              # New York opening-range breakout (OR 13:00-14:00) — the primary $50 mover.
+              post "/gold/session-breakout?session=ny&min_target_pips=500&notify=true"
+              ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac
