@@ -146,16 +146,25 @@ async def session_breakout(balance: float = Query(5000, gt=0),
                                description="wait for the OR-boundary retest (dodge the fakeout)"),
                            require_profile: bool = Query(True,
                                description="require the TPO value-area breakout confirmation"),
+                           min_target_pips: float = Query(0.0, ge=0,
+                               description="only fire if the setup projects ≥ this many pips "
+                                           "(500 pips = $50 gold). 0 = off"),
+                           require_room: bool = Query(True,
+                               description="require ADR room-to-run to the target (skip exhausted days)"),
+                           adr_exhaustion: float = Query(0.85, gt=0, le=2.0,
+                               description="skip if the day already used more than this fraction of ADR"),
                            notify: bool = Query(False),
                            execute: bool = Query(False,
                                description="enqueue scale-out legs for the MT5 bridge"),
                            db: AsyncSession = Depends(get_db)):
     """Session Opening-Range breakout: Asia/London/NY OR → retest → TPO confirm →
-    weekly-bias gate → money-first sizing → fib trend-TP scale-out."""
+    weekly-bias gate → ADR room + min-target filter → sizing → fib trend-TP scale-out."""
     return await gold_session_breakout.scan(
         balance=balance, risk_usd=risk_usd, session=session, tier=tier,
         bin_size=bin_size, buffer=buffer, require_retest=require_retest,
-        require_profile=require_profile, notify=notify, execute=execute, db=db)
+        require_profile=require_profile, min_target_pips=min_target_pips,
+        require_room=require_room, adr_exhaustion=adr_exhaustion,
+        notify=notify, execute=execute, db=db)
 
 
 @router.get("/compound")
