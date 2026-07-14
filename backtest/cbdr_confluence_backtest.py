@@ -74,7 +74,8 @@ def _simulate(order: dict, forward: Sequence[dict]) -> dict:
 
 def backtest(days: Dict[str, Sequence[dict]], weekly_bias: Dict[str, str],
              macro_bias: Optional[Dict[str, str]] = None,
-             min_score: int = 50, use_london_target: bool = True) -> dict:
+             min_score: int = 50, use_london_target: bool = True,
+             regime_gated: bool = True) -> dict:
     """Replay the confluence over ``days`` (date → hourly bars) → aggregate stats.
 
     ``weekly_bias``/``macro_bias`` map date → 'long'|'short'|'neutral'. For each
@@ -94,8 +95,11 @@ def backtest(days: Dict[str, Sequence[dict]], weekly_bias: Dict[str, str],
         london = _box(bars, LONDON) if use_london_target else None
         wk = weekly_bias.get(date, "neutral")
         mc = macro_bias.get(date, "neutral")
+        # regime_gated=True → default engine policy (premium-sell only in a confirmed
+        # downtrend); False → force both sides on to reproduce the pre-rule numbers.
         conf = cross_session_confluence(asian, london, weekly_bias=wk, macro_bias=mc,
-                                        min_score=min_score)
+                                        min_score=min_score,
+                                        enable_sell=None if regime_gated else True)
         forward = [b for b in bars if b["hour"] >= ASIA[1]]
         for o in conf["orders"]:
             res = _simulate(o, forward)
@@ -104,7 +108,7 @@ def backtest(days: Dict[str, Sequence[dict]], weekly_bias: Dict[str, str],
 
     return {
         "params": {"min_score": min_score, "use_london_target": use_london_target,
-                   "days": len(days)},
+                   "regime_gated": regime_gated, "days": len(days)},
         "overall": _agg(trades),
         "by_bias": {b: _agg([t for t in trades if t["weekly_bias"] == b])
                     for b in ("long", "short", "neutral")},
