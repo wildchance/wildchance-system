@@ -75,15 +75,16 @@ def _simulate(order: dict, forward: Sequence[dict]) -> dict:
 def backtest(days: Dict[str, Sequence[dict]], weekly_bias: Dict[str, str],
              macro_bias: Optional[Dict[str, str]] = None,
              min_score: int = 50, use_london_target: bool = True,
-             regime_gated: bool = True) -> dict:
+             regime_gated: bool = True, stop_sd: float = 2.0) -> dict:
     """Replay the confluence over ``days`` (date → hourly bars) → aggregate stats.
 
     ``weekly_bias``/``macro_bias`` map date → 'long'|'short'|'neutral'. For each
     day: build the Asian box (and London box for the target/geometry), arm the
     scored limits, and simulate each against the bars AFTER the Asian session.
 
-    Returns overall stats plus the SAME broken out ``by_bias`` and ``by_side`` —
-    the by_bias split tells you which weekly regime to trade this in.
+    ``stop_sd`` sets the stop distance (2.0 = default −2SD; try 1.5/1.0 to shrink
+    the losses). Results include a chronological **train/test split** (first half
+    vs unseen second half) — a fix is only real if it holds on the TEST half.
     """
     macro_bias = macro_bias or {}
     trades: List[dict] = []
@@ -98,7 +99,7 @@ def backtest(days: Dict[str, Sequence[dict]], weekly_bias: Dict[str, str],
         # regime_gated=True → default engine policy (premium-sell only in a confirmed
         # downtrend); False → force both sides on to reproduce the pre-rule numbers.
         conf = cross_session_confluence(asian, london, weekly_bias=wk, macro_bias=mc,
-                                        min_score=min_score,
+                                        min_score=min_score, stop_sd=stop_sd,
                                         enable_sell=None if regime_gated else True)
         forward = [b for b in bars if b["hour"] >= ASIA[1]]
         for o in conf["orders"]:
@@ -106,10 +107,18 @@ def backtest(days: Dict[str, Sequence[dict]], weekly_bias: Dict[str, str],
             trades.append({"date": date, "side": o["side"], "score": o["score"],
                            "conviction": o["conviction"], "weekly_bias": wk, **res})
 
+    # Chronological train/test split at the median trade DATE (out-of-sample check).
+    dated = sorted({t["date"] for t in trades})
+    cut = dated[len(dated) // 2] if dated else None
+    train = [t for t in trades if cut and t["date"] < cut]
+    test = [t for t in trades if cut and t["date"] >= cut]
+
     return {
         "params": {"min_score": min_score, "use_london_target": use_london_target,
-                   "regime_gated": regime_gated, "days": len(days)},
+                   "regime_gated": regime_gated, "stop_sd": stop_sd, "days": len(days)},
         "overall": _agg(trades),
+        "train": {"until": cut, **_agg(train)},        # first half (in-sample)
+        "test": {"from": cut, **_agg(test)},           # second half (OUT-of-sample)
         "by_bias": {b: _agg([t for t in trades if t["weekly_bias"] == b])
                     for b in ("long", "short", "neutral")},
         "by_side": {s: _agg([t for t in trades if t["side"] == s])
