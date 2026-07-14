@@ -112,3 +112,25 @@ def percent_of_adr(range_used: float, adr_value: Optional[float]) -> Optional[fl
     if not adr_value:
         return None
     return range_used / adr_value
+
+
+def room_to_run(entry: float, side: str, day_high: float, day_low: float,
+                adr_value: Optional[float]) -> Optional[float]:
+    """Directional range left to a full-ADR day, from the day's opposite extreme.
+
+    A long can realistically reach ``day_low + ADR`` (the day expanding a full
+    average range up from its low); a short ``day_high - ADR``. Returns the price
+    distance from ``entry`` to that projection — the room a continuation still has
+    before the day is statistically 'done'. None if ADR is unavailable.
+
+    Used to kill low-probability breakouts: if the room left is smaller than the
+    target you need (e.g. $50), the day likely won't deliver it.
+    """
+    if not adr_value or adr_value <= 0:
+        return None
+    s = side.lower()
+    if s in ("long", "buy"):
+        return round((day_low + adr_value) - entry, 3)
+    if s in ("short", "sell"):
+        return round(entry - (day_high - adr_value), 3)
+    return None
