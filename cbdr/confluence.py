@@ -62,7 +62,8 @@ def cross_session_confluence(asian: CBDR, london: Optional[CBDR] = None,
                              weekly_bias: str = "neutral", macro_bias: str = "neutral",
                              grey=GREY_ZONE_SD, min_score: int = 50,
                              buffer: float = 1.0, enable_buy: bool = True,
-                             enable_sell: Optional[bool] = None) -> dict:
+                             enable_sell: Optional[bool] = None,
+                             stop_sd: float = 2.0) -> dict:
     """Scored LIMIT orders chaining the Asian and London/pre-London CBDR boxes.
 
     SELL: arm at the Asian +1SD premium, stop beyond +2SD, targets ladder DOWN to
@@ -98,14 +99,16 @@ def cross_session_confluence(asian: CBDR, london: Optional[CBDR] = None,
     disc1 = tl.get(f"-{lo_sd:g}SD")
     disc2 = tl.get("-2SD") or disc1
     disc3 = tl.get("-3SD") or disc2
-    if enable_sell and a_prem and a_prem2 and disc1:
+    if enable_sell and a_prem and disc1:
         geometry_ok = a_prem > disc1                 # premium sits above the discount
         sc = _score(-1, wk, mc, geometry_ok)
+        # stop = ``stop_sd`` SDs above the Asian high (tighten it to shrink losses)
+        s_stop = round(asian.high + stop_sd * asian.range + buffer, 2)
         targets = [round(tgt_box.mid, 2), round(disc1, 2), round(disc2, 2), round(disc3, 2)]
         orders.append({
             "side": "short", "kind": "limit", "trade_type": "cbdr_confluence",
             "level": f"asian+{lo_sd:g}SD", "entry": round(a_prem, 2),
-            "stop": round(a_prem2 + buffer, 2), "targets": targets,
+            "stop": s_stop, "targets": targets,
             "score": sc, "conviction": conviction(sc), "geometry_ok": geometry_ok,
             "grey_zone": [round(a_prem, 2), round(a.get(f"+{hi_sd:g}SD") or a_prem, 2)],
             "reason": (f"sell Asian +{lo_sd:g}SD premium → "
@@ -118,13 +121,16 @@ def cross_session_confluence(asian: CBDR, london: Optional[CBDR] = None,
     b_disc2 = tl.get("-2SD")
     prem1 = tl.get(f"+{lo_sd:g}SD")
     prem2 = tl.get("+2SD") or prem1
-    if enable_buy and b_disc and b_disc2 and prem1:
+    if enable_buy and b_disc and prem1:
         sc = _score(+1, wk, mc, True)
+        # stop = ``stop_sd`` SDs below the box low — the −212 avg loss came from the
+        # default 2.0 (a full box range). Tighten via stop_sd to shrink losses.
+        b_stop = round(tgt_box.low - stop_sd * tgt_box.range - buffer, 2)
         targets = [round(tgt_box.mid, 2), round(prem1, 2), round(prem2, 2)]
         orders.append({
             "side": "long", "kind": "limit", "trade_type": "cbdr_confluence",
             "level": f"{'london' if london is not None else 'asian'}-{lo_sd:g}SD",
-            "entry": round(b_disc, 2), "stop": round(b_disc2 - buffer, 2),
+            "entry": round(b_disc, 2), "stop": b_stop,
             "targets": targets, "score": sc, "conviction": conviction(sc),
             "geometry_ok": True,
             "grey_zone": [round(b_disc, 2), round(tl.get(f"-{hi_sd:g}SD") or b_disc, 2)],
@@ -143,6 +149,7 @@ def cross_session_confluence(asian: CBDR, london: Optional[CBDR] = None,
                         "mid": round(london.mid, 2), "range": round(london.range, 2)}
                        if london is not None else None),
         "weekly_bias": weekly_bias, "macro_bias": macro_bias, "min_score": min_score,
+        "stop_sd": stop_sd,
         "regime": {"enable_buy": enable_buy, "enable_sell": enable_sell,
                    "note": ("premium-sell armed (confirmed downtrend)" if enable_sell
                             else "premium-sell suppressed — −EV outside a confirmed downtrend")},
