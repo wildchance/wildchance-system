@@ -3,11 +3,38 @@ import datetime as dt
 
 from services.news_guard import (
     symbol_currencies, nfp_window, filter_high_impact, _first_friday, news_flag,
+    _dedupe_events,
 )
 
 
 def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
+
+
+def test_dedupe_collapses_frequency_variants():
+    # one CPI release shows up as m/m + y/y + core — must collapse, not clutter
+    raw = ["USD ADP Weekly Employment Change", "USD Core CPI m/m",
+           "USD Core CPI y/y", "USD CPI m/m"]
+    out = _dedupe_events(raw)
+    assert out == ["USD ADP Weekly Employment Change", "USD Core CPI", "USD CPI"]
+    # order preserved, no frequency suffixes left
+    assert not any(s in " ".join(out).lower() for s in ("m/m", "y/y", "q/q"))
+
+
+def test_news_message_is_not_fade_specific():
+    # the message must NOT claim the setup is a fade (fires on continuation too)
+    nfp = _first_friday(2026, 7)
+    msg = _run(news_flag(nfp, "USD/JPY", win=1))
+    assert msg is not None
+    assert "INVERT a fade" not in msg
+    assert "whip price" in msg or "widen spreads" in msg
+
+
+def test_news_warnings_kill_switch(monkeypatch):
+    import services.news_guard as ng
+    monkeypatch.setattr(ng, "NEWS_WARNINGS_ENABLED", False)
+    nfp = ng._first_friday(2026, 7)
+    assert _run(ng.news_flag(nfp, "USD/JPY", win=1)) is None
 
 
 def test_symbol_currencies_fx_pair():
