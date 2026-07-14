@@ -51,6 +51,8 @@ async def scan(balance: float = 5000.0, risk_usd: float = 20.0,
                session: Optional[str] = None, tier: str = "6",
                bin_size: float = 0.5, buffer: float = 1.0, or_hours: int = 1,
                require_retest: bool = True, require_profile: bool = True,
+               min_target_pips: float = 0.0, require_room: bool = True,
+               adr_exhaustion: float = 0.85,
                execute: bool = False, notify: bool = False, db=None) -> dict:
     daily = await fetch_ohlc("XAU/USD", "1day", 25)
     if len(daily) < 3:
@@ -67,7 +69,16 @@ async def scan(balance: float = 5000.0, risk_usd: float = 20.0,
     if len(m15) < 4:
         return {"signal": "NO TRADE", "reason": "no XAU/USD 15m bars", "session": sess}
 
-    orr = opening_range(m15, session=sess, or_hours=or_hours, buffer=buffer,
+    # Scope to TODAY's bars — opening_range filters by hour only, so multi-day M15
+    # would merge yesterday's opening window into today's OR. None of the sessions
+    # wrap midnight (Asia 0-8, London 8-13, NY 13-21), so a UTC-date filter is exact.
+    def _bar_date(b):
+        ts = b[0]
+        return ts.date() if hasattr(ts, "date") else str(ts)[:10]
+    today = now.date()
+    day_bars = [b for b in m15 if str(_bar_date(b)) == str(today)] or m15
+
+    orr = opening_range(day_bars, session=sess, or_hours=or_hours, buffer=buffer,
                         require_retest=require_retest)
 
     # live entry price (for the leaving-balance test); fall back to last close
@@ -81,7 +92,7 @@ async def scan(balance: float = 5000.0, risk_usd: float = 20.0,
     # TPO value area from the session's BALANCE — the bars that closed INSIDE the
     # opening range (the coil), NOT the expansion leg. Profiling the balance keeps
     # the POC in the range, so "price left the value area" is a real expansion read.
-    sess_bars = [b for b in m15 if _in_session(b, sess)]
+    sess_bars = [b for b in day_bars if _in_session(b, sess)]
     if orr.get("or_high") is not None and orr.get("or_low") is not None:
         balance_bars = [b for b in sess_bars if orr["or_low"] <= b[4] <= orr["or_high"]]
     else:
@@ -123,6 +134,51 @@ async def scan(balance: float = 5000.0, risk_usd: float = 20.0,
             card["trend_targets"] = tl
     except Exception:
         pass
+
+    # ---- QUALITY GATE: projected target size + ADR room-to-run ----------------
+    # 500 pips = $50 (GOLD_PIP 0.10). Kill setups that can't PROJECT the target you
+    # want, or whose day has no ROOM left to travel there (exhausted / capped).
+    from indicators.atr import adr as _adr, percent_of_adr, room_to_run
+    from gold.risk_engine import GOLD_PIP
+    entry = card.get("entry", plan["entry"])
+    side = "long" if plan["signal"] == "LONG" else "short"
+    target_dist = min_target_pips * GOLD_PIP
+    day_high, day_low = daily[-1][2], daily[-1][3]
+    adr_val = _adr([h - l for (_d, _o, h, l, _c) in daily], n=5)
+    pct = percent_of_adr(day_high - day_low, adr_val)
+    room = room_to_run(entry, side, day_high, day_low, adr_val)
+    # furthest projected target from the fib ladder (the runner)
+    tl = card.get("trend_targets") or {}
+    proj = max((abs(t["price"] - entry) for t in tl.get("targets", [])), default=None)
+    card["room"] = {"adr": round(adr_val, 2) if adr_val else None,
+                    "pct_adr_used": round(pct, 2) if pct is not None else None,
+                    "room_to_run": room, "projection": round(proj, 2) if proj else None,
+                    "target_needed": round(target_dist, 2) if target_dist else None}
+
+    if min_target_pips > 0:
+        have = proj if proj is not None else room
+        if have is None or have < target_dist:
+            card["signal"] = "NO TRADE"
+            card["reason"] = (f"projects only ~{round(have, 1) if have else '?'} "
+                              f"< {round(target_dist, 1)} target ({min_target_pips:g} pips)")
+            return card
+
+    if require_room and adr_val:
+        # 1) Exhaustion — the day already travelled most of its average range, so a
+        #    fresh continuation is low-probability regardless of target size.
+        if pct is not None and pct > adr_exhaustion:
+            card["signal"] = "NO TRADE"
+            card["reason"] = f"day exhausted — {pct:.0%} of ADR (${adr_val:.0f}) already used"
+            return card
+        # 2) Room — only DEMAND full room-to-run for INTRADAY-sized targets (comfortably
+        #    within one ADR). A ~500-pip ($50) target is a swing/runner that expands
+        #    beyond a single day, so it's gated by projection + exhaustion, not room.
+        intraday_sized = 0 < target_dist <= adr_val * 0.8
+        if intraday_sized and room is not None and room < target_dist:
+            card["signal"] = "NO TRADE"
+            card["reason"] = (f"no room — only ${room:.0f} left in the day's ADR "
+                              f"< ${target_dist:.0f} target")
+            return card
 
     if execute and db is not None:
         try:
