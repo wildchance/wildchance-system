@@ -105,7 +105,11 @@ async def history_for_backtest(days: int = 60):
 
 
 def _format(conf: dict) -> str:
-    lines = [f"🎯 *GOLD CBDR Confluence* — weekly {conf['weekly_bias']} · macro {conf['macro_bias']}"]
+    prof = conf.get("profile")
+    head = f"🎯 *GOLD CBDR Confluence* — weekly {conf['weekly_bias']} · macro {conf['macro_bias']}"
+    if prof:
+        head += f"\n_Profile: {prof}_"
+    lines = [head]
     a = conf.get("asian_box") or {}
     lines.append(f"_Asian box {a.get('low')}–{a.get('high')}"
                  + (f" · London {conf['london_box']['low']}–{conf['london_box']['high']}_"
@@ -116,5 +120,6 @@ def _format(conf: dict) -> str:
         lines.append(f"{arrow} limit `{o['entry']}`  SL `{o['stop']}`  "
                      f"[{o['conviction']} {o['score']}]\n  TP {tps}\n  _{o['reason']}_")
     if not conf["orders"]:
-        lines.append("_no confluence limit cleared the score threshold_")
+        reg = conf.get("regime") or {}
+        lines.append(f"_no confluence limit armed — {reg.get('note', 'below score threshold')}_")
     return "\n".join(lines)
