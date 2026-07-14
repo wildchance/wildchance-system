@@ -1,7 +1,19 @@
 from indicators.atr import (
     true_range, atr, atr_stop, atr_targets, spike_ratio, is_spike,
-    adr, percent_of_adr,
+    adr, percent_of_adr, room_to_run,
 )
+
+
+def test_room_to_run_directional():
+    # ADR $50. Long entered at 4009, day so far 3996-4016.
+    # room up = (day_low + ADR) - entry = 3996 + 50 - 4009 = 37
+    assert room_to_run(4009, "long", 4016, 3996, 50) == 37
+    # short entered at 3990, day 3980-4010: room down = entry - (day_high - ADR)
+    #   = 3990 - (4010 - 50) = 30
+    assert room_to_run(3990, "short", 4010, 3980, 50) == 30
+    # no ADR → None (can't judge room)
+    assert room_to_run(4000, "long", 4010, 3990, None) is None
+    assert room_to_run(4000, "long", 4010, 3990, 0) is None
 
 
 def test_true_range_first_bar_is_high_low():
