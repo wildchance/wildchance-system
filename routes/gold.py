@@ -33,6 +33,7 @@ from utils.price_fetcher import get_forex_price
 from services.ohlc_service import fetch_ohlc
 from services import gold_scan
 from services import gold_intraday
+from services import gold_session_breakout
 
 router = APIRouter(prefix="/gold", tags=["gold"])
 
@@ -131,6 +132,31 @@ async def intraday(balance: float = Query(5000, gt=0),
         if orders:
             sig["queued_orders"] = await te.enqueue_all(db, orders)
     return sig
+
+@router.post("/session-breakout")
+async def session_breakout(balance: float = Query(5000, gt=0),
+                           risk_usd: float = Query(20.0, gt=0),
+                           session: str = Query(None,
+                               description="asia|london|ny (blank = auto from the clock)"),
+                           tier: str = Query("6"),
+                           bin_size: float = Query(0.5, gt=0,
+                               description="TPO price-bin size for the profile ($)"),
+                           buffer: float = Query(1.0, ge=0),
+                           require_retest: bool = Query(True,
+                               description="wait for the OR-boundary retest (dodge the fakeout)"),
+                           require_profile: bool = Query(True,
+                               description="require the TPO value-area breakout confirmation"),
+                           notify: bool = Query(False),
+                           execute: bool = Query(False,
+                               description="enqueue scale-out legs for the MT5 bridge"),
+                           db: AsyncSession = Depends(get_db)):
+    """Session Opening-Range breakout: Asia/London/NY OR → retest → TPO confirm →
+    weekly-bias gate → money-first sizing → fib trend-TP scale-out."""
+    return await gold_session_breakout.scan(
+        balance=balance, risk_usd=risk_usd, session=session, tier=tier,
+        bin_size=bin_size, buffer=buffer, require_retest=require_retest,
+        require_profile=require_profile, notify=notify, execute=execute, db=db)
+
 
 @router.get("/compound")
 async def compound(deposit: float = Query(700, gt=0),
