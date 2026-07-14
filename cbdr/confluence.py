@@ -61,7 +61,8 @@ def _score(direction: int, weekly: int, macro: int, geometry_ok: bool) -> int:
 def cross_session_confluence(asian: CBDR, london: Optional[CBDR] = None,
                              weekly_bias: str = "neutral", macro_bias: str = "neutral",
                              grey=GREY_ZONE_SD, min_score: int = 50,
-                             buffer: float = 1.0) -> dict:
+                             buffer: float = 1.0, enable_buy: bool = True,
+                             enable_sell: Optional[bool] = None) -> dict:
     """Scored LIMIT orders chaining the Asian and London/pre-London CBDR boxes.
 
     SELL: arm at the Asian +1SD premium, stop beyond +2SD, targets ladder DOWN to
@@ -70,10 +71,21 @@ def cross_session_confluence(asian: CBDR, london: Optional[CBDR] = None,
     BUY:  arm at the London (or Asian, if no london) −1SD discount, stop beyond
     −2SD, targets ladder UP to premium.
 
+    REGIME GATE — the 90-day backtest showed the discount-BUY is +EV (58% hit,
+    +60 pips/trade) while the premium-SELL is −EV (44% hit, −33 pips/trade) outside
+    a confirmed downtrend. So by default:
+      • ``enable_buy``  — the proven side, on unless you turn it off;
+      • ``enable_sell`` — None ⇒ AUTO: only in a CONFIRMED downtrend (weekly AND
+        macro both bearish). Pass True to force it (once a downtrend regime proves
+        out) or False to hard-disable. This is the backtest finding turned into a
+        rule: don't sell the premium into an uptrend.
+
     Only orders scoring ≥ ``min_score`` survive; they're returned high-score-first.
     Each order is a ready limit spec {side, entry, stop, targets, score, conv, …}.
     """
     wk, mc = _bias_num(weekly_bias), _bias_num(macro_bias)
+    if enable_sell is None:
+        enable_sell = (wk < 0 and mc < 0)      # confirmed downtrend only
     lo_sd, hi_sd = grey
     a = asian.levels
     tgt_box = london if london is not None else asian
@@ -86,7 +98,7 @@ def cross_session_confluence(asian: CBDR, london: Optional[CBDR] = None,
     disc1 = tl.get(f"-{lo_sd:g}SD")
     disc2 = tl.get("-2SD") or disc1
     disc3 = tl.get("-3SD") or disc2
-    if a_prem and a_prem2 and disc1:
+    if enable_sell and a_prem and a_prem2 and disc1:
         geometry_ok = a_prem > disc1                 # premium sits above the discount
         sc = _score(-1, wk, mc, geometry_ok)
         targets = [round(tgt_box.mid, 2), round(disc1, 2), round(disc2, 2), round(disc3, 2)]
@@ -106,7 +118,7 @@ def cross_session_confluence(asian: CBDR, london: Optional[CBDR] = None,
     b_disc2 = tl.get("-2SD")
     prem1 = tl.get(f"+{lo_sd:g}SD")
     prem2 = tl.get("+2SD") or prem1
-    if b_disc and b_disc2 and prem1:
+    if enable_buy and b_disc and b_disc2 and prem1:
         sc = _score(+1, wk, mc, True)
         targets = [round(tgt_box.mid, 2), round(prem1, 2), round(prem2, 2)]
         orders.append({
@@ -131,4 +143,7 @@ def cross_session_confluence(asian: CBDR, london: Optional[CBDR] = None,
                         "mid": round(london.mid, 2), "range": round(london.range, 2)}
                        if london is not None else None),
         "weekly_bias": weekly_bias, "macro_bias": macro_bias, "min_score": min_score,
+        "regime": {"enable_buy": enable_buy, "enable_sell": enable_sell,
+                   "note": ("premium-sell armed (confirmed downtrend)" if enable_sell
+                            else "premium-sell suppressed — −EV outside a confirmed downtrend")},
     }
