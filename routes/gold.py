@@ -198,15 +198,20 @@ async def cbdr_backtest(days: int = Query(60, ge=5, le=400,
                         regime_gated: bool = Query(True,
                             description="apply the regime rule (buy-discount only; "
                                         "premium-sell only in a confirmed downtrend). "
-                                        "false = ungated, to compare the pre-rule numbers")):
+                                        "false = ungated, to compare the pre-rule numbers"),
+                        stop_sd: float = Query(2.0, gt=1.0, le=3.0,
+                            description="stop distance in SDs (2.0 = default; try 1.5 to "
+                                        "shrink losses). Must be >1.0 (entry is at −1SD). "
+                                        "Watch the TEST split.")):
     """Replay the Asian→London CBDR confluence over history and report hit-rate,
-    avg pips, and the split BY WEEKLY BIAS — the evidence gate before going live."""
+    avg pips, the BY-WEEKLY-BIAS split, and a chronological TRAIN/TEST split — the
+    out-of-sample check before going live."""
     from backtest.cbdr_confluence_backtest import backtest as _bt
     grouped, wk = await gold_cbdr_confluence.history_for_backtest(days)
     if not grouped:
         raise HTTPException(status_code=502, detail="could not fetch XAU/USD history")
     res = _bt(grouped, wk, min_score=min_score, use_london_target=use_london_target,
-              regime_gated=regime_gated)
+              regime_gated=regime_gated, stop_sd=stop_sd)
     res.pop("trades", None)      # keep the response light; stats only
     return res
 
