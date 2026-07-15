@@ -24,11 +24,8 @@ on:
     - cron: "0 7 * 3-10 *"      # pre-London limits — summer (EDT): 07:00 UTC = 03:00 ET
     - cron: "0 8 * 11,12,1,2 *" # pre-London limits — winter (EST): 08:00 UTC = 03:00 ET
     - cron: "0 2 * * 1-5"       # Asia accumulation — gold intrasession scan
-    - cron: "0 5 * * 1-5"       # CRT 1-5-9 confirmation — Asian session (01:00 range candle)
-    - cron: "0 17 * * 1-5"      # CRT 1-5-9 confirmation — New York session (13:00 range candle)
     - cron: "55 20 * * 5"       # Friday pre-close 1h read — Monday-gap anticipation
-    - cron: "5 2 * * *"         # candle-range read after the 01:00 UTC candle closes
-    - cron: "5 14 * * *"        # candle-range read after the 13:00 UTC candle closes
+    #  (1am/1pm hourly CRT/candle-range crons removed — kept only the Friday close)
     - cron: "0 7 1 1,4,7,10 *"  # yearly Quarterly-Theory phase (start of each quarter)
     - cron: "30 8 * * 1"        # Benner cycle phase (Mondays 08:30 UTC)
     - cron: "30 6 * * *"        # EdgeFinder top-bias digest (after the 06:00 daily scrape)
@@ -71,9 +68,7 @@ jobs:
             post "/scorecard/weekly?force=true"
             post "/cbdr/alert/USD/JPY?window=prelondon"
             post "/cbdr/limits/XAU/USD?window=prelondon&notify=true"
-            post "/candlerange/scan?force=true"
             post "/candlerange/friday?force=true"
-            post "/candlerange/crt?session=ny&force=true"
             post "/gold/prelondon?track=true"
             post "/gold/sd-fade?track=true"
             post "/gold/news"
@@ -149,20 +144,11 @@ jobs:
               # Asia accumulation window — gold intrasession scan
               post "/gold/intraday?balance=5000&notify=true"
               ;;
-            "0 5 * * 1-5")
-              # CRT 1-5-9 — Asian confirmation (01:00 range candle → 05:00 entry)
-              post "/candlerange/crt?session=asia&execute=true"
-              ;;
-            "0 17 * * 1-5")
-              # CRT 1-5-9 — New York confirmation (13:00 range candle → 17:00 entry)
-              post "/candlerange/crt?session=ny&execute=true"
-              ;;
             "55 20 * * 5")
-              # Friday pre-close — Monday-gap anticipation (the reliable candle read)
+              # Friday pre-close — Monday-gap anticipation (the reliable candle read).
+              # The 1am/1pm CRT + candle-range scans were removed; only Friday remains.
               post "/candlerange/friday"
               ;;
-            "5 2 * * *")        post "/candlerange/scan" ;;
-            "5 14 * * *")       post "/candlerange/scan" ;;
             "0 7 1 1,4,7,10 *")
               # Yearly Quarterly-Theory phase + box for the key set
               post "/quarterly/alert/USD/JPY"
