@@ -79,6 +79,18 @@ def test_backtest_profits_on_mean_reverting_ratio():
     assert r["train"]["trades"] + r["test"]["trades"] == ov["trades"]
 
 
+def test_backtest_survives_bad_silver_tick():
+    # a single zero/bad silver close must NOT desync the ratio and IndexError (the
+    # live 500) — the aligned triples are cleaned together.
+    n = 120
+    gold = [3400.0 + i for i in range(n)]
+    silver = [38.0] * n
+    silver[60] = 0.0                       # bad tick
+    dates = [f"2026-{1 + i // 28:02d}-{1 + i % 28:02d}" for i in range(n)]
+    r = backtest(dates, gold, silver, lookback=20)      # must not raise
+    assert r["params"]["days"] == n - 1                  # the bad bar was dropped
+
+
 def test_backtest_reports_train_test_and_by_side():
     dates, gold, silver = _ar1_series()
     r = backtest(dates, gold, silver, lookback=20, entry_z=1.5, trend_guard=False)
