@@ -47,6 +47,7 @@ from routes.gold import router as gold_router
 from routes.execution import router as execution_router
 from routes.structure import router as structure_router
 from routes.pairs import router as pairs_router
+from routes.amd import router as amd_router
 
 # Real-time streaming
 from services.polygon_stream import polygon_stream
@@ -141,6 +142,7 @@ app.include_router(gold_router)
 app.include_router(execution_router)
 app.include_router(structure_router)
 app.include_router(pairs_router)
+app.include_router(amd_router)
 app.include_router(correlation_router)
 
 # Serve the static dashboards (EdgeFinder board at /static/dashboard/edgefinder.html).
