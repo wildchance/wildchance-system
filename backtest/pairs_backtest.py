@@ -32,8 +32,17 @@ def backtest(dates: Sequence[str], gold: Sequence[float], silver: Sequence[float
     open→close round trip; ``max_hold`` force-closes a stale position (counts as the
     return at exit). Returns overall + train/test + by_side aggregates.
     """
-    n = min(len(dates), len(gold), len(silver))
-    ratio = [gold[i] / silver[i] for i in range(n) if silver[i]]
+    # Clean the aligned triples together — drop any bar with a bad/zero close so the
+    # three arrays stay in lockstep (a single bad XAG tick otherwise desyncs ``ratio``
+    # from ``n`` and IndexErrors the loop → the live 500).
+    m = min(len(dates), len(gold), len(silver))
+    clean = [(dates[i], gold[i], silver[i]) for i in range(m)
+             if gold[i] and silver[i] and silver[i] > 0]
+    dates = [c[0] for c in clean]
+    gold = [c[1] for c in clean]
+    silver = [c[2] for c in clean]
+    n = len(dates)
+    ratio = [gold[i] / silver[i] for i in range(n)]      # guaranteed length n
     trades: List[dict] = []
 
     pos = None            # {"side","entry_ratio","entry_date","entry_i"}
