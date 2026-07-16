@@ -44,15 +44,22 @@ def _simulate(sig: dict, forward: Sequence[dict]) -> dict:
 
 
 def backtest(bars: Sequence[dict], triggers=TRIGGERS, buffer: float = 0.0,
-             max_hold: int = 12) -> dict:
+             max_hold: int = 12, require_bias: bool = False,
+             bias_window: int = 50) -> dict:
     """Replay the triad over a flat UTC-hourly ``bars`` list → stats + splits.
 
     ``max_hold`` = how many hours after the reaction to hold before force-closing
-    (12h from the 14:00 triad reaches ~04:00 next day, past pre-London). Returns
-    overall + train/test + by_trigger aggregates (R units).
+    (12h from the 14:00 triad reaches ~04:00 next day, past pre-London).
+
+    ``require_bias`` — only take the fade that AGREES with trend: long only when the
+    reaction closes ABOVE its ``bias_window``-hour SMA, short only below. This is the
+    daily-bias confluence — don't fade a swept high in an uptrend.
+
+    Returns overall + train/test + by_trigger + BY_SIDE aggregates (R units).
     """
     flat = sorted(bars, key=lambda b: (b["date"], b["hour"]))
     pos = {(b["date"], b["hour"]): i for i, b in enumerate(flat)}
+    closes = [b["close"] for b in flat]
     by_date: Dict[str, set] = {}
     for b in flat:
         by_date.setdefault(b["date"], set()).add(b["hour"])
@@ -69,8 +76,13 @@ def backtest(bars: Sequence[dict], triggers=TRIGGERS, buffer: float = 0.0,
             sig = triad_signal(r_bar, m_bar, x_bar, buffer=buffer)
             if sig["signal"] not in ("LONG", "SHORT"):
                 continue
-            start = pos[(date, h + 2)] + 1
-            res = _simulate(sig, flat[start: start + max_hold])
+            xi = pos[(date, h + 2)]
+            if require_bias and xi + 1 >= bias_window:
+                sma = sum(closes[xi + 1 - bias_window: xi + 1]) / bias_window
+                trend = "long" if x_bar["close"] > sma else "short"
+                if sig["side"] != trend:
+                    continue                     # fade opposes the trend — skip it
+            res = _simulate(sig, flat[xi + 1: xi + 1 + max_hold])
             if res["outcome"] == "skip":
                 continue
             trades.append({"date": date, "trigger_hour": h, "side": sig["side"],
@@ -83,12 +95,15 @@ def backtest(bars: Sequence[dict], triggers=TRIGGERS, buffer: float = 0.0,
 
     return {
         "params": {"triggers": list(triggers), "buffer": buffer, "max_hold": max_hold,
+                   "require_bias": require_bias, "bias_window": bias_window,
                    "days": len(by_date)},
         "overall": _agg(trades),
         "train": {"until": cut, **_agg(train)},
         "test": {"from": cut, **_agg(test)},
         "by_trigger": {str(h): _agg([t for t in trades if t["trigger_hour"] == h])
                        for h in triggers},
+        "by_side": {s: _agg([t for t in trades if t["side"] == s])
+                    for s in ("long", "short")},
         "trades": trades,
     }
 
