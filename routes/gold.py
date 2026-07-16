@@ -33,8 +33,6 @@ from utils.price_fetcher import get_forex_price
 from services.ohlc_service import fetch_ohlc
 from services import gold_scan
 from services import gold_intraday
-from services import gold_session_breakout
-from services import gold_cbdr_confluence
 
 router = APIRouter(prefix="/gold", tags=["gold"])
 
@@ -64,9 +62,9 @@ async def _arm_limits(db, orders, source, balance, risk_usd, expires_at,
         opened = await gp.open_limit(db, card, source, expires_at)
         entry = {"tracked": opened or {"skipped": "not sizeable", "order": o}}
         if execute and card.get("signal") in ("LONG", "SHORT"):
-            legs = te.build_orders(card, source=source)
-            if legs:
-                entry["queued_orders"] = await te.enqueue_all(db, legs)
+            order = te.build_order(card, source=source)
+            if order:
+                entry["queued_order"] = await te.enqueue(db, order)
         out.append(entry)
     return out
 
@@ -129,92 +127,10 @@ async def intraday(balance: float = Query(5000, gt=0),
         if opened:
             sig["tracked_position"] = opened
     if execute:
-        orders = te.build_orders(sig, source="gold_intraday")
-        if orders:
-            sig["queued_orders"] = await te.enqueue_all(db, orders)
+        order = te.build_order(sig, source="gold_intraday")
+        if order:
+            sig["queued_order"] = await te.enqueue(db, order)
     return sig
-
-@router.post("/session-breakout")
-async def session_breakout(balance: float = Query(5000, gt=0),
-                           risk_usd: float = Query(20.0, gt=0),
-                           session: str = Query(None,
-                               description="asia|london|ny (blank = auto from the clock)"),
-                           tier: str = Query("6"),
-                           bin_size: float = Query(0.5, gt=0,
-                               description="TPO price-bin size for the profile ($)"),
-                           buffer: float = Query(1.0, ge=0),
-                           require_retest: bool = Query(True,
-                               description="wait for the OR-boundary retest (dodge the fakeout)"),
-                           require_profile: bool = Query(True,
-                               description="require the TPO value-area breakout confirmation"),
-                           min_target_pips: float = Query(0.0, ge=0,
-                               description="only fire if the setup projects ≥ this many pips "
-                                           "(500 pips = $50 gold). 0 = off"),
-                           require_room: bool = Query(True,
-                               description="require ADR room-to-run to the target (skip exhausted days)"),
-                           adr_exhaustion: float = Query(0.85, gt=0, le=2.0,
-                               description="skip if the day already used more than this fraction of ADR"),
-                           notify: bool = Query(False),
-                           execute: bool = Query(False,
-                               description="enqueue scale-out legs for the MT5 bridge"),
-                           db: AsyncSession = Depends(get_db)):
-    """Session Opening-Range breakout: Asia/London/NY OR → retest → TPO confirm →
-    weekly-bias gate → ADR room + min-target filter → sizing → fib trend-TP scale-out."""
-    return await gold_session_breakout.scan(
-        balance=balance, risk_usd=risk_usd, session=session, tier=tier,
-        bin_size=bin_size, buffer=buffer, require_retest=require_retest,
-        require_profile=require_profile, min_target_pips=min_target_pips,
-        require_room=require_room, adr_exhaustion=adr_exhaustion,
-        notify=notify, execute=execute, db=db)
-
-
-@router.post("/cbdr-confluence")
-async def cbdr_confluence(balance: float = Query(5000, gt=0),
-                          risk_usd: float = Query(20.0, gt=0),
-                          min_score: int = Query(65, ge=0, le=100,
-                              description="min confluence score to arm (A≥80 B≥65 C≥50)"),
-                          track: bool = Query(True,
-                              description="persist each armed limit as a tracked position"),
-                          notify: bool = Query(False),
-                          execute: bool = Query(False,
-                              description="enqueue the confluence limits for the MT5 bridge"),
-                          db: AsyncSession = Depends(get_db)):
-    """Cross-session CBDR confluence — sell the Asian +1/+1.5SD premium into the
-    London discount; buy the pre-London −1/−1.5SD discount. Bias-filtered, scored,
-    armed as calculated LIMIT orders. Validate with /gold/cbdr-backtest first."""
-    conf = await gold_cbdr_confluence.scan(balance=balance, risk_usd=risk_usd,
-                                           min_score=min_score, notify=notify)
-    if (track or execute) and conf.get("orders"):
-        conf["armed"] = await _arm_limits(db, conf["orders"], "gold_cbdr_confluence",
-                                          balance, risk_usd, _ny_close(), execute=execute)
-    return conf
-
-
-@router.post("/cbdr-backtest")
-async def cbdr_backtest(days: int = Query(60, ge=5, le=400,
-                            description="how many recent daily sessions to replay"),
-                        min_score: int = Query(50, ge=0, le=100),
-                        use_london_target: bool = Query(True),
-                        regime_gated: bool = Query(True,
-                            description="apply the regime rule (buy-discount only; "
-                                        "premium-sell only in a confirmed downtrend). "
-                                        "false = ungated, to compare the pre-rule numbers"),
-                        stop_sd: float = Query(2.0, gt=1.0, le=3.0,
-                            description="stop distance in SDs (2.0 = default; try 1.5 to "
-                                        "shrink losses). Must be >1.0 (entry is at −1SD). "
-                                        "Watch the TEST split.")):
-    """Replay the Asian→London CBDR confluence over history and report hit-rate,
-    avg pips, the BY-WEEKLY-BIAS split, and a chronological TRAIN/TEST split — the
-    out-of-sample check before going live."""
-    from backtest.cbdr_confluence_backtest import backtest as _bt
-    grouped, wk = await gold_cbdr_confluence.history_for_backtest(days)
-    if not grouped:
-        raise HTTPException(status_code=502, detail="could not fetch XAU/USD history")
-    res = _bt(grouped, wk, min_score=min_score, use_london_target=use_london_target,
-              regime_gated=regime_gated, stop_sd=stop_sd)
-    res.pop("trades", None)      # keep the response light; stats only
-    return res
-
 
 @router.get("/compound")
 async def compound(deposit: float = Query(700, gt=0),
@@ -334,6 +250,22 @@ async def prelondon(balance: float = Query(5000, gt=0),
                                             balance, risk_usd, _ny_close(), execute=execute)
     plan["session"] = win["session"]
     return plan
+
+
+@router.get("/timeline")
+async def timeline(price: float = Query(None, description="price to locate (else live)")):
+    """HTF timeline identifier — the daily named-zone ladder + where price sits +
+    the smaller-timeframe bias it implies."""
+    from gold.timeline import htf_ladder, locate, HTF_ANCHOR
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            price = None
+    out = {"anchor": HTF_ANCHOR, "ladder": htf_ladder()}
+    if price is not None:
+        out["located"] = locate(price)
+    return out
 
 
 @router.get("/session-levels")
