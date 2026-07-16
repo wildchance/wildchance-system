@@ -76,16 +76,21 @@ async def backtest(symbol: str = Query("XAU/USD"),
                        description="hourly bars to replay (1000 ≈ 40 trading days)"),
                    buffer: float = Query(0.0, ge=0),
                    max_hold: int = Query(12, ge=1, le=48),
+                   require_bias: bool = Query(False,
+                       description="only fade WITH trend (long above the SMA, short below) "
+                                   "— the daily-bias confluence"),
+                   bias_window: int = Query(50, ge=10, le=200),
                    trigger: int = Query(None, ge=0, le=23,
                        description="restrict to one trigger hour; blank = 14/7/0")):
-    """Replay the AMD triad; report hit-rate, expectancy-R, TRAIN/TEST + by-trigger."""
+    """Replay the AMD triad; report hit-rate, expectancy-R, TRAIN/TEST + by-trigger + by-side."""
     from backtest.amd_triad_backtest import backtest as _bt
     hbars = await fetch_hourly_raw(symbol, "UTC", outputsize)
     if len(hbars) < 50:
         raise HTTPException(status_code=502,
             detail=f"could not fetch {symbol} hourly history ({len(hbars)} bars) — rate limit or symbol")
     triggers = (trigger,) if trigger is not None else TRIGGERS
-    res = _bt(hbars, triggers=triggers, buffer=buffer, max_hold=max_hold)
+    res = _bt(hbars, triggers=triggers, buffer=buffer, max_hold=max_hold,
+              require_bias=require_bias, bias_window=bias_window)
     res.pop("trades", None)
     res["symbol"] = symbol
     return res
