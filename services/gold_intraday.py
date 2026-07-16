@@ -144,6 +144,12 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
                     sig["liquidity_draw"] = tgt      # nearest draw-on-liquidity target
         except Exception:
             pass
+        # HTF timeline identifier — which daily zone price is in, and the
+        # smaller-timeframe bias it implies (aligns/opposes the trade).
+        from gold.timeline import locate as htf_locate, htf_confluence
+        sig["htf_timeline"] = htf_locate(entry)
+        sig["htf_confluence"] = htf_confluence(bias, entry)
+
         # SD ladder anchored to today's 14:00-ET CBDR box (best-effort).
         try:
             from services.cbdr_service import fetch_cbdr_window
@@ -165,20 +171,6 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
             sig["signal"] = "NO TRADE"
             sig["reason"] = block
             return sig
-
-    # TREND-EXTENSION TP LADDER — every live card ships the projected targets. The
-    # 4H A→B→C swing (the chart timeframe) in the trade direction; falls back to the
-    # tier reference range anchored at entry so a ladder is always attached.
-    if sig.get("signal") in ("LONG", "SHORT"):
-        try:
-            from services import structure_service as ss
-            tl = await ss.trend_targets("XAU/USD", bias, sig.get("entry", entry),
-                                        ref_high=ref_high, ref_low=ref_low,
-                                        interval="4h")
-            if tl:
-                sig["trend_targets"] = tl
-        except Exception:
-            pass
 
     if notify and sig.get("signal") in ("LONG", "SHORT"):
         sig["sent"] = await _tg(format_card(sig))
