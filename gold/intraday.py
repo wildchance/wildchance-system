@@ -182,6 +182,4 @@ def format_card(sig: dict) -> str:
         reg = sig.get("regime")
         if reg:
             base += f"\n💵 dollar {reg['dollar']} · COT {reg['cot_zone']}"
-        # NOTE: the 🎯 trend-TP ladder is rendered by the base card
-        # (gold.signal.format_card → format_trend_lines), so it is NOT repeated here.
     return base
