@@ -45,30 +45,36 @@ def classify(range_bar: dict, manip_bar: dict) -> str:
 
 
 def triad_signal(range_bar: dict, manip_bar: dict, react_bar: dict,
-                 buffer: float = 0.0) -> dict:
+                 buffer: float = 0.0, target_pips: Optional[float] = None,
+                 pip: float = 0.1) -> dict:
     """Fade a one-sided sweep that closed back inside the range → LONG/SHORT/NONE.
 
     ``sweep_high`` + react closes back BELOW the range high → the high was a
-    liquidity grab → SHORT, stop above the sweep, target the range low.
-    ``sweep_low`` + react closes back ABOVE the range low → LONG, mirror.
-    ``sweep_both``/``sweep_none`` → NONE (no clean reversal read).
+    liquidity grab → SHORT, stop above the sweep. ``sweep_low`` + react closes
+    back ABOVE the range low → LONG, mirror. ``sweep_both``/``sweep_none`` → NONE.
+
+    Target: by default the opposite side of the range (the tight ~1:1 read). Pass
+    ``target_pips`` to project a fixed distance from entry instead (e.g. 250 or
+    500 pips = 25.0 / 50.0 at ``pip=0.1`` for gold) — the "hold-to-session-close"
+    playbook where the reaction only confirms the reversal and you carry the trade
+    toward the next session boundary for a larger, higher-R target.
     """
     rh, rl = range_bar["high"], range_bar["low"]
     outcome = classify(range_bar, manip_bar)
+    entry = round(react_bar["close"], 3)
     base = {"outcome": outcome, "trigger_hour": range_bar.get("hour"),
             "date": range_bar.get("date"), "range_high": rh, "range_low": rl}
+    reach = (target_pips * pip) if target_pips else None
 
     if outcome == "sweep_high" and react_bar["close"] < rh:
-        return {**base, "signal": "SHORT", "side": "short",
-                "entry": round(react_bar["close"], 3),
-                "stop": round(manip_bar["high"] + buffer, 3),
-                "target": round(rl, 3),
+        target = round(entry - reach, 3) if reach else round(rl, 3)
+        return {**base, "signal": "SHORT", "side": "short", "entry": entry,
+                "stop": round(manip_bar["high"] + buffer, 3), "target": target,
                 "reason": "swept the range HIGH (buy-side liquidity), closed back in — fade SHORT"}
     if outcome == "sweep_low" and react_bar["close"] > rl:
-        return {**base, "signal": "LONG", "side": "long",
-                "entry": round(react_bar["close"], 3),
-                "stop": round(manip_bar["low"] - buffer, 3),
-                "target": round(rh, 3),
+        target = round(entry + reach, 3) if reach else round(rh, 3)
+        return {**base, "signal": "LONG", "side": "long", "entry": entry,
+                "stop": round(manip_bar["low"] - buffer, 3), "target": target,
                 "reason": "swept the range LOW (sell-side liquidity), closed back in — fade LONG"}
     return {**base, "signal": "NONE",
             "reason": (f"{outcome} — no clean sweep-reversal "
