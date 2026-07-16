@@ -35,60 +35,6 @@ TIERS = {
     "intrasession": {"rr": (3, 4, 5),    "sl_source": "session", "horizon": "session"},
 }
 
-# Session Opening-Range → tier, and which session's OR each tier breaks out of.
-#   intrasession = Asia OR broken inside Asia   (Q1)
-#   intraday     = London / NY-open OR          (Q2→Q3, the classic gold mover)
-#   swing        = Asia+London composite broken by NY
-_OR_SESSION = {"asia": "intrasession", "tokyo": "intrasession",
-               "london": "intraday", "ny": "intraday", "newyork": "intraday",
-               "composite": "swing"}
-
-
-def session_breakout_plan(or_result: dict, profile_confirm: dict, bias: str,
-                          session: str = "ny", rr: Optional[Sequence[float]] = None) -> dict:
-    """Compose an Opening-Range breakout into a tiered, sized-elsewhere trade plan.
-
-    Inputs are the pure reads: ``or_result`` from indicators.opening_range (OR +
-    breakout + retest + stop) and ``profile_confirm`` from
-    indicators.profile.breakout_confirmed (the leaving-balance gate). The plan
-    fires only when BOTH pass AND the OR breakout direction agrees with the weekly
-    ``bias`` (so a session break never trades against the higher-timeframe read).
-
-    Entry/stop come straight from the OR (retest level / opposite extreme); the
-    tier's R:R band becomes the scale-out ladder. Money-first sizing and the fib
-    trend-TP ladder are applied by the caller — this only decides WHETHER and the
-    entry/stop/tier. Returns {signal, ...} — 'NO TRADE' with a reason when gated.
-    """
-    tier = _OR_SESSION.get((session or "").lower(), "intraday")
-    band = rr if rr is not None else TIERS[tier]["rr"]
-    layers = {"opening_range": or_result, "profile": profile_confirm}
-
-    if bias not in ("long", "short"):
-        return {"signal": "NO TRADE", "trade_type": tier,
-                "reason": "no weekly bias for the session break", "layers": layers}
-    if not or_result or not or_result.get("ok"):
-        return {"signal": "NO TRADE", "trade_type": tier,
-                "reason": (or_result or {}).get("reason", "no opening-range breakout"),
-                "layers": layers}
-    side = or_result.get("side")
-    if side != bias:
-        return {"signal": "NO TRADE", "trade_type": tier,
-                "reason": f"OR {side} breakout opposes weekly {bias} — stand aside",
-                "layers": layers}
-    if not profile_confirm or not profile_confirm.get("ok"):
-        return {"signal": "NO TRADE", "trade_type": tier,
-                "reason": (profile_confirm or {}).get("reason", "profile did not confirm"),
-                "layers": layers}
-
-    return {
-        "signal": side.upper(), "instrument": "XAU/USD", "trade_type": tier,
-        "entry": or_result["entry"], "stop": or_result["stop"],
-        "entry_mode": "structure", "kind": "limit",     # retest = a limit at the OR boundary
-        "rr": tuple(band), "session": session,
-        "reason": f"{tier} · {session} OR {side} break + retest, profile leaving balance",
-        "layers": layers,
-    }
-
 
 def classify_tier(profile: dict, session_q: Optional[dict] = None) -> Optional[dict]:
     """Which trade-type tier does this profile+session imply? None = stand aside.
