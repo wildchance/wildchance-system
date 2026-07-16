@@ -33,6 +33,9 @@ async def signal(symbol: str = Query("XAU/USD"),
                  trigger: int = Query(None, ge=0, le=23,
                      description="trigger hour UTC (14/7/0). blank = the latest completed triad"),
                  buffer: float = Query(0.0, ge=0),
+                 target_pips: float = Query(None, ge=1,
+                     description="project the target this many pips from entry (hold-for-a-move); blank = opposite range side"),
+                 pip: float = Query(0.1, gt=0),
                  notify: bool = Query(False)):
     """Most recent AMD triad read for ``symbol`` (fade-the-sweep LONG/SHORT/NONE)."""
     hbars = await fetch_hourly_raw(symbol, "UTC", 96)
@@ -58,7 +61,7 @@ async def signal(symbol: str = Query("XAU/USD"),
         return {"signal": "NONE", "reason": "no completed triad in the window"}
 
     date, h, r, m, x = best
-    sig = triad_signal(r, m, x, buffer=buffer)
+    sig = triad_signal(r, m, x, buffer=buffer, target_pips=target_pips, pip=pip)
     sig["symbol"] = symbol
     sig["as_of"] = f"{date} {h + 2:02d}:00 UTC (trigger {h:02d})"
     if notify and sig.get("signal") in ("LONG", "SHORT"):
@@ -77,9 +80,13 @@ async def backtest(symbol: str = Query("XAU/USD"),
                    buffer: float = Query(0.0, ge=0),
                    max_hold: int = Query(12, ge=1, le=48),
                    require_bias: bool = Query(False,
-                       description="only fade WITH trend (long above the SMA, short below) "
-                                   "— the daily-bias confluence"),
-                   bias_window: int = Query(50, ge=10, le=200),
+                       description="only fade WITH the trailing SMA (long above / short below)"),
+                   bias_window: int = Query(50, ge=5, le=400),
+                   target_pips: float = Query(None, ge=1,
+                       description="fixed target distance in pips (250/500) — the hold-for-a-move exit; blank = opposite range side"),
+                   pip: float = Query(0.1, gt=0, description="pip size (gold 0.1)"),
+                   hold_to_session: bool = Query(False,
+                       description="hold to the per-trigger session-close hour (Asian→pre-London 06:00, …) instead of max_hold bars"),
                    trigger: int = Query(None, ge=0, le=23,
                        description="restrict to one trigger hour; blank = 14/7/0")):
     """Replay the AMD triad; report hit-rate, expectancy-R, TRAIN/TEST + by-trigger + by-side."""
@@ -90,7 +97,8 @@ async def backtest(symbol: str = Query("XAU/USD"),
             detail=f"could not fetch {symbol} hourly history ({len(hbars)} bars) — rate limit or symbol")
     triggers = (trigger,) if trigger is not None else TRIGGERS
     res = _bt(hbars, triggers=triggers, buffer=buffer, max_hold=max_hold,
-              require_bias=require_bias, bias_window=bias_window)
+              require_bias=require_bias, bias_window=bias_window,
+              target_pips=target_pips, pip=pip, hold_to_session=hold_to_session)
     res.pop("trades", None)
     res["symbol"] = symbol
     return res
