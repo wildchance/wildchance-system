@@ -2,10 +2,20 @@
 
 For every date and trigger hour H (14/7/0), build the triad from the H, H+1, H+2
 UTC candles, and if a fade-the-sweep signal fires, hold it forward (crossing
-midnight toward pre-London) until the target or stop is hit — or a ``max_hold``
-deadline. P&L is measured in R (target reached = +R, stop = −1R, deadline = signed
+midnight toward the session close) until the target or stop is hit — or a deadline.
+P&L is measured in R (target reached = +R, stop = −1R, deadline = signed
 distance/risk). Reports hit-rate, expectancy_R, a chronological TRAIN/TEST split,
-and a BY-TRIGGER split (does the 14:00 triad work but not the 07:00?).
+a BY-TRIGGER split (does the 14:00 triad work but not the 07:00?), and a BY-SIDE
+split (long-fades vs short-fades).
+
+Two exit models for the "hold the reaction toward a session move" playbook:
+  target_pips      project the target a fixed distance (250/500) instead of the
+                   tight opposite-range-side — the higher-R hold-for-a-move target.
+  hold_to_session  deadline = the per-trigger SESSION-CLOSE hour (Asian 14:00 →
+                   pre-London 06:00, …) rather than a flat max_hold bar count.
+
+An optional daily-bias filter (require_bias): don't fade WITH the longer trend —
+long only if the reaction close is above the trailing SMA, short only if below.
 
 Bars are dicts ``{date, hour, open, high, low, close}`` in UTC (fetch_hourly_raw).
 Pure & deterministic: the caller supplies the bars.
@@ -16,6 +26,11 @@ from __future__ import annotations
 from typing import Dict, List, Optional, Sequence
 
 from indicators.amd_triad import TRIGGERS, triad_signal
+
+# When holding to the SESSION boundary (not a flat bar count): the UTC hour to
+# force-close each trigger's triad. Asian 14:00 triad carries to pre-London 06:00;
+# the 07:00 triad to the NY close (~14:00); the 00:00 triad to the London close (~07:00).
+SESSION_CLOSE = {14: 6, 7: 14, 0: 7}
 
 
 def _simulate(sig: dict, forward: Sequence[dict]) -> dict:
@@ -43,23 +58,46 @@ def _simulate(sig: dict, forward: Sequence[dict]) -> dict:
     return {"outcome": "open", "r": 0.0}
 
 
+def _forward_slice(flat: Sequence[dict], start: int, trigger: int,
+                   max_hold: int, hold_to_session: bool) -> List[dict]:
+    """The bars to hold across: to the per-trigger session-close hour, or max_hold bars."""
+    if hold_to_session:
+        close_h = SESSION_CLOSE.get(trigger)
+        if close_h is not None:
+            fwd: List[dict] = []
+            for j in range(start, min(len(flat), start + 48)):   # 48h safety cap
+                fwd.append(flat[j])
+                if flat[j]["hour"] == close_h:
+                    break
+            return fwd
+    return list(flat[start: start + max_hold])
+
+
 def backtest(bars: Sequence[dict], triggers=TRIGGERS, buffer: float = 0.0,
-             max_hold: int = 12, require_bias: bool = False,
-             bias_window: int = 50) -> dict:
+             max_hold: int = 12, require_bias: bool = False, bias_window: int = 50,
+             target_pips: Optional[float] = None, pip: float = 0.1,
+             hold_to_session: bool = False) -> dict:
     """Replay the triad over a flat UTC-hourly ``bars`` list → stats + splits.
 
-    ``max_hold`` = how many hours after the reaction to hold before force-closing
-    (12h from the 14:00 triad reaches ~04:00 next day, past pre-London).
+    Exit is whichever of {stop, target, deadline} comes first.
 
-    ``require_bias`` — only take the fade that AGREES with trend: long only when the
-    reaction closes ABOVE its ``bias_window``-hour SMA, short only below. This is the
-    daily-bias confluence — don't fade a swept high in an uptrend.
+    ``target_pips`` — project the target a fixed distance from entry (e.g. 250/500
+    pips = 25.0/50.0 at ``pip=0.1`` for gold) instead of the tight opposite-range
+    side. The hold-for-a-move playbook: the reaction only confirms the reversal;
+    the trade carries toward a 250–500 pip session target for a higher R multiple.
 
-    Returns overall + train/test + by_trigger + BY_SIDE aggregates (R units).
+    ``hold_to_session`` — deadline is the per-trigger SESSION-CLOSE hour (Asian
+    14:00 → pre-London 06:00, etc.), not ``max_hold`` bars. "Hold till nearing the
+    close of each session." When False, the deadline is ``max_hold`` hours out.
+
+    ``require_bias`` — only take the fade if it aligns with the trailing SMA
+    (``bias_window`` closes ending at the reaction): long only above the SMA,
+    short only below. Don't fade with the longer trend.
+
+    Returns overall + train/test + by_trigger + by_side aggregates (R units).
     """
     flat = sorted(bars, key=lambda b: (b["date"], b["hour"]))
     pos = {(b["date"], b["hour"]): i for i, b in enumerate(flat)}
-    closes = [b["close"] for b in flat]
     by_date: Dict[str, set] = {}
     for b in flat:
         by_date.setdefault(b["date"], set()).add(b["hour"])
@@ -73,16 +111,23 @@ def backtest(bars: Sequence[dict], triggers=TRIGGERS, buffer: float = 0.0,
             r_bar = flat[pos[(date, h)]]
             m_bar = flat[pos[(date, h + 1)]]
             x_bar = flat[pos[(date, h + 2)]]
-            sig = triad_signal(r_bar, m_bar, x_bar, buffer=buffer)
+            sig = triad_signal(r_bar, m_bar, x_bar, buffer=buffer,
+                               target_pips=target_pips, pip=pip)
             if sig["signal"] not in ("LONG", "SHORT"):
                 continue
-            xi = pos[(date, h + 2)]
-            if require_bias and xi + 1 >= bias_window:
-                sma = sum(closes[xi + 1 - bias_window: xi + 1]) / bias_window
-                trend = "long" if x_bar["close"] > sma else "short"
-                if sig["side"] != trend:
-                    continue                     # fade opposes the trend — skip it
-            res = _simulate(sig, flat[xi + 1: xi + 1 + max_hold])
+            if require_bias:                       # don't fade WITH the longer trend
+                react_i = pos[(date, h + 2)]
+                lo = max(0, react_i - bias_window + 1)
+                closes = [flat[j]["close"] for j in range(lo, react_i + 1)]
+                sma = sum(closes) / len(closes) if closes else None
+                if sma is not None:
+                    if sig["side"] == "long" and x_bar["close"] <= sma:
+                        continue
+                    if sig["side"] == "short" and x_bar["close"] >= sma:
+                        continue
+            start = pos[(date, h + 2)] + 1
+            forward = _forward_slice(flat, start, h, max_hold, hold_to_session)
+            res = _simulate(sig, forward)
             if res["outcome"] == "skip":
                 continue
             trades.append({"date": date, "trigger_hour": h, "side": sig["side"],
@@ -96,14 +141,15 @@ def backtest(bars: Sequence[dict], triggers=TRIGGERS, buffer: float = 0.0,
     return {
         "params": {"triggers": list(triggers), "buffer": buffer, "max_hold": max_hold,
                    "require_bias": require_bias, "bias_window": bias_window,
-                   "days": len(by_date)},
+                   "target_pips": target_pips, "pip": pip,
+                   "hold_to_session": hold_to_session, "days": len(by_date)},
         "overall": _agg(trades),
         "train": {"until": cut, **_agg(train)},
         "test": {"from": cut, **_agg(test)},
         "by_trigger": {str(h): _agg([t for t in trades if t["trigger_hour"] == h])
                        for h in triggers},
-        "by_side": {s: _agg([t for t in trades if t["side"] == s])
-                    for s in ("long", "short")},
+        "by_side": {"long": _agg([t for t in trades if t["side"] == "long"]),
+                    "short": _agg([t for t in trades if t["side"] == "short"])},
         "trades": trades,
     }
 
