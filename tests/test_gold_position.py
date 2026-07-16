@@ -1,61 +1,52 @@
-"""Gold swing-position lifecycle: BE trail, TP/SL, weekly time-stop."""
+"""HTF timeline identifier — daily named-zone ladder + region/bias location."""
 
-import datetime as dt
-
-from gold import position as pos
-
-OPEN = dt.datetime(2026, 7, 5, 22, 0, tzinfo=dt.timezone.utc)   # Sunday 22:00 open
+from gold.timeline import htf_ladder, locate, htf_confluence, HTF_ANCHOR
 
 
-def _long():
-    return {"side": "long", "entry": 4000, "stop": 3960,
-            "targets": [4080, 4120, 4160], "be_active": False, "opened_at": OPEN}
+def test_ladder_matches_chart_levels():
+    lad = htf_ladder()["levels"]
+    assert lad["0"]["price"] == 3885.044 and lad["0"]["zone"] == "central limit"
+    assert lad["1"]["price"] == 4381.940 and lad["0.5"]["zone"] == "bullish mean"
+    assert abs(lad["1.5"]["price"] - 4630.388) < 0.01 and lad["1.5"]["zone"] == "buy/sell limit (upper)"
+    assert abs(lad["2"]["price"] - 4878.836) < 0.01 and lad["2"]["zone"] == "equilibrium (upper)"
+    assert abs(lad["4"]["price"] - 5872.628) < 0.01 and lad["4"]["zone"] == "tp4 / scale-out 3"
+    assert abs(lad["-3"]["price"] - 2394.356) < 0.01
 
 
-def test_swing_deadline_is_monday_2200():
-    dl = pos.swing_deadline(OPEN)
-    assert dl.weekday() == 0 and dl.hour == pos.TIME_STOP_HOUR_UTC
-    assert dl > OPEN
+def test_ladder_spans_minus3_to_plus4():
+    lad = htf_ladder()["levels"]
+    assert "-3" in lad and "4" in lad and "-3.5" not in lad and "4.5" not in lad
 
 
-def test_holding_when_no_target_reached():
-    a = pos.evaluate(_long(), 4010, OPEN + dt.timedelta(hours=1))
-    assert a["close"] is False and a["tp_hit"] == 0
+def test_locate_current_price_is_accumulation_long():
+    loc = locate(3986.28)                    # k ≈ 0.20
+    assert 0.19 < loc["k"] < 0.21
+    assert loc["smaller_tf_bias"] == "long" and "discount" in loc["region"]
 
 
-def test_tp1_arms_break_even():
-    a = pos.evaluate(_long(), 4085, OPEN + dt.timedelta(hours=2))
-    assert a["be_active"] is True and a["tp_hit"] == 1
-    assert a["stop"] == 4000 and a["close"] is False
+def test_locate_premium_is_short():
+    loc = locate(4950.0)                      # above equilibrium (k≈2.14)
+    assert loc["smaller_tf_bias"] == "short"
 
 
-def test_final_target_closes_in_r():
-    a = pos.evaluate(_long(), 4200, OPEN + dt.timedelta(hours=3))
-    assert a["close"] and a["exit_reason"] == "TP3"
-    assert a["result_r"] == 4.0        # (4160-4000)/40
+def test_locate_scale_out_flag_at_tp():
+    assert locate(5150.0)["at_scale_out"] is True     # k≈2.55, tp zone
 
 
-def test_initial_stop_is_minus_one_r():
-    a = pos.evaluate(_long(), 3959, OPEN + dt.timedelta(hours=1))
-    assert a["close"] and a["exit_reason"] == "SL" and a["result_r"] == -1.0
+def test_locate_nearest_levels():
+    loc = locate(3986.28)
+    assert loc["nearest_above"]["zone"] == "bullish mean"      # 4133 above
+    assert loc["nearest_below"]["zone"] == "central limit"     # 3885 below
 
 
-def test_break_even_scratch():
-    state = dict(_long(), be_active=True)
-    a = pos.evaluate(state, 3999, OPEN + dt.timedelta(hours=4))
-    assert a["close"] and a["exit_reason"] == "BE" and a["result_r"] == 0.0
+def test_htf_confluence():
+    # In discount (accumulation), a long aligns and a short opposes.
+    assert htf_confluence("long", 3986.28) == "aligns"
+    assert htf_confluence("short", 3986.28) == "opposes"
+    # In premium, a short aligns.
+    assert htf_confluence("short", 4950.0) == "aligns"
 
 
-def test_time_stop_closes_at_market():
-    dl = pos.swing_deadline(OPEN)
-    a = pos.evaluate(_long(), 4050, dl + dt.timedelta(hours=1))
-    assert a["close"] and a["exit_reason"] == "TIME"
-    assert a["result_r"] == round(50 / 40, 4)
-
-
-def test_short_exits_at_target_price():
-    sh = {"side": "short", "entry": 4200, "stop": 4240, "targets": [4120],
-          "be_active": False, "opened_at": OPEN}
-    a = pos.evaluate(sh, 4100, OPEN + dt.timedelta(hours=2))
-    # Closes AT the target (4120), not the overshoot price → +2R.
-    assert a["close"] and a["exit_price"] == 4120 and a["result_r"] == 2.0
+def test_anchor_override():
+    lad = htf_ladder(zero=1000.0, one=1100.0)
+    assert lad["unit"] == 100.0 and lad["levels"]["1"]["price"] == 1100.0
