@@ -138,20 +138,6 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
         sig["suppressed"] = "wildchance retail+COT opposes the profile"
         return sig
 
-    # TREND-EXTENSION TP LADDER — the daily gold card ships the projected targets
-    # too (the base card formatter renders them). Weekly swing as the reference
-    # impulse; 4H A→B→C preferred inside the helper. Best-effort.
-    if sig.get("signal") in ("LONG", "SHORT"):
-        try:
-            from services import structure_service as _ss
-            _tl = await _ss.trend_targets("XAU/USD", bias, sig.get("entry", entry),
-                                          ref_high=(profile or {}).get("week_high"),
-                                          ref_low=(profile or {}).get("week_low"))
-            if _tl:
-                sig["trend_targets"] = _tl
-        except Exception:
-            pass
-
     if notify:
         sig["sent"] = await _tg(format_card(sig))
     return sig
