@@ -83,20 +83,64 @@ def test_backtest_stop_is_minus_one_r():
     assert r["overall"]["losses"] == 1 and r["overall"]["avg_loss_r"] == -1.0
 
 
-def test_backtest_by_side_and_bias_filter():
-    days = {}
-    for d in range(6, 14):
-        days[f"2026-07-{d:02d}"] = _short_day(f"2026-07-{d:02d}")
-    bars = [b for day in days.values() for b in day]
-    r = backtest(bars, triggers=(14,), max_hold=6)
-    # by_side split present; these are all SHORT fades (swept high)
-    assert "short" in r["by_side"] and "long" in r["by_side"]
-    assert r["by_side"]["short"]["trades"] == r["overall"]["trades"]
-    # require_bias with a short-only downtrend proxy: these shorts sit BELOW the SMA
-    rb = backtest(bars, triggers=(14,), max_hold=6, require_bias=True, bias_window=10)
-    assert rb["params"]["require_bias"] is True
-    # the bias filter can only reduce or keep the trade count, never increase it
-    assert rb["overall"]["trades"] <= r["overall"]["trades"]
+def test_target_pips_projects_fixed_distance():
+    # sweep low → LONG; a 250-pip target at pip=0.1 sits 25.0 above the entry,
+    # overriding the tight range-high target.
+    rng = _bar("2026-07-06", 14, 100, 110, 90, 95)
+    manip = _bar("2026-07-06", 15, 95, 100, 86, 92)         # sweeps 90 low
+    react = _bar("2026-07-06", 16, 92, 96, 91, 94)          # LONG entry 94
+    sig = triad_signal(rng, manip, react, target_pips=250, pip=0.1)
+    assert sig["signal"] == "LONG"
+    assert sig["target"] == 94 + 25.0            # 119.0, not the range high 110
+    # short mirror
+    rng2 = _bar("d", 14, 100, 110, 90, 105)
+    manip2 = _bar("d", 15, 105, 114, 100, 108)
+    react2 = _bar("d", 16, 108, 109, 104, 106)              # SHORT entry 106
+    s2 = triad_signal(rng2, manip2, react2, target_pips=250, pip=0.1)
+    assert s2["signal"] == "SHORT" and s2["target"] == 106 - 25.0
+
+
+def test_hold_to_session_closes_at_session_hour():
+    # Asian 14:00 triad → SHORT, target far away (never hit) → held to the 06:00
+    # pre-London close next day and marked to that close.
+    date, nxt = "2026-07-06", "2026-07-07"
+    bars = [
+        _bar(date, 14, 100, 110, 90, 105),
+        _bar(date, 15, 105, 114, 100, 108),   # sweep high
+        _bar(date, 16, 108, 109, 104, 106),   # SHORT entry 106, stop 114
+    ]
+    # drift gently down but never reach a 250-pip target, past midnight to 06:00
+    for h in (17, 18, 19, 20, 21, 22, 23):
+        bars.append(_bar(date, h, 106, 107, 103, 105))
+    for h in range(0, 7):
+        bars.append(_bar(nxt, h, 104, 105, 101, 103))       # 06:00 close = 103
+    r = backtest(bars, triggers=(14,), target_pips=250, pip=0.1, hold_to_session=True)
+    ov = r["overall"]
+    assert ov["trades"] == 1
+    # never stopped (stay <114) and never hit far target → deadline win at 103 (short, entry 106)
+    t = r["trades"][0]
+    assert t["outcome"] == "win" and t["r"] > 0
+
+
+def test_require_bias_filters_against_trend():
+    # A swept-high SHORT while price is well ABOVE its trailing SMA (uptrend) is
+    # fading WITH nothing / against the trend → require_bias should drop it.
+    date = "2026-07-20"
+    bars = []
+    for i, h in enumerate(range(0, 14)):        # rising context → SMA below current
+        px = 90 + i
+        bars.append(_bar(date, h, px, px + 1, px - 1, px))
+    bars += [
+        _bar(date, 14, 104, 114, 100, 112),     # range, well above the earlier SMA
+        _bar(date, 15, 112, 120, 108, 110),     # sweep high
+        _bar(date, 16, 110, 111, 106, 108),     # SHORT (close 108 > SMA of prior lows)
+        _bar(date, 17, 108, 116, 95, 96),
+    ]
+    unfiltered = backtest(bars, triggers=(14,), max_hold=6)
+    filtered = backtest(bars, triggers=(14,), max_hold=6, require_bias=True, bias_window=14)
+    assert unfiltered["overall"]["trades"] == 1
+    assert filtered["overall"]["trades"] == 0   # short above the SMA is suppressed
+    assert "long" in filtered["by_side"] and "short" in filtered["by_side"]
 
 
 def test_triggers_default():
