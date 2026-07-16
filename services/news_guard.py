@@ -24,35 +24,6 @@ from typing import List, Optional, Set
 from decouple import config
 
 NEWS_WINDOW_DAYS = config("USDJPY_NEWS_WINDOW_DAYS", default=1, cast=int)
-# Master switch — set NEWS_WARNINGS_ENABLED=false to remove the news line entirely
-# (also disables the same-day tier-1 block that reuses this function).
-NEWS_WARNINGS_ENABLED = config("NEWS_WARNINGS_ENABLED", default="true").lower() == "true"
-
-# Trailing release-frequency tokens — "Core CPI m/m" and "Core CPI y/y" are the SAME
-# print, so we strip these to dedupe one release down to one line.
-_FREQ_SUFFIXES = (" m/m", " y/y", " q/q", " mom", " yoy", " qoq")
-
-
-def _dedupe_events(hits: List[str]) -> List[str]:
-    """Collapse the same release listed under several frequencies into one line.
-
-    'USD Core CPI m/m', 'USD Core CPI y/y', 'USD CPI m/m' → 'USD Core CPI',
-    'USD CPI' (order preserved). Prevents one CPI day showing as three warnings.
-    """
-    out: List[str] = []
-    seen: set = set()
-    for h in hits:
-        base = h
-        low = base.lower()
-        for suf in _FREQ_SUFFIXES:
-            if low.endswith(suf):
-                base = base[: -len(suf)].rstrip()
-                break
-        key = base.lower()
-        if key not in seen:
-            seen.add(key)
-            out.append(base)
-    return out
 
 # Tier-1 event substrings (currency-agnostic). Central-bank rate decisions, CPI,
 # employment, GDP, and the Fed's own set.
@@ -170,17 +141,10 @@ async def high_impact_calendar(currencies: Optional[Set[str]] = None) -> List[di
 
 async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
                     win: Optional[int] = None) -> Optional[str]:
-    """Warning string if a tier-1 event for ``symbol``'s currencies is UPCOMING
-    within ``win`` days (default USDJPY_NEWS_WINDOW_DAYS), else None.
-
-    FORWARD-LOOKING: only events that are today or up to ``win`` days AHEAD are
-    flagged — ``0 <= (event - for_date).days <= win``. A print that has already
-    released is no longer a fade-inversion risk, so past events are never flagged
-    (this is the fix for the alert repeating an outcome we already had). Callers
-    decide whether to flag or block — pass win=0 to test today only.
+    """Warning string if a tier-1 event for ``symbol``'s currencies is within
+    ``win`` days (default USDJPY_NEWS_WINDOW_DAYS), else None. Callers decide
+    whether to flag or block — pass win=0 to test same-day only.
     """
-    if not NEWS_WARNINGS_ENABLED:
-        return None
     win = max(0, NEWS_WINDOW_DAYS if win is None else win)
     ccys = symbol_currencies(symbol)
     hits: List[str] = []
@@ -188,7 +152,7 @@ async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
     # 1) Deterministic NFP clock (only if the pair carries USD).
     if "USD" in ccys:
         for nfp in _nearby_nfp(for_date):
-            if 0 <= (nfp - for_date).days <= win:      # today .. win days ahead
+            if abs((nfp - for_date).days) <= win:
                 hits.append(f"USD NFP {nfp.isoformat()}")
 
     # 2) Live calendar feed, matched to the pair's currencies (best-effort).
@@ -199,7 +163,7 @@ async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
             d = _parse_date(ev.get("date"))
             ccy = _event_ccy(ev)
             if (d and ccy in ccys and _is_high_impact(ev)
-                    and 0 <= (d - for_date).days <= win):   # upcoming only
+                    and abs((d - for_date).days) <= win):
                 nm = ev.get("event") or ev.get("title") or "high-impact"
                 hits.append(f"{ccy} {nm}")
     except Exception:
@@ -207,10 +171,9 @@ async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
 
     if not hits:
         return None
-    uniq = _dedupe_events(list(dict.fromkeys(hits)))[:4]
-    horizon = "today" if win == 0 else f"in the next {win}d"
+    uniq = list(dict.fromkeys(hits))[:4]
     return (
-        f"⚠️ High-impact news {horizon} for {'/'.join(sorted(ccys))} "
-        f"({'; '.join(uniq)}) — scheduled prints can whip price & widen spreads. "
+        f"⚠️ High-impact news within {win}d for {'/'.join(sorted(ccys))} "
+        f"({'; '.join(uniq)}) — scheduled prints often INVERT a fade. "
         "Trade at your discretion / reduce size."
     )
