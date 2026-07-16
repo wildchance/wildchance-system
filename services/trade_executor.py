@@ -7,66 +7,14 @@ MT5 — that's the standalone connector on the VPS (mt5_bridge/connector.py).
 
 from __future__ import annotations
 
-from typing import List, Optional, Sequence
+from typing import List, Optional
 
-from decouple import config
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.execution_model import ExecutionOrder
 
 MAGIC = 770001                          # identifies this system's trades in MT5
-
-# Scale-out: split the position across the trend-extension TP ladder. Front-loaded
-# by default — bank the most at the nearest target, leave a runner for the furthest
-# extension. All legs share ONE stop (structure invalidation).
-SCALE_OUT = config("EXECUTION_SCALE_OUT", default="true").lower() == "true"
-_WEIGHTS_RAW = config("EXECUTION_SCALE_WEIGHTS", default="0.4,0.3,0.2,0.1")
-DEFAULT_WEIGHTS = tuple(float(x) for x in _WEIGHTS_RAW.split(",") if x.strip()) or (0.4, 0.3, 0.2, 0.1)
-MIN_LOT = config("EXECUTION_MIN_LOT", default=0.01, cast=float)
-LOT_STEP = config("EXECUTION_LOT_STEP", default=0.01, cast=float)
-
-
-def plan_scale_out(total_volume: float, tp_prices: Sequence[float],
-                   weights: Sequence[float] = DEFAULT_WEIGHTS,
-                   min_lot: float = MIN_LOT, step: float = LOT_STEP) -> List[dict]:
-    """Split ``total_volume`` across the TP ladder → list of {volume, tp} legs.
-
-    Volume is quantised to the broker lot ``step`` and every leg is guaranteed
-    ≥ ``min_lot`` (each rung starts with one step, the rest is distributed by
-    ``weights`` with largest-remainder rounding so the legs sum EXACTLY to the
-    total). If the lot is too small to split (e.g. 0.01 over 4 rungs), it returns
-    as many rungs as it can afford — nearest TPs first. Empty if total < min_lot.
-    """
-    tps = [p for p in tp_prices if p is not None]
-    if step <= 0:
-        return []
-    units_total = int(round(total_volume / step))
-    # A leg must be ≥ min_lot, i.e. ≥ this many whole lot-steps.
-    min_units = max(1, int(round(min_lot / step)))
-    if units_total < min_units or not tps:
-        return []
-    n = min(len(tps), units_total // min_units)     # rungs we can afford at ≥ min_lot
-    if n < 1:
-        return []
-    w = list(weights[:n])
-    if len(w) < n:                                  # pad if fewer weights than rungs
-        w += [w[-1] if w else 1.0] * (n - len(w))
-    sw = sum(w) or 1.0
-
-    alloc = [min_units] * n                         # floor: min_lot per rung
-    remaining = units_total - min_units * n
-    if remaining > 0:
-        raw = [remaining * wi / sw for wi in w]
-        floors = [int(x) for x in raw]
-        for i in range(n):
-            alloc[i] += floors[i]
-        leftover = remaining - sum(floors)
-        # hand leftover steps to the largest fractional remainders (front-loaded ties)
-        order = sorted(range(n), key=lambda i: (raw[i] - floors[i], w[i]), reverse=True)
-        for i in order[:leftover]:
-            alloc[i] += 1
-    return [{"volume": round(alloc[i] * step, 2), "tp": tps[i]} for i in range(n)]
 
 
 def build_order(sig: dict, symbol: str = "XAUUSD", source: str = "gold") -> Optional[dict]:
@@ -100,44 +48,6 @@ def build_order(sig: dict, symbol: str = "XAUUSD", source: str = "gold") -> Opti
     }
 
 
-def build_orders(sig: dict, symbol: str = "XAUUSD", source: str = "gold",
-                 scale_out: Optional[bool] = None,
-                 weights: Sequence[float] = DEFAULT_WEIGHTS) -> List[dict]:
-    """One or MANY orders for a signal — scaled out across the trend-TP ladder.
-
-    When the signal carries a ``trend_targets`` ladder and ``scale_out`` is on,
-    the sized position is split into partial legs, each a fraction of the volume
-    with its OWN trend-extension TP and the SAME structure stop, so the trade
-    ladders out (bank early, run a tail). Otherwise a single order (the base TP1).
-    Backward-compatible: callers that want one order still have ``build_order``.
-    """
-    base = build_order(sig, symbol=symbol, source=source)
-    if base is None:
-        return []
-    do_scale = SCALE_OUT if scale_out is None else scale_out
-    tl = sig.get("trend_targets") or {}
-    tps = [t.get("price") for t in tl.get("targets", []) if t.get("price") is not None]
-    if not do_scale or len(tps) < 2:
-        return [base]
-
-    legs = plan_scale_out(base.get("volume") or 0.0, tps, weights)
-    if len(legs) < 2:                               # lot too small to split → single
-        return [base]
-
-    n = len(legs)
-    tag = (sig.get("profile") or source)[:22]
-    orders: List[dict] = []
-    for i, leg in enumerate(legs, start=1):
-        o = dict(base)
-        o["volume"] = leg["volume"]
-        o["tp"] = leg["tp"]                          # this leg's trend rung
-        o["tp_levels"] = tps
-        o["scale_leg"] = f"{i}/{n}"
-        o["comment"] = f"{tag} {i}/{n}"[:31]         # MT5 comment cap
-        orders.append(o)
-    return orders
-
-
 async def enqueue(db: AsyncSession, order: dict) -> dict:
     """Persist a pending order for the bridge to pull."""
     row = ExecutionOrder(
@@ -150,11 +60,6 @@ async def enqueue(db: AsyncSession, order: dict) -> dict:
     await db.commit()
     await db.refresh(row)
     return {"id": row.id, "status": row.status, **order}
-
-
-async def enqueue_all(db: AsyncSession, orders: List[dict]) -> List[dict]:
-    """Persist a list of orders (the scale-out legs) as pending rows."""
-    return [await enqueue(db, o) for o in orders]
 
 
 async def pending(db: AsyncSession, limit: int = 20) -> List[dict]:
