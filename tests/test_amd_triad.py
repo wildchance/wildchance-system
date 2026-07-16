@@ -83,5 +83,21 @@ def test_backtest_stop_is_minus_one_r():
     assert r["overall"]["losses"] == 1 and r["overall"]["avg_loss_r"] == -1.0
 
 
+def test_backtest_by_side_and_bias_filter():
+    days = {}
+    for d in range(6, 14):
+        days[f"2026-07-{d:02d}"] = _short_day(f"2026-07-{d:02d}")
+    bars = [b for day in days.values() for b in day]
+    r = backtest(bars, triggers=(14,), max_hold=6)
+    # by_side split present; these are all SHORT fades (swept high)
+    assert "short" in r["by_side"] and "long" in r["by_side"]
+    assert r["by_side"]["short"]["trades"] == r["overall"]["trades"]
+    # require_bias with a short-only downtrend proxy: these shorts sit BELOW the SMA
+    rb = backtest(bars, triggers=(14,), max_hold=6, require_bias=True, bias_window=10)
+    assert rb["params"]["require_bias"] is True
+    # the bias filter can only reduce or keep the trade count, never increase it
+    assert rb["overall"]["trades"] <= r["overall"]["trades"]
+
+
 def test_triggers_default():
     assert TRIGGERS == (14, 7, 0)
