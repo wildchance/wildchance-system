@@ -24,17 +24,17 @@ on:
     - cron: "0 7 * 3-10 *"      # pre-London limits — summer (EDT): 07:00 UTC = 03:00 ET
     - cron: "0 8 * 11,12,1,2 *" # pre-London limits — winter (EST): 08:00 UTC = 03:00 ET
     - cron: "0 2 * * 1-5"       # Asia accumulation — gold intrasession scan
+    - cron: "0 5 * * 1-5"       # CRT 1-5-9 confirmation — Asian session (01:00 range candle)
+    - cron: "0 17 * * 1-5"      # CRT 1-5-9 confirmation — New York session (13:00 range candle)
     - cron: "55 20 * * 5"       # Friday pre-close 1h read — Monday-gap anticipation
-    #  (1am/1pm hourly CRT/candle-range crons removed — kept only the Friday close)
+    - cron: "5 2 * * *"         # candle-range read after the 01:00 UTC candle closes
+    - cron: "5 14 * * *"        # candle-range read after the 13:00 UTC candle closes
     - cron: "0 7 1 1,4,7,10 *"  # yearly Quarterly-Theory phase (start of each quarter)
     - cron: "30 8 * * 1"        # Benner cycle phase (Mondays 08:30 UTC)
     - cron: "30 6 * * *"        # EdgeFinder top-bias digest (after the 06:00 daily scrape)
     - cron: "0 7 * * 1-5"       # GOLD scan + intraday — London open Q2 (weekdays)
     - cron: "0 13 * * 1-5"      # GOLD scan + intraday — New York open Q3 (weekdays)
     - cron: "30 13 * * 1-5"     # GOLD intraday — NY-AM distribution window (weekdays)
-    - cron: "30 2 * * 1-5"      # GOLD session-OR breakout — Asia (intrasession, $15-25)
-    - cron: "0 10 * * 1-5"      # GOLD session-OR breakout — London ($50 / 500 pips)
-    - cron: "0 15 * * 1-5"      # GOLD session-OR breakout — New York ($50 / 500 pips, primary)
   workflow_dispatch:             # manual run = full test (forces every digest)
 
 jobs:
@@ -68,7 +68,9 @@ jobs:
             post "/scorecard/weekly?force=true"
             post "/cbdr/alert/USD/JPY?window=prelondon"
             post "/cbdr/limits/XAU/USD?window=prelondon&notify=true"
+            post "/candlerange/scan?force=true"
             post "/candlerange/friday?force=true"
+            post "/candlerange/crt?session=ny&force=true"
             post "/gold/prelondon?track=true"
             post "/gold/sd-fade?track=true"
             post "/gold/news"
@@ -144,11 +146,20 @@ jobs:
               # Asia accumulation window — gold intrasession scan
               post "/gold/intraday?balance=5000&notify=true"
               ;;
+            "0 5 * * 1-5")
+              # CRT 1-5-9 — Asian confirmation (01:00 range candle → 05:00 entry)
+              post "/candlerange/crt?session=asia&execute=true"
+              ;;
+            "0 17 * * 1-5")
+              # CRT 1-5-9 — New York confirmation (13:00 range candle → 17:00 entry)
+              post "/candlerange/crt?session=ny&execute=true"
+              ;;
             "55 20 * * 5")
-              # Friday pre-close — Monday-gap anticipation (the reliable candle read).
-              # The 1am/1pm CRT + candle-range scans were removed; only Friday remains.
+              # Friday pre-close — Monday-gap anticipation (the reliable candle read)
               post "/candlerange/friday"
               ;;
+            "5 2 * * *")        post "/candlerange/scan" ;;
+            "5 14 * * *")       post "/candlerange/scan" ;;
             "0 7 1 1,4,7,10 *")
               # Yearly Quarterly-Theory phase + box for the key set
               post "/quarterly/alert/USD/JPY"
@@ -170,19 +181,5 @@ jobs:
               post "/gold/intraday?balance=5000&notify=true"
               ;;
             "30 13 * * 1-5")    post "/gold/intraday?balance=5000&require_distribution=true&notify=true" ;;
-            "30 2 * * 1-5")
-              # Asia opening-range breakout — intrasession scalps, 150 pips ($15) floor,
-              # room-filtered so exhausted Asia sessions are skipped.
-              post "/gold/session-breakout?session=asia&min_target_pips=150&notify=true"
-              ;;
-            "0 10 * * 1-5")
-              # London opening-range breakout (OR 08:00-09:00, run after it forms) —
-              # 500 pips ($50) projected-target + ADR room-to-run filter.
-              post "/gold/session-breakout?session=london&min_target_pips=500&notify=true"
-              ;;
-            "0 15 * * 1-5")
-              # New York opening-range breakout (OR 13:00-14:00) — the primary $50 mover.
-              post "/gold/session-breakout?session=ny&min_target_pips=500&notify=true"
-              ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac
