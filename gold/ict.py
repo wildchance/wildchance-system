@@ -94,9 +94,17 @@ def classify_week(daily: List[DatedOHLC], htf_lookback: int = 20) -> Optional[di
     consolidated = cons_range < 0.4 * (hi - lo) if (hi - lo) else False
 
     # --- rule cascade, most-specific first --------------------------------
-    # Friday seek & destroy: swept BOTH sides of the week → avoid.
-    swept_both = any(b[2] > wk_high * 0.999 for b in week) and \
-        any(b[3] < wk_low * 1.001 for b in week)
+    # Seek & destroy: BOTH sides of the week's range have been run for liquidity.
+    # Detected on distinct days (a genuine two-sided sweep, not one wide bar) so it
+    # fires MID-WEEK — from Wednesday on — not only on Friday.
+    hi_days = {b[0].weekday() for b in week if b[2] >= wk_high * 0.999}
+    lo_days = {b[0].weekday() for b in week if b[3] <= wk_low * 1.001}
+    # genuine two-sided sweep = the high and the low were run on DIFFERENT days
+    # (not one single wide bar).
+    swept_both = any(hd != ld for hd in hi_days for ld in lo_days)
+    if swept_both and weekday >= 2:
+        pid = 9 if close >= eq else 10
+        return _result(pid, "both sides of the week swept (seek & destroy) — ranging, fade the extremes", ctx)
     if weekday >= 4 and consolidated:
         pid = 9 if close >= eq else 10
         return _result(pid, "Friday expansion after both-side stop runs — low probability, avoid", ctx)
