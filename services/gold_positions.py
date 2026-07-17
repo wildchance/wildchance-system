@@ -21,6 +21,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.gold_position_model import GoldPosition
 from gold import position as pos
 from gold.position import deadline_for
+from gold.exposure import can_open
+
+
+async def _live_positions(db: AsyncSession) -> List[dict]:
+    """OPEN + PENDING positions as dicts (for the exposure cap)."""
+    res = await db.execute(
+        select(GoldPosition).where(GoldPosition.status.in_(("OPEN", "PENDING"))))
+    return [_to_dict(r) for r in res.scalars().all()]
 
 
 def _utcnow() -> _dt.datetime:
@@ -69,6 +77,10 @@ async def open_from_signal(db: AsyncSession, sig: dict,
     if dup is not None:
         return {"skipped": "duplicate — same side/type already open today", "id": dup.id}
 
+    cap = can_open(await _live_positions(db), float(sig.get("risk_usd") or 0.0))
+    if not cap["ok"]:
+        return {"skipped": f"exposure cap — {cap['reason']}", **cap}
+
     tps = [t.get("price") for t in sig.get("targets", [])]
     tps += [None] * (4 - len(tps))
     now = _utcnow()
@@ -109,6 +121,10 @@ async def open_limit(db: AsyncSession, card: dict, source: str,
     dup = await _open_same_side_today(db, symbol, side, trade_type)
     if dup is not None:
         return {"skipped": "duplicate — same side/type already pending/open today", "id": dup.id}
+
+    cap = can_open(await _live_positions(db), float(card.get("risk_usd") or 0.0))
+    if not cap["ok"]:
+        return {"skipped": f"exposure cap — {cap['reason']}", **cap}
 
     tps = [t.get("price") for t in card.get("targets", [])]
     tps += [None] * (4 - len(tps))
