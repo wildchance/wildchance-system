@@ -252,6 +252,18 @@ async def prelondon(balance: float = Query(5000, gt=0),
     return plan
 
 
+@router.get("/backtest")
+async def backtest(horizon: int = Query(7, ge=1, le=30),
+                   require_discount: bool = Query(True),
+                   bars: int = Query(400, ge=60, le=5000)):
+    """Backtest the SWING tier on historical daily bars → expectancy + reflection."""
+    from backtest.gold_tiers import backtest_swing
+    daily = await fetch_ohlc("XAU/USD", "1day", bars)
+    if len(daily) < 30:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD daily history")
+    return backtest_swing(daily, horizon=horizon, require_discount=require_discount)
+
+
 @router.get("/timeline")
 async def timeline(price: float = Query(None, description="price to locate (else live)")):
     """HTF timeline identifier — the daily named-zone ladder + where price sits +
