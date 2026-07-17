@@ -64,12 +64,12 @@ This is the "sort, look, and take out opportunities in real time" you described.
 
 | Command | Built | Coverage |
 |---------|-------|----------|
-| NAVCENT | HTF timeline (named daily zones), macro-cycle regime (DXY inverse + live FRED/CFTC), CBDR + SD ladder | **~90%** — missing the range-to-range objective |
-| AFCENT | gold_scan, gold_intraday (tiered), CRT, session-levels, Friday gap, daily refresh crons | **~90%** — solid ISR |
-| ARCENT | tracked positions (PENDING→fill→TP/SL/time-stop), scorecard by-tier, prop gate, MT5 execute | **~80%** — missing exposure cap + the VPS MT5 connector |
+| NAVCENT | HTF timeline, macro-cycle regime (DXY inverse + live FRED/CFTC), CBDR + SD ladder, **range-to-range objective engine** (`gold/objective`) | **~95%** — live WGC flows still static |
+| AFCENT | gold_scan, gold_intraday (tiered), CRT, session-levels, Friday gap, **STRATOPS muster**, daily refresh crons | **~90%** — continuous scan optional |
+| ARCENT | tracked positions (PENDING→fill→TP/SL/time-stop), scorecard by-tier, prop gate, MT5 execute, **exposure cap** (`gold/exposure`) | **~90%** — the Windows VPS MT5 connector is external |
 | MARCENT | intraday/intrasession/CRT/pre-London limits, news gate, pre-London→NY OTE | **~90%** |
-| SOCCENT | S&D Monday-CBDR fade, protraction gate, 8h + 1am/7am/PDH/PDL/PWH liquidity | **~85%** |
-| STRATOPS | — | **0%** — not started (the next phase) |
+| SOCCENT | S&D Monday-CBDR fade, **mid-week `swept_both` detection**, protraction gate, 8h + 1am/7am/PDH/PDL/PWH liquidity | **~90%** |
+| STRATOPS | **score → rank → allocate** (`gold/stratops` + `services/stratops_service`) — the engagement list under the exposure cap | **~85%** — weights hand-set until P3 fits them |
 
 **Full gate stack live:** HTF timeline → macro/regime → weekly profile → session →
 tier → location → protraction → news → prop. **Backtest:** swing tier measured
@@ -79,15 +79,18 @@ tier → location → protraction → news → prop. **Backtest:** swing tier me
 
 ## 5. Unfinished (carried from the roadmap)
 
-1. **STRATOPS opportunity sorter** — the new ask (Section 3). *[highest]*
-2. **CBDR range-to-range objective engine** — Section 2. *[highest, STRATOPS depends on it]*
-3. **Gold exposure cap** (ARCENT logistics) — required before the sorter can allocate.
-4. **Intraday-tier backtest** — needs H1/M15 history; tunes the sorter's weights.
-5. **MT5 bridge connector** (the Windows VPS side) — orders enqueue but nothing
-   places them until the connector runs.
-6. `swept_both` mid-week S&D detection.
-7. Live WGC ETF/CB flows (only FRED real-rate/Fed + CFTC COT are live).
-8. HTF confluence as a hard gate (optional).
+**Done:** ~~STRATOPS sorter~~ · ~~range-to-range objective engine~~ · ~~exposure cap~~ ·
+~~`swept_both` mid-week S&D~~ · ~~swing-tier backtest~~.
+
+**Remaining — require the live environment / external data, not sandbox code:**
+1. **Intraday-tier backtest** (P3) — needs H1/M15 history to fit the STRATOPS weights.
+2. **MT5 bridge connector** (the Windows VPS program) — orders enqueue; the connector
+   that pulls `/execution/pending` and places them runs outside this repo.
+3. **Live WGC ETF/CB flows** — no free API; the WGC snapshot stays hand-set (FRED
+   real-rate/Fed + CFTC COT are live).
+4. **P4 live paper-run** — run STRATOPS in paper on the deployed instance; let the
+   scorecard's reflection factor sharpen the weights to GREEN.
+5. HTF confluence as a hard gate (optional — currently a score input).
 
 ---
 
