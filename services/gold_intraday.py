@@ -147,8 +147,10 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
         # HTF timeline identifier — which daily zone price is in, and the
         # smaller-timeframe bias it implies (aligns/opposes the trade).
         from gold.timeline import locate as htf_locate, htf_confluence
+        from gold.objective import advances
         sig["htf_timeline"] = htf_locate(entry)
         sig["htf_confluence"] = htf_confluence(bias, entry)
+        sig["campaign"] = advances(bias, entry)      # advances/retreats the range objective
 
         # SD ladder anchored to today's 14:00-ET CBDR box (best-effort).
         try:
