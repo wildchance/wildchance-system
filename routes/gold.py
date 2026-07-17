@@ -264,6 +264,30 @@ async def backtest(horizon: int = Query(7, ge=1, le=30),
     return backtest_swing(daily, horizon=horizon, require_discount=require_discount)
 
 
+@router.get("/objective")
+async def objective(price: float = Query(None, description="price to frame (else live)")):
+    """CBDR range-to-range campaign objective — the next-range target + leg."""
+    from gold.objective import campaign_objective
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            price = None
+    if price is None:
+        raise HTTPException(status_code=502, detail="could not fetch XAU/USD price")
+    return campaign_objective(price)
+
+
+@router.get("/stratops")
+async def stratops(balance: float = Query(5000, gt=0),
+                   risk_usd: float = Query(20.0, gt=0),
+                   db: AsyncSession = Depends(get_db)):
+    """STRATOPS engagement list — muster every live candidate, score by confluence
+    toward the campaign objective, and allocate under the exposure cap."""
+    from services.stratops_service import muster
+    return await muster(db, balance=balance, risk_usd=risk_usd)
+
+
 @router.get("/timeline")
 async def timeline(price: float = Query(None, description="price to locate (else live)")):
     """HTF timeline identifier — the daily named-zone ladder + where price sits +
