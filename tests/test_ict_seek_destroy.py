@@ -31,3 +31,19 @@ def test_single_wide_bar_is_not_seek_destroy():
             (mon + dt.timedelta(days=1), 100, 112, 88, 100)]
     read = classify_week(prior + week)
     assert read["profile_id"] not in (9, 10)
+
+
+def test_trending_week_is_not_seek_destroy():
+    # A steady up-trend also makes its high/low on different days — but its close
+    # sits AT the extreme, so it must NOT flag as S&D (the backtest caught this).
+    base = 4000.0
+    daily = []
+    start = dt.date(2026, 6, 1)                    # Monday
+    for day in range(10):
+        d = start + dt.timedelta(days=day)
+        if d.weekday() >= 5:
+            continue
+        daily.append((d, base, base + 12, base - 4, base + 8))
+        base += 8
+    read = classify_week(daily)                    # mid-second-week
+    assert read["profile_id"] not in (9, 10)
