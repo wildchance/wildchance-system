@@ -103,6 +103,75 @@ def locate(price: float, zero: Optional[float] = None,
     }
 
 
+# --- weekly decision rule + cycle replication --------------------------------
+
+# Fib subdivisions of the 0→1 anchor leg (the intermediate rail on the chart:
+# 0.236=4002.3, 0.382=4074.9, 0.5=4133.5, 0.618=4192.1, 0.786=4275.6).
+FIB_SUBS = (0.236, 0.382, 0.5, 0.618, 0.786)
+
+# Weekly-close decision band around the 0.236 subdivision: a Friday close above
+# the upper trigger buys to the 0.382; below the lower trigger sells to the zero
+# (central limit). Between the triggers = no decision, wait for the close.
+DECISION = {"buy_above": 4020.0, "sell_below": 4000.0}
+
+# Next-cycle blueprint: once the current ladder is EXHAUSTED and price breaks &
+# retests above the ATH (~5608), the same $-range blueprint replicates on the new
+# swing. Anchored off the drawn monthly ladder (zero 5415.25 / one 5938.88 — unit
+# ~$523): +4 of that cycle = ~8557; one further replication passes $10k.
+NEXT_CYCLE = {"zero": 5415.252, "one": 5938.883, "source": "ATH breakout swing (1M chart)"}
+ATH = 5608.35
+
+
+def fib_levels(zero: Optional[float] = None, one: Optional[float] = None) -> Dict[str, float]:
+    """The intermediate fib rail inside the 0→1 leg."""
+    zero, one = _anchor(zero, one)
+    u = one - zero
+    return {f"{f:g}": round(zero + f * u, 3) for f in FIB_SUBS}
+
+
+def weekly_decision(close: float, zero: Optional[float] = None,
+                    one: Optional[float] = None) -> dict:
+    """The Friday-close decision: above the trigger → long to the 0.382; below →
+    short to the central limit; in between → stand aside until the close."""
+    zero, one = _anchor(zero, one)
+    fibs = fib_levels(zero, one)
+    if close >= DECISION["buy_above"]:
+        return {"decision": "long", "trigger": DECISION["buy_above"],
+                "target": fibs["0.382"], "close": close,
+                "note": f"weekly close {close} above {DECISION['buy_above']} → buy to {fibs['0.382']} (0.382)"}
+    if close <= DECISION["sell_below"]:
+        return {"decision": "short", "trigger": DECISION["sell_below"],
+                "target": round(zero, 3), "close": close,
+                "note": f"weekly close {close} below {DECISION['sell_below']} → sell to {zero} (central limit)"}
+    return {"decision": "wait", "close": close,
+            "band": [DECISION["sell_below"], DECISION["buy_above"]],
+            "note": f"close {close} inside the {DECISION['sell_below']}–{DECISION['buy_above']} "
+                    "decision band — wait for the weekly close"}
+
+
+def cycle_status(price: float) -> dict:
+    """Where the CURRENT cycle stands and when the blueprint replicates.
+
+    exhausted   = price has reached the ladder's +4 extreme;
+    break_retest= price holding above the ATH → the next-cycle ladder is live.
+    """
+    lad = htf_ladder()
+    top = lad["levels"]["4"]["price"]
+    if price > ATH:
+        nxt = htf_ladder(NEXT_CYCLE["zero"], NEXT_CYCLE["one"])
+        return {"phase": "next_cycle", "ath": ATH, "price": price,
+                "next_cycle": {"anchor": NEXT_CYCLE, "unit": nxt["unit"],
+                               "plus4": nxt["levels"]["4"]["price"]},
+                "note": (f"above the {ATH} ATH — replicate the blueprint on the new swing "
+                         f"(unit ~${nxt['unit']:.0f}, +4 ≈ {nxt['levels']['4']['price']:.0f}; "
+                         "a further replication passes $10k)")}
+    if price >= top:
+        return {"phase": "exhausted", "top": top, "price": price,
+                "note": f"ladder +4 ({top}) reached — watch for the break & retest above {ATH}"}
+    return {"phase": "active", "top": top, "ath": ATH, "price": price,
+            "note": "current cycle active — trade the ladder zones"}
+
+
 def htf_confluence(side: str, price: float, zero: Optional[float] = None,
                    one: Optional[float] = None) -> str:
     """'aligns' / 'opposes' / 'neutral' for a smaller-TF side vs the HTF region."""
