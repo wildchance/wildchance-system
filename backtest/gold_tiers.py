@@ -23,8 +23,11 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple
 
+import datetime as _dt
+
 from gold.ict import classify_week
-from gold.trade_types import classify_tier, tier_stop, REVERSAL
+from gold.trade_types import classify_tier, tier_stop, REVERSAL, CONTINUATION
+from gold.quarterly_session import session_quarter
 from gold.risk_engine import targets as rr_targets
 from usdjpy.scorecard import build_scorecard, by_group
 
@@ -116,3 +119,102 @@ def backtest_swing(daily: List[DatedOHLC], balance: float = 5000.0,
         "by_exit": by_group(rows, "exit_reason"),
         "trades_detail": rows[-30:],          # last 30 for inspection
     }
+
+
+def backtest_intraday(h1: List[dict], daily: List[DatedOHLC], balance: float = 5000.0,
+                      horizon: int = 8, warmup: int = 20,
+                      require_discount: bool = True) -> dict:
+    """Backtest the INTRADAY + INTRASESSION tiers over H1 bars.
+
+    Continuation profiles (3,4,7,8) are intraday in NY distribution (Q3) and
+    intrasession in Asia accumulation (Q1). Direction from the weekly profile
+    (daily bars up to the bar's date); the tier's structural stop from the day /
+    session range formed so far; simulate forward over ``horizon`` H1 bars.
+
+    ``h1`` = [{date, hour, open, high, low, close}] oldest-first (fetch_hourly_raw).
+    """
+    # Causal weekly profile per DAILY date (classify_week once per day, not per H1
+    # bar) — O(days) instead of O(H1 bars).
+    prof_by_date = {}
+    for j in range(max(1, warmup) - 1, len(daily)):
+        prof_by_date[_as_date(daily[j][0])] = classify_week(daily[:j + 1])
+
+    # Pre-tuple the H1 series once for simulate_forward's forward windows.
+    h1t = [(b["date"], b["open"], b["high"], b["low"], b["close"]) for b in h1]
+
+    rows: List[dict] = []
+    last_profile = None
+    cur_date = None
+    day_hi = day_lo = None
+    cur_q = None
+    sess_hi = sess_lo = None
+    sess_n = 0
+    for i, bar in enumerate(h1):
+        d_str = bar.get("date")
+        try:
+            d = _dt.date.fromisoformat(d_str)
+            hour = int(bar["hour"])
+        except (ValueError, KeyError, TypeError):
+            continue
+        if d in prof_by_date:                      # advance the causal profile
+            last_profile = prof_by_date[d]
+
+        # Incremental day range (reset on a new date).
+        if d_str != cur_date:
+            cur_date, day_hi, day_lo, cur_q = d_str, bar["high"], bar["low"], None
+        else:
+            day_hi = max(day_hi, bar["high"]); day_lo = min(day_lo, bar["low"])
+
+        q = session_quarter(_dt.datetime(d.year, d.month, d.day, hour,
+                                         tzinfo=_dt.timezone.utc))["quarter"]
+        if q != cur_q:                             # incremental session range
+            cur_q, sess_hi, sess_lo, sess_n = q, bar["high"], bar["low"], 1
+        else:
+            sess_hi = max(sess_hi, bar["high"]); sess_lo = min(sess_lo, bar["low"]); sess_n += 1
+
+        profile = last_profile
+        if not profile or profile.get("profile_id") not in CONTINUATION \
+                or profile.get("bias") not in ("long", "short"):
+            continue
+        tier = classify_tier(profile, {"quarter": q})
+        if tier is None or tier["trade_type"] not in ("intraday", "intrasession"):
+            continue
+
+        if tier["sl_source"] == "day":
+            hi, lo, n = day_hi, day_lo, i          # day always has enough bars by here
+        else:
+            hi, lo, n = sess_hi, sess_lo, sess_n
+        if n < 2 or hi <= lo:
+            continue
+        bias = profile["bias"]
+        entry = bar["close"]
+        mid = (hi + lo) / 2.0
+        if require_discount and ((bias == "long" and entry > mid) or
+                                 (bias == "short" and entry < mid)):
+            continue
+
+        stop = tier_stop(tier["sl_source"], bias, {tier["sl_source"]: (hi, lo)})
+        if stop is None:
+            continue
+        tps = [t["price"] for t in rr_targets(entry, stop, bias, tier["rr"])]
+        sim = simulate_forward(entry, stop, tps, bias, h1t[i + 1:i + 1 + horizon])
+        rows.append({
+            "date": f"{d_str}T{hour:02d}", "tier": tier["trade_type"],
+            "action": "BUY" if bias == "long" else "SELL",
+            "profile": profile["profile"], "result_r": sim["result_r"],
+            "exit_reason": sim["exit_reason"],
+        })
+
+    rs = [r["result_r"] for r in rows]
+    return {
+        "tiers": ["intraday", "intrasession"], "trades": len(rows),
+        "scorecard": build_scorecard(rs).to_dict(),
+        "by_tier": by_group(rows, "tier"),
+        "by_action": by_group(rows, "action"),
+        "by_exit": by_group(rows, "exit_reason"),
+        "trades_detail": rows[-30:],
+    }
+
+
+def _as_date(x):
+    return x if isinstance(x, _dt.date) else _dt.date.fromisoformat(str(x)[:10])
