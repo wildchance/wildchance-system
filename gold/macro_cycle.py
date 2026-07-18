@@ -188,14 +188,19 @@ async def refresh_inputs() -> dict:
     return {"applied": applied, "sources_live": list(applied), "regime": regime_read()}
 
 
-def regime_gate(side: str, dxy_price: float = None) -> dict:
+def regime_gate(side: str, dxy_price: float = None, strict: bool = False) -> dict:
     """Confluence gate for a proposed gold entry vs the fused regime + dollar + COT.
 
     ``dxy_price`` is a *DXY* weekly close (NOT the gold price); omit it to use the
-    anticipated dollar structure. Blocks only on genuine opposition: the dollar
+    anticipated dollar structure. Blocks on genuine opposition: the dollar
     structure diverges, or COT is stretched against a long. Otherwise annotates
     confirms/neutral. Direction from gold.macro is enforced separately — this adds
     the dollar + positioning edge.
+
+    ``strict`` enforces the 2026 rule: a gold LONG is not merely 'not opposed' but
+    requires the dollar to actively CONFIRM bearish (the DXY flip). Until DXY flips,
+    strict mode blocks fresh longs — shorts / range-fades are unaffected. This is
+    the gate that removes the premature-long bleed the P3 backtest exposed.
     """
     want = "long" if side.lower() in ("long", "buy") else "short"
     # Prefer the live RBUSBIS-implied bias; fall back to the DXY structure.
@@ -203,26 +208,47 @@ def regime_gate(side: str, dxy_price: float = None) -> dict:
     ps = gpa.positioning_state()
     # Monthly DXY fib-band structural trigger (only fires when a DXY price is given).
     trig = gdxy.gold_structure_trigger(dxy_price)
+    # The 2026 gold-long lock (dollar flipped bearish yet?).
+    flip = gdxy.dxy_flip_status(dxy_price, INPUTS.get("dollar_rbusbis_dir"))
     reasons = []
     ok = True
 
-    if dollar == "diverges":
-        ok = False
-        reasons.append(f"dollar regime opposes a gold {want} (inverse correlation)")
+    if strict:
+        # 2026 rule: the DXY FLIP is the authority and supersedes the legacy inverse
+        # read (which calls a bouncing-but-bid dollar 'buy the gold dip'). A gold
+        # long is LOCKED until the dollar actually flips bearish; shorts / range-
+        # fades are the play while it is still bid, so they are not blocked here.
+        if want == "long" and not flip["unlocked"]:
+            ok = False
+            reasons.append(f"strict: gold long LOCKED until DXY flips bearish — {flip['note']}")
+    else:
+        if dollar == "diverges":
+            ok = False
+            reasons.append(f"dollar regime opposes a gold {want} (inverse correlation)")
+
+    # COT positioning objections apply in both modes.
     if want == "long" and ps["zone"] == "stretched":
         ok = False
         reasons.append("COT crowded long — distribution risk, wait for a positioning reset")
     if want == "short" and ps["zone"] == "net_short":
         ok = False
         reasons.append("COT net short — contrarian-bullish, poor location for a fresh short")
-    # A DXY ceiling trigger opposes fresh longs; a last-discount trigger opposes shorts.
+    # A DXY ceiling trigger opposes fresh longs; a last-discount trigger opposes
+    # shorts. In strict mode a CONFIRMED flip supersedes the ceiling opposition —
+    # the roll-over off the extreme is exactly when gold longs turn on.
     if trig.get("trigger") and trig["gold_bias"] != want:
-        ok = False
-        reasons.append(f"DXY structure trigger ({trig['trigger']}) opposes the {want}: {trig['note']}")
+        if not (strict and want == "long" and flip["unlocked"]):
+            ok = False
+            reasons.append(f"DXY structure trigger ({trig['trigger']}) opposes the {want}: {trig['note']}")
 
-    # A confirming max-strength discount trigger upgrades the read.
+    # A confirming max-strength trigger — or, in strict mode, a real DXY flip —
+    # upgrades the read to 'confirms'.
     confirmed = dollar == "confirms" or (trig.get("gold_bias") == want and trig.get("strength") in ("max", "cap"))
+    if strict and want == "long" and flip["unlocked"]:
+        confirmed = True
+
     status = "confirms" if (ok and confirmed) else "neutral" if ok else "diverges"
     return {"ok": ok, "status": status, "dollar": dollar,
             "cot_zone": ps["zone"], "dxy_trigger": trig.get("trigger"),
+            "dxy_flip": flip,
             "reason": "; ".join(reasons) if reasons else f"regime does not oppose the {want}"}
