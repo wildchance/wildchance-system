@@ -19,6 +19,11 @@ from services import gold_positions as gp
 from gold.limit_orders import size_limit
 from gold.objective import advances, campaign_objective
 from gold import stratops
+from gold import zones as gz
+from gold import macro_cycle as gcycle
+from gold import timeline as tl
+from gold import flip_ladders as fl
+from propfirm.engine import evaluate_trade, DEFAULT_TIER
 
 
 def _with_campaign(sig: dict) -> dict:
@@ -26,6 +31,50 @@ def _with_campaign(sig: dict) -> dict:
         side = "long" if sig.get("signal") == "LONG" else "short"
         sig["campaign"] = advances(side, sig["entry"])
     return sig
+
+
+def _sniper_candidate(layer: dict, side: str, target: float, balance: float,
+                      tier: str) -> dict:
+    """Enrich one sniper-stack layer into a fully-scored STRATOPS candidate."""
+    entry, stop = layer["entry"], layer["stop"]
+    s = "long" if side == "buy" else "short"
+    dist = abs(entry - stop)
+    tps = ([{"price": round(target, 2), "rr": round(abs(target - entry) / dist, 2)}]
+           if target and dist else [])
+    return {
+        "signal": "LONG" if side == "buy" else "SHORT", "trade_type": "sniper",
+        "instrument": "XAU/USD", "kind": "limit",
+        "entry": entry, "stop": stop, "lot": layer["lot"], "risk_usd": layer["risk_usd"],
+        "targets": tps,
+        "gate": evaluate_trade(balance, layer["risk_usd"], tier=tier),
+        "campaign": advances(s, entry),
+        "regime": gcycle.regime_gate(s),
+        "htf_confluence": tl.htf_confluence(s, entry),
+        "location": {"ok": True, "note": f"at OB zone {layer['zone']}"},
+        "liquidity_draw": {"price": round(target, 2)} if target else None,
+        "profile": layer["zone"], "justification": layer["reason"],
+    }
+
+
+def _zone_candidates(price: float, balance: float, risk_usd: float,
+                     tier: str = DEFAULT_TIER, layers: int = 3) -> list:
+    """Sniper-stack candidates for the campaign-aligned OB zone (buy the discount
+    shelf below when the campaign is long, sell the premium shelf above when short),
+    targeting the opposite rail (the round-trip bag)."""
+    zf = gz.zone_for(price)
+    direction = campaign_objective(price).get("direction")
+    if direction == "long" and zf.get("nearest_below"):
+        zone, target = zf["nearest_below"], (zf.get("nearest_above") or {}).get("low")
+    elif direction == "short" and zf.get("nearest_above"):
+        zone, target = zf["nearest_above"], (zf.get("nearest_below") or {}).get("high")
+    else:
+        return []
+    stack = gz.sniper_stack(zone["name"], balance=balance, risk_usd=risk_usd,
+                            layers=layers, target_price=target)
+    if stack.get("signal") not in ("LONG", "SHORT"):
+        return []
+    return [_sniper_candidate(l, zone["side"], target, balance, tier)
+            for l in stack["orders"]]
 
 
 async def muster(db: AsyncSession, balance: float = 5000.0,
@@ -53,6 +102,16 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
         if conf.get("confirmed"):
             add(size_limit(conf["order"], balance, risk_usd))
 
+    # ENGINEERS — sniper limit stacks at the campaign-aligned OB zone (the layers
+    # compete; the best-priced one deploys, deduped to one sniper position/side/day).
+    try:
+        from utils.price_fetcher import get_forex_price
+        _price = await get_forex_price("XAU/USD")
+        for c in _zone_candidates(_price, balance, risk_usd):
+            add(c)
+    except Exception:
+        pass
+
     positions = await gp.list_positions(db, status="OPEN", limit=100)
     positions += await gp.list_positions(db, status="PENDING", limit=100)
 
@@ -75,4 +134,9 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
         result["campaign"] = campaign_objective(price)
     except Exception:
         pass
+    # Which flip tier the account sits in — the run cadence the sizing serves.
+    tier_plan = fl.plan(balance)
+    result["account"] = {"balance": balance, "flip_tier": tier_plan["tier"],
+                         "pip_cadence": tier_plan.get("pip_target") or tier_plan.get("cadence"),
+                         "note": tier_plan["note"]}
     return result
