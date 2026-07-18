@@ -120,3 +120,60 @@ def gold_structure_trigger(price: Optional[float] = None) -> dict:
                 "dxy": price, "note": f"DXY {price} above the {hi_c} ceiling — sustained gold headwind"}
     return {"trigger": None, "gold_bias": "long", "strength": "neutral", "dxy": price,
             "note": f"DXY {price} between the discount and ceiling bands — no structural trigger"}
+
+
+# The DXY manipulation-up extreme: gold longs cannot unlock until price has REACHED
+# this ceiling band (post-midterm blow-off) and then rolled over. Below it, any
+# softness is the PRE-manipulation base, not the flip.
+EXTREME_MIN = 104.589       # ceiling-band base (0.5 fib) — the manipulation target
+
+
+def _env_override() -> Optional[bool]:
+    """Operator override via env: GOLD_LONG_UNLOCK=true once the post-midterm flip
+    is confirmed (or =false to force-lock). Unset → automatic structural read."""
+    import os
+    v = os.environ.get("GOLD_LONG_UNLOCK")
+    if v is None or v.strip() == "":
+        return None
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+def dxy_flip_status(price: Optional[float] = None,
+                    rbusbis_dir: Optional[str] = None,
+                    override: Optional[bool] = None) -> dict:
+    """Are gold LONGS unlocked yet? (the core 2026 rule).
+
+    2026 is the dollar-manipulation year: DXY is expected to run UP into its fib
+    extreme (≥104.59, post-midterms) BEFORE flipping bearish — and gold is not
+    structurally bullish until that flip. So the unlock requires the dollar to have
+    REACHED the extreme AND be turning down (a live RBUSBIS falling from the top),
+    OR an explicit operator override once the flip is confirmed. Below the extreme,
+    softness is the pre-manipulation base → longs stay LOCKED (gold still bearish;
+    range-fade / shorts are the play toward the 3250-3500 support BofA flags).
+    """
+    reg = dollar_regime(price)
+    trig = gold_structure_trigger(price)
+    at_extreme = ((price is not None and price >= EXTREME_MIN)
+                  or trig.get("trigger") in ("gold_ceiling", "dollar_premium"))
+    ov = override if override is not None else _env_override()
+    if ov is not None:
+        unlocked = bool(ov)
+        why = "operator override"
+    else:
+        # the flip = topped at the extreme AND now rolling over (RBUSBIS falling)
+        unlocked = bool(at_extreme and rbusbis_dir == "falling")
+        why = "structural (extreme + RBUSBIS turn)"
+
+    if unlocked:
+        note = ("DXY flipped bearish — gold longs UNLOCKED "
+                f"({why}" + (f", RBUSBIS {rbusbis_dir}" if rbusbis_dir else "") + ")")
+    elif at_extreme:
+        note = ("DXY at/near its manipulation extreme — the roll-over is the trigger; "
+                "longs still LOCKED until it turns (range-fade / shorts only)")
+    else:
+        note = ("pre-manipulation base — 2026 dollar-up year not yet flipped; gold "
+                "longs LOCKED, trade the range/shorts toward 3250-3500 support")
+    return {"gold_longs": "unlocked" if unlocked else "locked", "unlocked": unlocked,
+            "dollar_regime": reg["regime"], "phase": reg["phase"],
+            "dxy_trigger": trig.get("trigger"), "rbusbis_dir": rbusbis_dir,
+            "at_extreme": at_extreme, "override": ov, "dxy": reg["price"], "note": note}
