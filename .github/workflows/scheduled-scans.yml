@@ -84,7 +84,7 @@ jobs:
             post "/cbdr/alert/XAU/USD?window=trade4"
             post "/gold/monitor"
             post "/gold/scorecard/digest?force=true"
-            post "/gold/zones"
+            post "/gold/zones/digest?touch_only=false"
             post "/gold/stratops/deploy"
             exit 0
           fi
@@ -111,6 +111,7 @@ jobs:
             "0 6 * * *")
               post "/wildchance/scrape?tier=daily"
               post "/gold/news"        # refresh the tier-1 news calendar daily
+              post "/gold/dxy/flip"    # alert if DXY flipped the gold-long lock state
               ;;
             "0 0,12,18 * * *")
               post "/wildchance/scrape?tier=6h"
@@ -119,11 +120,13 @@ jobs:
             "0 21 * * 5")
               post "/wildchance/scrape?tier=weekly"
               post "/gold/regime/refresh"    # pull live FRED + CFTC gold COT
+              post "/gold/dxy/flip"          # weekly DXY-flip check (RBUSBIS refreshed)
               ;;
             "0 8 1 * *")        post "/scorecard/digest" ;;
             "0 * * * *")
               post "/intraday/scan"
               post "/gold/monitor"     # trail/close tracked gold swings (TP/SL/time-stop)
+              post "/gold/zones/digest?touch_only=true"   # alert only when price hits a zone
               ;;
             "0 22 * * 0")
               # Weekly review + the Sunday/weekly-open gold swing (the edge: buy the
@@ -144,7 +147,7 @@ jobs:
               post "/cbdr/alert/GBP/USD?window=prelondon"
               post "/cbdr/limits/XAU/USD?window=prelondon&notify=true"
               post "/gold/prelondon?track=true&execute=true"    # arm tracked + enqueue MT5 limits
-              post "/gold/zones"                                # OB zones + zone-to-zone pip budget
+              post "/gold/zones/digest?touch_only=false"        # full buy/sell-limit plan at pre-London
               ;;
             "0 2 * * 1-5")
               # Asia accumulation window — gold intrasession scan + STRATOPS paper deploy
@@ -184,7 +187,7 @@ jobs:
             "0 13 * * 1-5")
               post "/gold/scan?balance=5000&notify=true"
               post "/gold/intraday?balance=5000&notify=true"
-              post "/gold/zones"                                # OB zone plan + pip budget
+              post "/gold/zones/digest?touch_only=false"        # full buy/sell-limit plan at NY open
               post "/gold/stratops/deploy"                      # includes sniper-stack candidates
               ;;
             "30 13 * * 1-5")    post "/gold/intraday?balance=5000&require_distribution=true&notify=true" ;;
