@@ -131,6 +131,7 @@ jobs:
               post "/cbdr/alert/XAU/USD?window=trade4"
               post "/gold/monitor"
               post "/gold/scorecard/digest"
+              post "/gold/stratops/fit"      # weekly P3 refit of the tier factors
               ;;
             "0 7 * 3-10 *"|"0 8 * 11,12,1,2 *")
               # Pre-London CBDR at 03:00 ET year-round (summer 07:00 UTC / winter
@@ -143,8 +144,9 @@ jobs:
               post "/gold/prelondon?track=true&execute=true"    # arm tracked + enqueue MT5 limits
               ;;
             "0 2 * * 1-5")
-              # Asia accumulation window — gold intrasession scan
+              # Asia accumulation window — gold intrasession scan + STRATOPS paper deploy
               post "/gold/intraday?balance=5000&notify=true"
+              post "/gold/stratops/deploy"
               ;;
             "0 5 * * 1-5")
               # CRT 1-5-9 — Asian confirmation (01:00 range candle → 05:00 entry)
@@ -179,6 +181,7 @@ jobs:
             "0 13 * * 1-5")
               post "/gold/scan?balance=5000&notify=true"
               post "/gold/intraday?balance=5000&notify=true"
+              post "/gold/stratops/deploy"
               ;;
             "30 13 * * 1-5")    post "/gold/intraday?balance=5000&require_distribution=true&notify=true" ;;
             *) echo "no action for schedule '$SCHED'" ;;
