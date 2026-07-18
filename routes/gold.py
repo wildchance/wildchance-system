@@ -323,6 +323,22 @@ async def timeline(price: float = Query(None, description="price to locate (else
     return out
 
 
+@router.get("/daily-map")
+async def daily_map(open_: float = Query(None, alias="open"),
+                    close: float = Query(None)):
+    """Daily mean-range map: (open+close)/2 of the closed daily candle → the
+    $25…$250 target collection framed by the HTF structure. Omit open/close to
+    use the last completed daily bar."""
+    from gold.timeline import daily_mean_map
+    if open_ is None or close is None:
+        daily = await fetch_ohlc("XAU/USD", "1day", 3)
+        if len(daily) < 2:
+            raise HTTPException(status_code=502, detail="could not fetch XAU/USD daily bars")
+        d = daily[-2] if close is None else daily[-1]     # last COMPLETED candle
+        open_, close = d[1], d[4]
+    return daily_mean_map(open_, close)
+
+
 @router.get("/session-levels")
 async def session_levels():
     """8-hour session range + the CBDR SD ladder (0.5-step, with mean) + the current
