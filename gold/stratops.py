@@ -30,6 +30,7 @@ TIER_FACTORS = {
     "crt": 1.0,
     "prelondon": 1.0,
     "sd_fade": 1.0,
+    "sniper": 1.0,        # OB-zone layered limits — neutral until sampled
 }
 
 
