@@ -201,6 +201,8 @@ def regime_gate(side: str, dxy_price: float = None) -> dict:
     # Prefer the live RBUSBIS-implied bias; fall back to the DXY structure.
     dollar = _dollar_confluence(side) if INPUTS.get("dollar_gold_bias") else gdxy.confluence(side, dxy_price)
     ps = gpa.positioning_state()
+    # Monthly DXY fib-band structural trigger (only fires when a DXY price is given).
+    trig = gdxy.gold_structure_trigger(dxy_price)
     reasons = []
     ok = True
 
@@ -213,8 +215,14 @@ def regime_gate(side: str, dxy_price: float = None) -> dict:
     if want == "short" and ps["zone"] == "net_short":
         ok = False
         reasons.append("COT net short — contrarian-bullish, poor location for a fresh short")
+    # A DXY ceiling trigger opposes fresh longs; a last-discount trigger opposes shorts.
+    if trig.get("trigger") and trig["gold_bias"] != want:
+        ok = False
+        reasons.append(f"DXY structure trigger ({trig['trigger']}) opposes the {want}: {trig['note']}")
 
-    status = "confirms" if (ok and dollar == "confirms") else "neutral" if ok else "diverges"
+    # A confirming max-strength discount trigger upgrades the read.
+    confirmed = dollar == "confirms" or (trig.get("gold_bias") == want and trig.get("strength") in ("max", "cap"))
+    status = "confirms" if (ok and confirmed) else "neutral" if ok else "diverges"
     return {"ok": ok, "status": status, "dollar": dollar,
-            "cot_zone": ps["zone"],
+            "cot_zone": ps["zone"], "dxy_trigger": trig.get("trigger"),
             "reason": "; ".join(reasons) if reasons else f"regime does not oppose the {want}"}
