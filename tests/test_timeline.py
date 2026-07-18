@@ -50,3 +50,30 @@ def test_htf_confluence():
 def test_anchor_override():
     lad = htf_ladder(zero=1000.0, one=1100.0)
     assert lad["unit"] == 100.0 and lad["levels"]["1"]["price"] == 1100.0
+
+
+# --- weekly decision + cycle replication -------------------------------------
+
+def test_fib_levels_match_chart_rail():
+    from gold.timeline import fib_levels
+    f = fib_levels()
+    assert abs(f["0.236"] - 4002.311) < 0.01
+    assert abs(f["0.382"] - 4074.858) < 0.01
+    assert abs(f["0.786"] - 4275.604) < 0.01
+
+
+def test_weekly_decision_buy_sell_wait():
+    from gold.timeline import weekly_decision
+    buy = weekly_decision(4025.0)
+    assert buy["decision"] == "long" and abs(buy["target"] - 4074.858) < 0.01
+    sell = weekly_decision(3995.0)
+    assert sell["decision"] == "short" and abs(sell["target"] - 3885.044) < 0.01
+    assert weekly_decision(4014.26)["decision"] == "wait"      # inside the band
+
+
+def test_cycle_replication_above_ath():
+    from gold.timeline import cycle_status
+    assert cycle_status(4014.0)["phase"] == "active"
+    nxt = cycle_status(5700.0)                                  # above the 5608 ATH
+    assert nxt["phase"] == "next_cycle"
+    assert abs(nxt["next_cycle"]["plus4"] - 7509.776) < 0.5     # replicated +4
