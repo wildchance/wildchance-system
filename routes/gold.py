@@ -308,15 +308,18 @@ async def stratops(balance: float = Query(5000, gt=0),
 async def timeline(price: float = Query(None, description="price to locate (else live)")):
     """HTF timeline identifier — the daily named-zone ladder + where price sits +
     the smaller-timeframe bias it implies."""
-    from gold.timeline import htf_ladder, locate, HTF_ANCHOR
+    from gold.timeline import (htf_ladder, locate, fib_levels, weekly_decision,
+                               cycle_status, HTF_ANCHOR)
     if price is None:
         try:
             price = await get_forex_price("XAU/USD")
         except Exception:
             price = None
-    out = {"anchor": HTF_ANCHOR, "ladder": htf_ladder()}
+    out = {"anchor": HTF_ANCHOR, "ladder": htf_ladder(), "fibs": fib_levels()}
     if price is not None:
         out["located"] = locate(price)
+        out["weekly_decision"] = weekly_decision(price)
+        out["cycle"] = cycle_status(price)
     return out
 
 
