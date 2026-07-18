@@ -69,6 +69,21 @@ async def get_db():
         yield session
 
 
+# Columns added to gold_positions AFTER the first deploy. create_all never
+# ALTERs an existing table, so a table created by an earlier deploy is missing
+# these — and any SELECT that reads them 500s (e.g. /gold/scorecard reading
+# trade_type). Each ALTER is idempotent (ADD COLUMN IF NOT EXISTS), so it is safe
+# to run on every cold start and is a no-op once the column exists.
+_GOLD_POSITION_MIGRATIONS = [
+    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS trade_type VARCHAR DEFAULT 'swing'",
+    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS deadline TIMESTAMPTZ",
+    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS stop_initial DOUBLE PRECISION",
+    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS tp4 DOUBLE PRECISION",
+    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS limit_price DOUBLE PRECISION",
+    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
+]
+
+
 async def init_db():
     # Import models so their tables register on the shared Base metadata.
     import models.trade_model
@@ -83,3 +98,16 @@ async def init_db():
         # data; dropping on startup would silently wipe it. create_all is
         # idempotent, so it is safe to run on every (cold) start.
         await conn.run_sync(Base.metadata.create_all)
+        # Bring an already-created gold_positions table up to the current schema.
+        # Postgres only (ADD COLUMN IF NOT EXISTS); SQLite test DBs are always
+        # created fresh by create_all above, so they already have every column.
+        if conn.dialect.name == "postgresql":
+            from sqlalchemy import text
+            for stmt in _GOLD_POSITION_MIGRATIONS:
+                try:
+                    await conn.execute(text(stmt))
+                except Exception:
+                    # A failed backfill must never block startup — the defensive
+                    # read path (services.scorecard_service.gold_report) still
+                    # degrades gracefully if a column is genuinely absent.
+                    pass
