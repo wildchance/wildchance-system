@@ -322,6 +322,33 @@ async def zones_stack(zone: str = Query(..., description="named zone, e.g. ob_38
                            layers=layers, target_price=target)
 
 
+@router.post("/zones/digest")
+async def zones_digest(balance: float = Query(5000, gt=0),
+                       risk_usd: float = Query(20.0, gt=0),
+                       touch_only: bool = Query(True,
+                           description="only send when a zone is armed (price touched)"),
+                       notify: bool = Query(True, description="push to Telegram"),
+                       price: float = Query(None, description="override live price")):
+    """Live buy-limit / sell-limit plan (entry ladder, SL, TP, HTF alignment) for
+    the flanking OB zones. ``touch_only`` (default) fires the alert only when price
+    has come within the touch band of a zone — the real-time 'price hit our point'
+    trigger. Cron-friendly: schedule it and it stays quiet until a level is armed."""
+    from gold import zones as gz
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            price = None
+    if price is None:
+        raise HTTPException(status_code=502, detail="could not fetch XAU/USD price")
+    plan = gz.zone_plan(price, balance=balance, risk_usd=risk_usd)
+    if touch_only and not plan["armed"]:
+        return {"sent": False, "armed": False, "price": plan["price"],
+                "reason": "no zone armed — price not at a level yet", "plan": plan}
+    sent = await gold_scan._tg(gz.format_zone_digest(plan)) if notify else False
+    return {"sent": sent, "armed": plan["armed"], "plan": plan}
+
+
 @router.get("/flip-ladder")
 async def flip_ladder(deposit: float = Query(700, gt=0),
                       denom: str = Query("USD", description="cent | USD | KES | KWD"),
@@ -459,7 +486,19 @@ async def regime_refresh():
 @router.get("/dxy")
 async def dxy(price: float = Query(None, description="live DXY weekly close (optional)")):
     """DXY regime + the dollar→gold inverse bias (Trump-term anticipation structure)."""
-    return {"dollar_regime": gdxy.dollar_regime(price), "gold_implication": gdxy.gold_from_dollar(price)}
+    return {"dollar_regime": gdxy.dollar_regime(price), "gold_implication": gdxy.gold_from_dollar(price),
+            "gold_long_lock": gdxy.dxy_flip_status(price)}
+
+
+@router.post("/dxy/flip")
+async def dxy_flip(price: float = Query(None, description="live DXY weekly close (optional)"),
+                   notify: bool = Query(True, description="push to Telegram on a state change"),
+                   force: bool = Query(False, description="send even if the lock state is unchanged")):
+    """DXY-flip alert — the 2026 unlock signal. Fires ONE Telegram when gold longs
+    transition locked↔unlocked (dollar flips bearish/bullish). Cron-friendly: stays
+    quiet until the state actually changes."""
+    from services.dxy_flip_service import flip_alert
+    return await flip_alert(dxy_price=price, notify=notify, force=force)
 
 
 @router.get("/audit")
