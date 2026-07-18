@@ -82,3 +82,41 @@ def confluence(side: str, price: Optional[float] = None) -> str:
     want = "long" if side.lower() in ("long", "buy") else "short"
     gb = gold_from_dollar(price)["gold_bias"]
     return "confirms" if gb == want else "diverges"
+
+
+# --- monthly fib structure triggers (1M chart, 2026-07-18) -------------------
+# The monthly DXY fib book gives two structural bands that read GOLD directly
+# (inverse). A DXY print inside the LAST_DISCOUNT band = the dollar bottoming =
+# gold's final discount to load; inside the CEILING band = the dollar reclaiming
+# value = gold's ceiling confirmed / distribute.
+GOLD_TRIGGERS = {
+    "last_discount": (93.308, 96.265),   # DXY here → gold deep-buy (dollar bottoming)
+    "ceiling":       (104.589, 107.103), # DXY here → gold distribution (dollar reclaims)
+}
+
+
+def gold_structure_trigger(price: Optional[float] = None) -> dict:
+    """Map a DXY price to a GOLD structural trigger off the monthly fib bands.
+
+    Returns the trigger name, the implied gold bias/strength, and whether we are
+    in a band. With no price, falls back to the anticipated structure (no trigger).
+    """
+    if price is None:
+        return {"trigger": None, "gold_bias": ANTICIPATED["gold_implication"][:4] == "bull"
+                and "long" or "short", "strength": "structural", "dxy": CURRENT,
+                "note": "no live DXY — anticipated structure, no band trigger"}
+    lo_d, hi_d = GOLD_TRIGGERS["last_discount"]
+    lo_c, hi_c = GOLD_TRIGGERS["ceiling"]
+    if price <= hi_d:
+        return {"trigger": "gold_last_discount", "gold_bias": "long", "strength": "max",
+                "band": GOLD_TRIGGERS["last_discount"], "dxy": price,
+                "note": f"DXY {price} at/under {hi_d} — dollar bottoming, load gold's last discount"}
+    if lo_c <= price <= hi_c:
+        return {"trigger": "gold_ceiling", "gold_bias": "short", "strength": "cap",
+                "band": GOLD_TRIGGERS["ceiling"], "dxy": price,
+                "note": f"DXY {price} in {lo_c}-{hi_c} ceiling — gold cap confirmed, distribute"}
+    if price > hi_c:
+        return {"trigger": "dollar_premium", "gold_bias": "short", "strength": "structural",
+                "dxy": price, "note": f"DXY {price} above the {hi_c} ceiling — sustained gold headwind"}
+    return {"trigger": None, "gold_bias": "long", "strength": "neutral", "dxy": price,
+            "note": f"DXY {price} between the discount and ceiling bands — no structural trigger"}
