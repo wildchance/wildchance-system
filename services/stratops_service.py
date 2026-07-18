@@ -85,10 +85,22 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
     opened as a tracked position (source stratops_paper) so the scorecard measures
     STRATOPS itself — run on a schedule until the reflection verdict is GREEN."""
     cands: List[dict] = []
+    locked_out: List[dict] = []
+    # STRICT 2026 DXY rule: are trend longs locked? (gold not bullish until DXY
+    # flips bearish). Range-fade limits — sniper/prelondon/intrasession — are
+    # mean-reversion and stay allowed; only swing/intraday TREND longs are locked.
+    _long_lock = gcycle.regime_gate("long", strict=True)
+    _trend_locked = (not _long_lock["ok"]) and ("strict:" in _long_lock["reason"])
 
     def add(sig):
-        if sig and sig.get("signal") in ("LONG", "SHORT"):
-            cands.append(_with_campaign(sig))
+        if not sig or sig.get("signal") not in ("LONG", "SHORT"):
+            return
+        if (sig.get("signal") == "LONG" and _trend_locked
+                and (sig.get("trade_type") in ("swing", "intraday"))):
+            locked_out.append({"trade_type": sig.get("trade_type"),
+                               "entry": sig.get("entry"), "reason": _long_lock["reason"]})
+            return
+        cands.append(_with_campaign(sig))
 
     # MARCENT / AFCENT — the tiered intraday scan (protraction softened to a score).
     add(await gold_intraday.scan(balance=balance, risk_usd=risk_usd,
@@ -117,6 +129,9 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
 
     result = stratops.allocate(cands, positions)
     result["candidates"] = len(cands)
+    result["dxy_long_lock"] = {"trend_longs_locked": _trend_locked,
+                               "status": _long_lock.get("dxy_flip"),
+                               "locked_out": locked_out}
 
     # P4 paper deploy — open each allocated candidate as a tracked position.
     if deploy and result["take"]:
