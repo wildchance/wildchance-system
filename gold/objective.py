@@ -31,12 +31,22 @@ def campaign_objective(price: float, zero: Optional[float] = None,
         objective = None
 
     leg = round(abs(objective["price"] - price), 3) if objective else None
+
+    # Zone-to-zone pip budget from the named OB shelves — the "how many pips to the
+    # next zone / bag on the return" read that frames each mission.
+    try:
+        from gold import zones as gz
+        budget = gz.zone_budget(price)
+    except Exception:
+        budget = None
+
     return {
         "price": loc["price"], "k": loc["k"], "region": loc["region"],
         "direction": bias,
         "current_zone": {"above": loc.get("nearest_above"), "below": loc.get("nearest_below")},
         "objective": objective,
         "leg_usd": leg,
+        "zone_budget": budget,
         "note": (f"campaign {bias}: advance to {objective['zone']} @ {objective['price']} "
                  f"(~${leg} leg)" if objective else
                  "no campaign direction — HTF pivot, follow the trend"),
