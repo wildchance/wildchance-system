@@ -304,6 +304,35 @@ async def stratops(balance: float = Query(5000, gt=0),
     return await muster(db, balance=balance, risk_usd=risk_usd)
 
 
+@router.post("/stratops/deploy")
+async def stratops_deploy(balance: float = Query(5000, gt=0),
+                          risk_usd: float = Query(20.0, gt=0),
+                          db: AsyncSession = Depends(get_db)):
+    """P4 paper-run: muster, allocate, and OPEN each allocated candidate as a
+    tracked position (source stratops_paper) — the scorecard then measures STRATOPS
+    itself. Schedule at the entry sessions; run until the verdict is GREEN."""
+    from services.stratops_service import muster
+    return await muster(db, balance=balance, risk_usd=risk_usd, deploy=True)
+
+
+@router.post("/stratops/fit")
+async def stratops_fit(h1_bars: int = Query(3000, ge=100, le=5000),
+                       daily_bars: int = Query(250, ge=30, le=1000)):
+    """P3 loop: re-run the tier backtests on live history and refit the STRATOPS
+    tier factors from the measured reflection confidence."""
+    from backtest.gold_tiers import backtest_intraday, backtest_swing
+    from services.ohlc_service import fetch_hourly_raw
+    from gold.stratops import fit_tier_factors
+    h1 = await fetch_hourly_raw("XAU/USD", timezone="UTC", outputsize=h1_bars)
+    daily = await fetch_ohlc("XAU/USD", "1day", max(daily_bars, 60))
+    if len(h1) < 100 or len(daily) < 30:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD history to fit")
+    intra = backtest_intraday(h1, daily)
+    swing = backtest_swing(daily)
+    fit = fit_tier_factors(intra, swing)
+    return {**fit, "samples": {"intraday_trades": intra["trades"], "swing_trades": swing["trades"]}}
+
+
 @router.get("/timeline")
 async def timeline(price: float = Query(None, description="price to locate (else live)")):
     """HTF timeline identifier — the daily named-zone ladder + where price sits +
