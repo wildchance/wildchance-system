@@ -172,6 +172,61 @@ def cycle_status(price: float) -> dict:
             "note": "current cycle active — trade the ladder zones"}
 
 
+# --- fractal subdivision + the daily mean-range map --------------------------
+
+# The $25-step target collection ($25 … $250) walked from each day's mean.
+TARGET_STEPS = (25, 50, 75, 100, 125, 150, 175, 200, 225, 250)
+
+
+def fractal_units(zero: Optional[float] = None, one: Optional[float] = None) -> dict:
+    """The timeline's fractal units. The named zones sit unit/2 apart (~$250 in
+    gold); halving gives ~$125 and ~$62.5 — the lower-timeframe grids inside the
+    same trend structure. Derived from the anchor, so they scale with the cycle."""
+    zero, one = _anchor(zero, one)
+    u = one - zero
+    return {"range_250": round(u / 2, 3), "range_125": round(u / 4, 3),
+            "range_62": round(u / 8, 3), "unit": round(u, 3)}
+
+
+def daily_mean_map(day_open: float, day_close: float,
+                   zero: Optional[float] = None, one: Optional[float] = None,
+                   tol: float = 12.0) -> dict:
+    """The daily mean-range map: mean = (open + close) / 2 of the closed daily
+    candle, then the $25…$250 target ladder walked both ways from that mean —
+    framed by the HTF structure (the aligned side is primary; targets that land on
+    an HTF zone or fib level are flagged as confluence).
+    """
+    mean = round((day_open + day_close) / 2.0, 3)
+    loc = locate(mean, zero, one)
+    bias = loc["smaller_tf_bias"]
+
+    # every mapped HTF price (ladder zones + fib rail) for confluence tagging
+    zs, os_ = _anchor(zero, one)
+    htf_prices = ([v["price"] for v in htf_ladder(zs, os_)["levels"].values()]
+                  + list(fib_levels(zs, os_).values()))
+
+    def _mk(side_price):
+        near = min(htf_prices, key=lambda p: abs(p - side_price))
+        conf = abs(near - side_price) <= tol
+        return {"price": round(side_price, 2),
+                "htf_level": round(near, 2) if conf else None}
+
+    targets = []
+    for s in TARGET_STEPS:
+        targets.append({"usd": s, "up": _mk(mean + s), "down": _mk(mean - s),
+                        "primary": "up" if bias == "long" else
+                                   "down" if bias == "short" else "both"})
+    return {
+        "mean": mean, "open": day_open, "close": day_close,
+        "htf": {"k": loc["k"], "region": loc["region"], "bias": bias},
+        "fractal": fractal_units(zero, one),
+        "targets": targets,
+        "note": (f"daily mean {mean} in {loc['region']} → primary side "
+                 f"{'UP' if bias == 'long' else 'DOWN' if bias == 'short' else 'both'}; "
+                 "$25-step collection to ±$250, HTF-confluent targets flagged"),
+    }
+
+
 def htf_confluence(side: str, price: float, zero: Optional[float] = None,
                    one: Optional[float] = None) -> str:
     """'aligns' / 'opposes' / 'neutral' for a smaller-TF side vs the HTF region."""
