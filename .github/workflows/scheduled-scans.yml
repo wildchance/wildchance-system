@@ -84,6 +84,8 @@ jobs:
             post "/cbdr/alert/XAU/USD?window=trade4"
             post "/gold/monitor"
             post "/gold/scorecard/digest?force=true"
+            post "/gold/zones"
+            post "/gold/stratops/deploy"
             exit 0
           fi
 
@@ -142,6 +144,7 @@ jobs:
               post "/cbdr/alert/GBP/USD?window=prelondon"
               post "/cbdr/limits/XAU/USD?window=prelondon&notify=true"
               post "/gold/prelondon?track=true&execute=true"    # arm tracked + enqueue MT5 limits
+              post "/gold/zones"                                # OB zones + zone-to-zone pip budget
               ;;
             "0 2 * * 1-5")
               # Asia accumulation window — gold intrasession scan + STRATOPS paper deploy
@@ -181,7 +184,8 @@ jobs:
             "0 13 * * 1-5")
               post "/gold/scan?balance=5000&notify=true"
               post "/gold/intraday?balance=5000&notify=true"
-              post "/gold/stratops/deploy"
+              post "/gold/zones"                                # OB zone plan + pip budget
+              post "/gold/stratops/deploy"                      # includes sniper-stack candidates
               ;;
             "30 13 * * 1-5")    post "/gold/intraday?balance=5000&require_distribution=true&notify=true" ;;
             *) echo "no action for schedule '$SCHED'" ;;
