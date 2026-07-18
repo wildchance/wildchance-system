@@ -264,6 +264,22 @@ async def backtest(horizon: int = Query(7, ge=1, le=30),
     return backtest_swing(daily, horizon=horizon, require_discount=require_discount)
 
 
+@router.get("/backtest/intraday")
+async def backtest_intraday_ep(horizon: int = Query(8, ge=1, le=48),
+                               require_discount: bool = Query(True),
+                               h1_bars: int = Query(1500, ge=100, le=5000),
+                               daily_bars: int = Query(120, ge=30, le=1000)):
+    """Backtest the INTRADAY + INTRASESSION tiers on H1 history → per-tier expectancy
+    (P3 — the numbers that fit the STRATOPS weights)."""
+    from backtest.gold_tiers import backtest_intraday
+    from services.ohlc_service import fetch_hourly_raw
+    h1 = await fetch_hourly_raw("XAU/USD", timezone="UTC", outputsize=h1_bars)
+    daily = await fetch_ohlc("XAU/USD", "1day", daily_bars)
+    if len(h1) < 100 or len(daily) < 30:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD H1/daily history")
+    return backtest_intraday(h1, daily, horizon=horizon, require_discount=require_discount)
+
+
 @router.get("/objective")
 async def objective(price: float = Query(None, description="price to frame (else live)")):
     """CBDR range-to-range campaign objective — the next-range target + leg."""
