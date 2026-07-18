@@ -294,6 +294,44 @@ async def objective(price: float = Query(None, description="price to frame (else
     return campaign_objective(price)
 
 
+@router.get("/zones")
+async def zones(price: float = Query(None, description="price to frame (else live)")):
+    """Named OB zones + the zone-to-zone pip budget (how many pips to the next zone
+    each way, and the round-trip bag)."""
+    from gold import zones as gz
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            price = None
+    if price is None:
+        raise HTTPException(status_code=502, detail="could not fetch XAU/USD price")
+    return {"zones": gz.ZONES, "here": gz.zone_for(price), "budget": gz.zone_budget(price)}
+
+
+@router.get("/zones/stack")
+async def zones_stack(zone: str = Query(..., description="named zone, e.g. ob_3840"),
+                      balance: float = Query(5000, gt=0),
+                      risk_usd: float = Query(20.0, gt=0),
+                      layers: int = Query(3, ge=1, le=5),
+                      target: float = Query(None, description="optional TP price")):
+    """Build a sniper limit stack for a named zone — 2-5 layered limits with one
+    shared stop, the whole stack sized to stay inside the risk budget/exposure cap."""
+    from gold import zones as gz
+    return gz.sniper_stack(zone, balance=balance, risk_usd=risk_usd,
+                           layers=layers, target_price=target)
+
+
+@router.get("/flip-ladder")
+async def flip_ladder(deposit: float = Query(700, gt=0),
+                      denom: str = Query("USD", description="cent | USD | KES | KWD"),
+                      runs: int = Query(None, description="override run count")):
+    """Account-tier flip ladder for a deposit — cent flipper / middle / flipper,
+    with the run cadence, pip targets, and projected balance curve."""
+    from gold import flip_ladders as fl
+    return fl.plan(deposit, denom=denom, runs=runs)
+
+
 @router.get("/stratops")
 async def stratops(balance: float = Query(5000, gt=0),
                    risk_usd: float = Query(20.0, gt=0),
