@@ -1,97 +1,66 @@
-"""Gold tier backtest — forward simulator + swing replay."""
+"""Limit-order sizing, pending-limit lifecycle, and enriched plan geometry."""
 
 import datetime as dt
 
-from backtest.gold_tiers import simulate_forward, backtest_swing
+from gold.limit_orders import size_limit
+from gold import position as pos
+from cbdr.engine import build_cbdr, prelondon_limits
+from candlerange.crt import crt_setup
 
 
-def _b(o, h, l, c, i=0):
-    return (dt.date(2026, 1, 1) + dt.timedelta(days=i), o, h, l, c)
+# --- size_limit -------------------------------------------------------------
+
+def test_size_limit_builds_sized_card():
+    order = {"side": "long", "entry": 4000, "stop": 3960, "targets": [4080, 4120],
+             "trade_type": "prelondon", "reason": "buy −1SD"}
+    card = size_limit(order, balance=5000, risk_usd=20)
+    assert card["signal"] == "LONG" and card["stop"] == 3960 and card["kind"] == "limit"
+    assert card["trade_type"] == "prelondon" and card["lot"] >= 0.01
+    rrs = [t["rr"] for t in card["targets"]]
+    assert rrs == [2.0, 3.0]                    # 80/40, 120/40
 
 
-# --- simulate_forward -------------------------------------------------------
-
-def test_forward_hits_final_target():
-    # long 100, stop 90 (risk 10), targets 2R/3R = 120/130; a bar reaching 131.
-    fut = [_b(105, 131, 104, 129)]
-    r = simulate_forward(100, 90, [120, 130], "long", fut)
-    assert r["exit_reason"] == "TP2" and r["result_r"] == 3.0
+def test_size_limit_rejects_bad_geometry():
+    assert size_limit({"side": "long", "entry": 4000, "stop": 4000}, 5000)["signal"] == "NO TRADE"
+    assert size_limit({"side": "long", "entry": 4000}, 5000)["signal"] == "NO TRADE"
 
 
-def test_forward_stops_out_minus_one_r():
-    fut = [_b(99, 101, 89, 90)]           # low 89 <= stop 90
-    r = simulate_forward(100, 90, [120, 130], "long", fut)
-    assert r["exit_reason"] == "SL" and r["result_r"] == -1.0
+# --- pending-limit lifecycle ------------------------------------------------
+
+_NOW = dt.datetime(2026, 7, 7, 12, 0, tzinfo=dt.timezone.utc)
 
 
-def test_forward_break_even_after_tp1():
-    # reach TP1 (120) then fall back to entry within later bars → BE ~0R.
-    fut = [_b(105, 122, 104, 118), _b(118, 119, 99, 100)]
-    r = simulate_forward(100, 90, [120, 130], "long", fut)
-    assert r["exit_reason"] == "BE" and abs(r["result_r"]) < 1e-9
+def test_pending_long_fills_on_touch():
+    st = {"side": "long", "limit_price": 4000, "expires_at": None}
+    assert pos.evaluate_pending(st, 4001, _NOW)["action"] == "wait"
+    assert pos.evaluate_pending(st, 3999, _NOW)["action"] == "fill"
 
 
-def test_forward_time_stop_partial():
-    fut = [_b(100, 108, 99, 106)]         # no TP/SL → time-stop at close 106
-    r = simulate_forward(100, 90, [120, 130], "long", fut)
-    assert r["exit_reason"] == "TIME" and r["result_r"] == 0.6
+def test_pending_short_fills_on_touch():
+    st = {"side": "short", "limit_price": 4300, "expires_at": None}
+    assert pos.evaluate_pending(st, 4299, _NOW)["action"] == "wait"
+    assert pos.evaluate_pending(st, 4301, _NOW)["action"] == "fill"
 
 
-def test_forward_short_side():
-    fut = [_b(100, 101, 88, 89)]          # short 100 stop 110 tp 90/80; low 88 → TP1? 90 hit not 80
-    r = simulate_forward(100, 110, [90, 80], "short", fut)
-    assert r["exit_reason"] in ("TIME", "BE") or r["result_r"] != 0  # partial/BE, not a full stop
+def test_pending_cancels_after_expiry():
+    st = {"side": "long", "limit_price": 4000, "expires_at": _NOW}
+    a = pos.evaluate_pending(st, 4050, _NOW + dt.timedelta(minutes=1))
+    assert a["action"] == "cancel"
 
 
-# --- end-to-end swing replay (deterministic synthetic series) ---------------
+# --- enriched plan geometry (stop + targets present) ------------------------
 
-def _week(start_i, lows_then_reclaim):
-    """Build a Mon-Fri that makes a Tuesday low then reclaims (Classic Tuesday Low
-    → long swing profile)."""
-    bars = []
-    base = 100.0
-    seq = [(base, base + 2, base - 1, base + 1),        # Mon
-           (base + 1, base + 2, base - 6, base + 1.5),  # Tue: sweeps low, reclaims
-           (base + 1.5, base + 4, base, base + 3),      # Wed up
-           (base + 3, base + 6, base + 2, base + 5),    # Thu up
-           (base + 5, base + 8, base + 4, base + 7)]    # Fri up
-    return [_b(o, h, l, c, start_i + j) for j, (o, h, l, c) in enumerate(seq)]
+def test_prelondon_orders_have_stop_and_targets():
+    plan = prelondon_limits(build_cbdr(4200.0, 4100.0))   # range 100
+    by = {o["level"]: o for o in plan["orders"]}
+    assert by["-1SD"]["stop"] == 3900.0 and by["-1SD"]["targets"] == [4150.0, 4300.0]
+    assert by["+1SD"]["stop"] == 4400.0
+    for o in plan["orders"]:
+        assert size_limit(o, 5000)["signal"] in ("LONG", "SHORT")   # all sizeable
 
 
-def test_backtest_swing_runs_and_scores():
-    # ~10 weeks of an uptrending, Tuesday-low market → swing longs should appear.
-    daily = []
-    for w in range(12):
-        daily += [(_b(o, h + w * 3, l + w * 3, c + w * 3, w * 7 + j))
-                  for j, (_d, o, h, l, c) in enumerate(_week(0, None))]
-    rep = backtest_swing(daily, horizon=7, warmup=7)
-    assert rep["tier"] == "swing"
-    assert "scorecard" in rep and rep["scorecard"]["n"] == rep["trades"]
-    assert isinstance(rep["by_exit"], dict)
-
-
-def test_backtest_intraday_fires_and_scores():
-    from backtest.gold_tiers import backtest_intraday
-    daily, h1, base = [], [], 4000.0
-    start = dt.date(2026, 6, 1)
-    for day in range(25):
-        d = start + dt.timedelta(days=day)
-        if d.weekday() >= 5:
-            continue
-        o, c, hi, lo = base, base + 8, base + 12, base - 4
-        daily.append((d, o, hi, lo, c))
-        for hour in range(24):
-            if hour == 14:                       # NY dip into discount
-                h1.append({"date": d.isoformat(), "hour": hour, "open": o + 2,
-                           "high": o + 3, "low": lo, "close": lo + 1})
-            elif hour < 13:
-                h1.append({"date": d.isoformat(), "hour": hour, "open": o,
-                           "high": o + 5, "low": o - 2, "close": o + 2})
-            else:
-                h1.append({"date": d.isoformat(), "hour": hour, "open": o + 4,
-                           "high": hi, "low": o + 1, "close": c})
-        base += 8
-    rep = backtest_intraday(h1, daily, horizon=8, warmup=5)
-    assert rep["trades"] > 0
-    assert set(rep["by_tier"]) <= {"intraday", "intrasession"}
-    assert rep["scorecard"]["n"] == rep["trades"]
+def test_crt_orders_have_stop_and_targets():
+    s = crt_setup({"open": 100.0, "high": 112.0, "low": 98.0, "close": 110.0}, "asia")
+    buy = next(o for o in s["orders"] if o["side"] == "long")
+    assert buy["entry"] == 90 and buy["stop"] == 80 and buy["targets"] == [110, 120]
+    assert size_limit(buy, 5000)["signal"] == "LONG"
