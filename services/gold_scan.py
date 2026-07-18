@@ -105,9 +105,10 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
             sig["suppressed"] = loc["reason"]
             return sig
 
-    # --- REGIME — dollar (DXY inverse) + COT positioning confluence.
+    # --- REGIME — dollar (DXY inverse) + COT positioning confluence. Strict: a gold
+    # long is LOCKED until DXY flips bearish (2026 dollar-manipulation year).
     if sig.get("signal") in ("LONG", "SHORT"):
-        reg = gcycle.regime_gate(bias)     # DXY structure, not the gold price
+        reg = gcycle.regime_gate(bias, strict=True)   # DXY structure, not the gold price
         sig["regime"] = reg
         if require_regime and not reg["ok"]:
             sig["signal"] = "NO TRADE"
