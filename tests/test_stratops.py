@@ -69,3 +69,37 @@ def test_allocate_takes_best_within_cap():
     assert len(out["take"]) == 2               # 50+50 fit, 3rd 50 would exceed 120
     assert any("score" in h.get("reason", "") for h in out["stand_down"])  # the low one
     assert len(out["hold"]) == 1               # 3rd high-score held on risk cap
+
+
+# --- P3 fit: measured tier factors scale the score ---------------------------
+
+def test_tier_factors_scale_score():
+    # Identical confluence, different tiers: the GREEN intrasession outranks
+    # the RED intraday by the measured factors (1.415 vs 0.949).
+    hi_intra = stratops.score_candidate(_cand(True, tt="intraday"))
+    hi_sess = stratops.score_candidate(_cand(True, tt="intrasession"))
+    assert hi_sess["score"] > hi_intra["score"]
+    assert hi_sess["tier_factor"] == stratops.TIER_FACTORS["intrasession"]
+    assert hi_sess["score"] <= 100.0                    # clamped
+
+
+def test_fit_tier_factors_from_report():
+    saved = dict(stratops.TIER_FACTORS)
+    try:
+        report = {"by_tier": {
+            "intraday": {"n": 101, "confidence_factor": 0.949},
+            "intrasession": {"n": 110, "confidence_factor": 1.415}}}
+        swing = {"tier": "swing", "trades": 5,
+                 "scorecard": {"n": 5, "confidence_factor": 1.0}}
+        out = stratops.fit_tier_factors(report, swing, min_sample=10)
+        assert out["applied"] == {"intraday": 0.949, "intrasession": 1.415}
+        assert "swing" not in out["applied"]            # n=5 < min_sample stays neutral
+    finally:
+        stratops.TIER_FACTORS.update(saved)
+
+
+def test_allocate_rows_carry_idx():
+    cands = [_cand(True, risk=20), _cand(False, risk=20)]
+    out = stratops.allocate(cands, positions=[], risk_cap=120)
+    for row in out["take"] + out["hold"] + out["stand_down"]:
+        assert isinstance(row["idx"], int) and 0 <= row["idx"] < len(cands)
