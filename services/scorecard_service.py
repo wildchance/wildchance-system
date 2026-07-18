@@ -129,11 +129,19 @@ async def gold_report(db: AsyncSession, month: Optional[str] = None) -> dict:
     Reuses the same reflection engine as USD/JPY so gold finally has the feedback
     loop it was missing — every closed position carries a result_r.
     """
-    res = await db.execute(
-        select(GoldPosition)
-        .where(GoldPosition.status == "CLOSED")
-        .order_by(GoldPosition.opened_at.asc()))
-    trades = list(res.scalars().all())
+    try:
+        res = await db.execute(
+            select(GoldPosition)
+            .where(GoldPosition.status == "CLOSED")
+            .order_by(GoldPosition.opened_at.asc()))
+        trades = list(res.scalars().all())
+    except Exception:
+        # A schema drift (e.g. a legacy gold_positions table missing a newer
+        # column) must degrade to an empty scorecard, never a 500. init_db()
+        # backfills the columns on the next cold start; until then this keeps
+        # the endpoint answering.
+        await db.rollback()
+        trades = []
     rows = []
     for t in trades:
         if t.result_r is None:
@@ -141,9 +149,9 @@ async def gold_report(db: AsyncSession, month: Optional[str] = None) -> dict:
         rows.append({
             "month": _month(t.opened_at),
             "action": t.action,
-            "trade_type": t.trade_type,
+            "trade_type": getattr(t, "trade_type", None),
             "result_r": t.result_r,
-            "exit_reason": t.exit_reason,
+            "exit_reason": getattr(t, "exit_reason", None),
             "opened_at": str(t.opened_at),
         })
     all_r = [r["result_r"] for r in rows]
