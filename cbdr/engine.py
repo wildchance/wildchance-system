@@ -199,6 +199,33 @@ def prelondon_limits(box: CBDR) -> dict:
                        "entry": round(lv["+3SD"], 2), "stop": round(lv["+4SD"], 2),
                        "targets": [round(lv["+1SD"], 2), mid], "trade_type": "prelondon",
                        "reason": "sell limit at +3SD (extreme reversal)"})
+    # PRECISION EXTREMES (±1.5SD) — the best reversal-entry areas: deeper into the
+    # extreme than ±1SD, so a tighter stop and a bigger run back to the mean.
+    if {"-1.5SD", "-2SD", "+1SD"} <= set(lv):
+        orders.append({"side": "long", "kind": "limit", "level": "-1.5SD",
+                       "entry": round(lv["-1.5SD"], 2), "stop": round(lv["-2SD"], 2),
+                       "targets": [mid, round(lv["+1SD"], 2)], "trade_type": "prelondon",
+                       "reason": "buy limit at −1.5SD (precision extreme — best reversal entry)"})
+    if {"+1.5SD", "+2SD", "-1SD"} <= set(lv):
+        orders.append({"side": "short", "kind": "limit", "level": "+1.5SD",
+                       "entry": round(lv["+1.5SD"], 2), "stop": round(lv["+2SD"], 2),
+                       "targets": [mid, round(lv["-1SD"], 2)], "trade_type": "prelondon",
+                       "reason": "sell limit at +1.5SD (precision extreme — best reversal entry)"})
+    # MOMENTUM CONTINUATION (±1SD stop orders) — break-and-go, not reversal: a close
+    # THROUGH ±1SD carries to the next SDs. Distinct level tags so they don't collide
+    # with the ±1SD reversal limits.
+    if {"+1SD", "+2SD", "+3SD"} <= set(lv):
+        orders.append({"side": "long", "kind": "buy_stop", "level": "+1SD_stop",
+                       "entry": round(lv["+1SD"], 2), "stop": mid,
+                       "targets": [round(lv["+2SD"], 2), round(lv["+3SD"], 2)],
+                       "trade_type": "prelondon",
+                       "reason": "buy stop at +1SD (momentum continuation up)"})
+    if {"-1SD", "-2SD", "-3SD"} <= set(lv):
+        orders.append({"side": "short", "kind": "sell_stop", "level": "-1SD_stop",
+                       "entry": round(lv["-1SD"], 2), "stop": mid,
+                       "targets": [round(lv["-2SD"], 2), round(lv["-3SD"], 2)],
+                       "trade_type": "prelondon",
+                       "reason": "sell stop at −1SD (momentum continuation down)"})
     lo_sd, hi_sd = GREY_ZONE_SD
     grey = {
         "buy_grey": [lv.get(f"-{lo_sd:g}SD"), lv.get(f"-{hi_sd:g}SD")],
