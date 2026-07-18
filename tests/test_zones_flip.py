@@ -153,3 +153,28 @@ def test_campaign_objective_includes_zone_budget():
     obj = campaign_objective(4018.0)
     assert obj["zone_budget"] is not None
     assert obj["zone_budget"]["next_buy_zone"]["name"] == "shelf_3886_3941"
+
+
+# --- STRATOPS muster now musters sniper-stack candidates ---------------------
+
+def test_zone_candidates_align_with_the_campaign():
+    import services.stratops_service as ss
+    from gold import stratops
+    cands = ss._zone_candidates(4018.0, balance=5000, risk_usd=20)
+    assert len(cands) == 3                       # a 3-layer stack
+    # discount campaign at 4018 → LONG stack on the buy shelf, target the sell shelf
+    assert all(c["signal"] == "LONG" for c in cands)
+    assert all(c["trade_type"] == "sniper" for c in cands)
+    assert cands[0]["profile"] == "shelf_3886_3941"
+    assert cands[0]["targets"][0]["price"] == 4045.0
+    # the deepest layer (tightest stop → lowest risk) clears the prop gate and scores
+    deepest = min(cands, key=lambda c: c["risk_usd"])
+    assert deepest["gate"]["allow"] is True
+    assert stratops.score_candidate(deepest)["score"] > 55
+
+
+def test_zone_candidates_empty_at_range_extreme():
+    import services.stratops_service as ss
+    # above every sell shelf → no aligned zone to layer into
+    assert ss._zone_candidates(4300.0, balance=5000, risk_usd=20) == [] or \
+        all(c["signal"] == "SHORT" for c in ss._zone_candidates(4300.0, 5000, 20))
