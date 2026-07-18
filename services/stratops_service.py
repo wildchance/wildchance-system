@@ -29,8 +29,12 @@ def _with_campaign(sig: dict) -> dict:
 
 
 async def muster(db: AsyncSession, balance: float = 5000.0,
-                 risk_usd: float = 20.0) -> dict:
-    """Gather candidates from the tiers + swing + CRT, score, and allocate."""
+                 risk_usd: float = 20.0, deploy: bool = False) -> dict:
+    """Gather candidates from the tiers + swing + CRT, score, and allocate.
+
+    ``deploy=True`` is the P4 paper-run: every allocated ("take") candidate is
+    opened as a tracked position (source stratops_paper) so the scorecard measures
+    STRATOPS itself — run on a schedule until the reflection verdict is GREEN."""
     cands: List[dict] = []
 
     def add(sig):
@@ -54,6 +58,16 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
 
     result = stratops.allocate(cands, positions)
     result["candidates"] = len(cands)
+
+    # P4 paper deploy — open each allocated candidate as a tracked position.
+    if deploy and result["take"]:
+        deployed = []
+        for row in result["take"]:
+            card = cands[row["idx"]]
+            opened = await gp.open_from_signal(db, card, source="stratops_paper")
+            deployed.append({"trade_type": row["trade_type"], "score": row["score"],
+                             "position": opened})
+        result["deployed"] = deployed
     # Surface the standing campaign objective even if no candidate fired.
     try:
         from utils.price_fetcher import get_forex_price
