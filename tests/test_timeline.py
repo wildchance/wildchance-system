@@ -77,3 +77,25 @@ def test_cycle_replication_above_ath():
     nxt = cycle_status(5700.0)                                  # above the 5608 ATH
     assert nxt["phase"] == "next_cycle"
     assert abs(nxt["next_cycle"]["plus4"] - 7509.776) < 0.5     # replicated +4
+
+
+# --- fractal units + daily mean map ------------------------------------------
+
+def test_fractal_units_are_anchor_halvings():
+    from gold.timeline import fractal_units
+    f = fractal_units()
+    assert abs(f["range_250"] - 248.448) < 0.01     # unit/2 ≈ the $250 leg
+    assert abs(f["range_125"] - 124.224) < 0.01
+    assert abs(f["range_62"] - 62.112) < 0.01
+
+
+def test_daily_mean_map_frames_targets():
+    from gold.timeline import daily_mean_map
+    m = daily_mean_map(3977.03, 4017.0)             # Friday's candle
+    assert m["mean"] == 3997.015
+    assert m["htf"]["bias"] == "long"               # discount → primary UP
+    t25 = next(t for t in m["targets"] if t["usd"] == 25)
+    assert t25["primary"] == "up" and abs(t25["up"]["price"] - 4022.015) < 0.01
+    # the -$112 side would sit near the central limit; check a confluent target
+    t100 = next(t for t in m["targets"] if t["usd"] == 100)
+    assert t100["down"]["htf_level"] is not None    # 3897 ≈ central limit 3885? within tol 12
