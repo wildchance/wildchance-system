@@ -16,6 +16,42 @@ from typing import List, Sequence
 
 from gold.exposure import can_open, DEFAULT_RISK_CAP_USD, DEFAULT_MAX_POSITIONS
 
+# Per-tier confidence factors — FIT FROM THE P3 BACKTEST (2026-07-18, live H1,
+# 211 intraday/intrasession trades + 5 swing):
+#   intrasession GREEN  +0.41R/trade, PF 2.39, 55% win → lean in (1.415)
+#   intraday     RED    −0.05R/trade, PF 0.89          → size down (0.949)
+#   swing        INCONCLUSIVE (n=5)                    → neutral until sampled
+# Unmeasured tiers stay neutral. Refit any time via fit_tier_factors() /
+# POST /gold/stratops/fit — the factor is each tier's reflection confidence_factor.
+TIER_FACTORS = {
+    "intrasession": 1.415,
+    "intraday": 0.949,
+    "swing": 1.0,
+    "crt": 1.0,
+    "prelondon": 1.0,
+    "sd_fade": 1.0,
+}
+
+
+def fit_tier_factors(intraday_report: dict = None, swing_report: dict = None,
+                     min_sample: int = 10) -> dict:
+    """Refit TIER_FACTORS from backtest reports (the P3 loop).
+
+    Each tier's factor becomes its scorecard's reflection confidence_factor,
+    ignoring tiers below ``min_sample`` closed trades. Returns what was applied.
+    """
+    applied = {}
+    for rep in (intraday_report, swing_report):
+        if not rep:
+            continue
+        groups = rep.get("by_tier") or ({rep["tier"]: rep["scorecard"]} if rep.get("tier") else {})
+        for tier, card in groups.items():
+            if tier in TIER_FACTORS and (card.get("n") or 0) >= min_sample:
+                TIER_FACTORS[tier] = round(float(card["confidence_factor"]), 3)
+                applied[tier] = TIER_FACTORS[tier]
+    return {"applied": applied, "tier_factors": dict(TIER_FACTORS)}
+
+
 # Confluence weights (sum = 100). Objective alignment dominates — a trade that
 # doesn't advance the campaign is not what we deploy for.
 WEIGHTS = {
@@ -56,15 +92,23 @@ def score_candidate(c: dict) -> dict:
     best_rr = max((t.get("rr", 0) for t in tps), default=0)
     p["rr"] = min(WEIGHTS["rr"], WEIGHTS["rr"] * best_rr / 8.0)   # 8R = full marks
 
-    score = round(sum(p.values()), 1)
-    return {"score": score, "excluded": None, "parts": {k: round(v, 1) for k, v in p.items()}}
+    # Scale by the tier's MEASURED confidence factor (P3 backtest fit): a GREEN
+    # tier leans in, a RED tier is discounted before allocation.
+    factor = TIER_FACTORS.get(c.get("trade_type"), 1.0)
+    score = round(min(100.0, sum(p.values()) * factor), 1)
+    return {"score": score, "excluded": None, "tier_factor": factor,
+            "parts": {k: round(v, 1) for k, v in p.items()}}
 
 
 def rank(candidates: Sequence[dict]) -> List[dict]:
-    """Attach a score to each candidate and return them best-first (excluded last)."""
+    """Attach a score to each candidate and return them best-first (excluded last).
+
+    Each row keeps ``stratops.idx`` — the index into the ORIGINAL candidates list —
+    so the deploy step can recover the full card for anything allocated."""
     scored = []
-    for c in candidates:
+    for i, c in enumerate(candidates):
         s = score_candidate(c)
+        s["idx"] = i
         scored.append({**c, "stratops": s})
     scored.sort(key=lambda x: x["stratops"]["score"], reverse=True)
     return scored
@@ -83,7 +127,8 @@ def allocate(candidates: Sequence[dict], positions: Sequence[dict],
     take, hold, stand_down = [], [], []
     for c in ranked:
         s = c["stratops"]["score"]
-        row = {"trade_type": c.get("trade_type"), "signal": c.get("signal"),
+        row = {"idx": c["stratops"]["idx"],
+               "trade_type": c.get("trade_type"), "signal": c.get("signal"),
                "entry": c.get("entry"), "score": s,
                "campaign": (c.get("campaign") or {}).get("status")}
         if c["stratops"]["excluded"]:
