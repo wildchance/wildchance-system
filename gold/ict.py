@@ -99,9 +99,13 @@ def classify_week(daily: List[DatedOHLC], htf_lookback: int = 20) -> Optional[di
     # fires MID-WEEK — from Wednesday on — not only on Friday.
     hi_days = {b[0].weekday() for b in week if b[2] >= wk_high * 0.999}
     lo_days = {b[0].weekday() for b in week if b[3] <= wk_low * 1.001}
-    # genuine two-sided sweep = the high and the low were run on DIFFERENT days
-    # (not one single wide bar).
-    swept_both = any(hd != ld for hd in hi_days for ld in lo_days)
+    # Genuine two-sided sweep = the high and the low were run on DIFFERENT days
+    # AND price has come back INSIDE the middle of the week's range (a ranging
+    # market). A trending week also makes its extremes on different days, but its
+    # close sits AT an extreme — that is a trend, not seek & destroy.
+    wk_rng = wk_high - wk_low
+    back_inside = wk_rng > 0 and abs(close - (wk_high + wk_low) / 2.0) <= 0.25 * wk_rng
+    swept_both = back_inside and any(hd != ld for hd in hi_days for ld in lo_days)
     if swept_both and weekday >= 2:
         pid = 9 if close >= eq else 10
         return _result(pid, "both sides of the week swept (seek & destroy) — ranging, fade the extremes", ctx)
