@@ -68,3 +68,30 @@ def test_backtest_swing_runs_and_scores():
     assert rep["tier"] == "swing"
     assert "scorecard" in rep and rep["scorecard"]["n"] == rep["trades"]
     assert isinstance(rep["by_exit"], dict)
+
+
+def test_backtest_intraday_fires_and_scores():
+    from backtest.gold_tiers import backtest_intraday
+    daily, h1, base = [], [], 4000.0
+    start = dt.date(2026, 6, 1)
+    for day in range(25):
+        d = start + dt.timedelta(days=day)
+        if d.weekday() >= 5:
+            continue
+        o, c, hi, lo = base, base + 8, base + 12, base - 4
+        daily.append((d, o, hi, lo, c))
+        for hour in range(24):
+            if hour == 14:                       # NY dip into discount
+                h1.append({"date": d.isoformat(), "hour": hour, "open": o + 2,
+                           "high": o + 3, "low": lo, "close": lo + 1})
+            elif hour < 13:
+                h1.append({"date": d.isoformat(), "hour": hour, "open": o,
+                           "high": o + 5, "low": o - 2, "close": o + 2})
+            else:
+                h1.append({"date": d.isoformat(), "hour": hour, "open": o + 4,
+                           "high": hi, "low": o + 1, "close": c})
+        base += 8
+    rep = backtest_intraday(h1, daily, horizon=8, warmup=5)
+    assert rep["trades"] > 0
+    assert set(rep["by_tier"]) <= {"intraday", "intrasession"}
+    assert rep["scorecard"]["n"] == rep["trades"]
