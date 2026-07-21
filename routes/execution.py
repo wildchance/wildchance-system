@@ -53,3 +53,19 @@ async def ack(payload: Ack, token: str = Query(...), db: AsyncSession = Depends(
 @router.get("/orders")
 async def orders(limit: int = Query(50, ge=1, le=500), db: AsyncSession = Depends(get_db)):
     return {"orders": await te.recent(db, limit)}
+
+
+@router.get("/status")
+async def status(db: AsyncSession = Depends(get_db)):
+    """Live-execution readiness: is the switch on, the token set, and how many
+    orders are queued for the MT5 bridge."""
+    queued = await te.pending(db)
+    return {
+        "execution_enabled": te.EXECUTION_ENABLED,
+        "token_set": bool(EXECUTION_TOKEN),
+        "queued_orders": len(queued),
+        "mode": "LIVE" if te.EXECUTION_ENABLED else "PAPER",
+        "note": ("routing tracked trades to the MT5 bridge"
+                 if te.EXECUTION_ENABLED else
+                 "paper — set EXECUTION_ENABLED=true (+ EXECUTION_TOKEN + run the VPS bridge) to go live"),
+    }
