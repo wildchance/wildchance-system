@@ -98,7 +98,17 @@ async def open_from_signal(db: AsyncSession, sig: dict,
     db.add(row)
     await db.commit()
     await db.refresh(row)
-    return _to_dict(row)
+    out = _to_dict(row)
+    # Route to the MT5 bridge too, but only when live execution is enabled (paper
+    # is a no-op). A queue failure never blocks the tracked open.
+    try:
+        from services import trade_executor as te
+        enq = await te.maybe_enqueue(db, sig, source)
+        if enq:
+            out["mt5_order"] = enq
+    except Exception:
+        pass
+    return out
 
 
 async def open_limit(db: AsyncSession, card: dict, source: str,
