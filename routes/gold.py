@@ -349,12 +349,24 @@ async def zones_digest(balance: float = Query(5000, gt=0),
     return {"sent": sent, "armed": plan["armed"], "plan": plan}
 
 
+@router.get("/b2b")
+async def b2b(bars: int = Query(30, ge=4, le=200, description="how many 4H candles")):
+    """4H b2b bomber — 1-5-9 liquidity sweep + 8h back-to-back continuation, the
+    swing-trade confluence anchored to the 00:00 / 14:00 (UTC-4) session opens."""
+    from services.ohlc_service import fetch_ohlc_raw
+    from gold.b2b import b2b_bomber
+    ohlc = await fetch_ohlc_raw("XAU/USD", interval="4h", outputsize=bars)
+    if len(ohlc) < 4:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD 4H bars")
+    return b2b_bomber(ohlc)
+
+
 @router.get("/recon")
 async def recon_get(gold: float = Query(None, description="override gold price"),
                     dxy: float = Query(None, description="live DXY price (optional)"),
                     window: str = Query("prelondon", description="CBDR window for the ±SD map")):
     """Drone fib-recon sweep — the fused gold + DXY board (HTF ladder, OB zones,
-    CBDR deviation extreme, DXY lock) with any armed setups. Read-only, no alert."""
+    CBDR deviation extreme, DXY lock, 4H b2b bomber) with any armed setups. Read-only."""
     from services.recon_service import recon
     return await recon(dxy_price=dxy, gold_price=gold, window=window,
                        notify=False, armed_only=False)
