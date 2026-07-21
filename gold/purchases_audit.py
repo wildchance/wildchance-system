@@ -30,18 +30,41 @@ COT_WOW = [("6 Jan", 227632), ("13 Jan", 251238), ("27 Jan", 205396),
            ("26 May", 154260), ("2 Jun", 176020), ("23 Jun", 181339)]
 
 SNAPSHOT = {
-    "as_of": "2026-07-06",
+    "as_of": "2026-07-21",
     "cb_purchases_2026e_t": 850,          # −1.5% YoY, still elevated vs pre-2022 ~500t
-    "etf_holdings_t": 4080,               # −96t off the Feb 4,176t record; +3.8% YoY
-    "etf_aum_usd_bn": 604,                # +132% YoY — price-driven, not flows
+    "etf_holdings_t": 4050,               # −126t off the Feb 4,176t record; +3.0% YoY
+    "etf_aum_usd_bn": 590,                # price-driven, not flows
     "etf_h1_flows_usd_bn": 14,            # vs +38bn H1'25 (−63%)
-    "cot_noncomm_net": 181339,            # 2026-06-23, off the 154,260 May trough
+    "cot_noncomm_net": 170000,            # 2026-07-21 est, rebuilding from 154,260 trough
     "cot_peak": 251238, "cot_trough": 154260,
-    "cot_open_interest": 352167,          # −33.2% YoY (from 527k) — liquidity drained
+    "cot_open_interest": 340000,          # −35% from the 528k peak — liquidity drained
+    "cot_oi_peak": 528000,
     "commercial_net": -205404,
-    "gold_price": 4175.70,                # −25.5% from the $5,608 ATH, +24.8% YoY
+    "gold_price": 4100.0,                 # ~WGC fair value; discount to structural case
     "etf_at_loss_t": 200,                 # overhead supply on rallies
 }
+
+
+def feed(as_of: str = None, **kwargs) -> dict:
+    """Operator-feed the WGC/COT snapshot from an audit report (only known keys)."""
+    for k, v in kwargs.items():
+        if v is not None and k in SNAPSHOT:
+            SNAPSHOT[k] = v
+    SNAPSHOT["as_of"] = as_of or "operator-fed"
+    return dict(SNAPSHOT)
+
+
+def liquidity_state() -> dict:
+    """Open-interest depth read — a thin tape means wider stops + sharper sweeps."""
+    oi = SNAPSHOT["cot_open_interest"]
+    peak = SNAPSHOT.get("cot_oi_peak", 528000)
+    vs_peak = round((oi - peak) / peak * 100, 1) if peak else None
+    impaired = oi < 0.80 * peak            # >20% below the OI peak = drained
+    return {"open_interest": oi, "peak": peak, "vs_peak_pct": vs_peak,
+            "state": "impaired" if impaired else "normal",
+            "stop_widen_mult": 1.25 if impaired else 1.0,
+            "note": ("thin tape — widen stops ~25%, expect sharper sweeps / slippage"
+                     if impaired else "normal market depth")}
 
 
 def _pct(a: float, b: float) -> Optional[float]:
