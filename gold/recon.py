@@ -45,8 +45,12 @@ def _nearest_dxy_fib(price: Optional[float]) -> dict:
 
 
 def recon_sweep(gold_price: float, dxy_price: Optional[float] = None,
-                box=None, rbusbis_dir: Optional[str] = None) -> dict:
-    """Fuse the gold + DXY fib maps into one recon report with armed setups."""
+                box=None, rbusbis_dir: Optional[str] = None,
+                b2b: Optional[dict] = None) -> dict:
+    """Fuse the gold + DXY fib maps into one recon report with armed setups.
+
+    ``b2b`` is an optional 4H b2b-bomber read (gold.b2b.b2b_bomber) — when it agrees
+    with an anchored OB+deviation setup it is the swing-continuation confluence."""
     # --- GOLD scout ---------------------------------------------------------
     gloc = tl.locate(gold_price)
     zf = gz.zone_for(gold_price)
@@ -62,20 +66,25 @@ def recon_sweep(gold_price: float, dxy_price: Optional[float] = None,
     longs_unlocked = dflip["unlocked"]
 
     # --- fuse into armed setups --------------------------------------------
+    b2b_sig = (b2b or {}).get("signal") if b2b else None
     setups = []
     if buy_anchor["ok"]:
+        confl = b2b_sig == "LONG"
         setups.append({
             "side": "LONG", "zone": buy_anchor["ob_zone"], "cbdr_level": buy_anchor["cbdr_level"],
-            "armed": bool(longs_unlocked),
+            "armed": bool(longs_unlocked), "b2b_confluence": confl,
             "gate": ("armed — OB + deviation extreme + DXY flipped"
+                     + (" + 4H b2b" if confl else "")
                      if longs_unlocked else
                      "STAGED — OB + deviation extreme, but DXY longs still LOCKED"),
         })
     if sell_anchor["ok"]:
+        confl = b2b_sig == "SHORT"
         setups.append({
             "side": "SHORT", "zone": sell_anchor["ob_zone"], "cbdr_level": sell_anchor["cbdr_level"],
-            "armed": True,       # shorts run while the dollar is bid (2026)
-            "gate": "armed — sell OB + deviation extreme (shorts run while DXY bid)",
+            "armed": True, "b2b_confluence": confl,       # shorts run while dollar bid
+            "gate": "armed — sell OB + deviation extreme (shorts run while DXY bid)"
+                    + (" + 4H b2b" if confl else ""),
         })
     armed = any(s["armed"] for s in setups)
 
@@ -92,6 +101,7 @@ def recon_sweep(gold_price: float, dxy_price: Optional[float] = None,
             "trigger": dtrig.get("trigger"), "gold_longs": dflip["gold_longs"],
             "at_extreme": dflip["at_extreme"], "nearest_fib": dfib, "note": dflip["note"],
         },
+        "b2b": b2b,
         "setups": setups, "armed": armed,
         "note": (f"gold {gloc['region']} @ {round(gold_price, 2)} | dollar "
                  f"{dreg['regime']}/{dreg['phase']} | longs {dflip['gold_longs']} | "
@@ -120,11 +130,16 @@ def format_recon(sweep: dict) -> str:
         if nf.get("above"):
             parts.append(f"↑{nf['above']['level']} {nf['above']['price']}")
         lines.append("  DXY fib: " + "  ".join(parts))
+    b2b = sweep.get("b2b")
+    if b2b and b2b.get("signal") in ("LONG", "SHORT"):
+        tag = f" · {b2b['anchor_session']}" if b2b.get("anchored") else ""
+        lines.append(f"  💣 4H b2b: {b2b['signal']}{tag} (swept {b2b['swept']}, inval {b2b['invalidation']})")
     lines.append("")
     if sweep["setups"]:
         for s in sweep["setups"]:
             flag = "⚡" if s["armed"] else "⏸"
-            lines.append(f"{flag} *{s['side']}* {s['zone']} @ {s['cbdr_level']} — {s['gate']}")
+            confl = "  +b2b✅" if s.get("b2b_confluence") else ""
+            lines.append(f"{flag} *{s['side']}* {s['zone']} @ {s['cbdr_level']} — {s['gate']}{confl}")
     else:
         lines.append("_no OB+deviation anchor yet — price between zones_")
     lines.append("")
