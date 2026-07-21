@@ -99,6 +99,44 @@ def _r(entry: float, exit_price: float, risk: float, long: bool) -> float:
     return round(((exit_price - entry) if long else (entry - exit_price)) / risk, 4)
 
 
+# Tiers that ride the session-to-session hold (exit at the next pre-London CBDR
+# deviation), vs the intraday scalps that keep their own tight time-stop.
+HOLD_TYPES = ("swing", "sniper", "prelondon", "crt")
+
+
+def prelondon_exit(state: dict, levels: dict, price: float) -> Optional[dict]:
+    """Hands-off session-hold exit: close a held trade at the next pre-London CBDR
+    deviation level in its favour — a LONG at the +1SD (then +1.5SD) sell-limit,
+    a SHORT at the −1SD (then −1.5SD) buy-limit. Returns a close action or None.
+
+    ``levels`` is a CBDR box's level dict (needs the ±1SD / ±1.5SD keys). This is
+    the mechanical "ride the trend to the next pre-London range, no emotion" rule.
+    """
+    if not levels:
+        return None
+    long = state.get("side") == "long"
+    entry = float(state["entry"])
+    risk = abs(entry - float(state.get("stop_initial", state.get("stop", entry))))
+    if long:
+        deep, first = levels.get("+1.5SD"), levels.get("+1SD")
+        if deep is not None and price >= deep:
+            hit, tag = deep, "PRELONDON+1.5SD"
+        elif first is not None and price >= first:
+            hit, tag = first, "PRELONDON+1SD"
+        else:
+            return None
+    else:
+        deep, first = levels.get("-1.5SD"), levels.get("-1SD")
+        if deep is not None and price <= deep:
+            hit, tag = deep, "PRELONDON-1.5SD"
+        elif first is not None and price <= first:
+            hit, tag = first, "PRELONDON-1SD"
+        else:
+            return None
+    return {"close": True, "exit_price": round(hit, 2), "exit_reason": tag,
+            "result_r": _r(entry, hit, risk, long)}
+
+
 def evaluate(state: dict, price: float, now: dt.datetime) -> dict:
     """Decide the next action for an OPEN position at ``price`` / ``now``.
 
