@@ -125,6 +125,15 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
             sig["hold"] = "hold the trend to the next pre-London CBDR (±1/±1.5SD)"
         if _wh_sig in ("LONG", "SHORT") and sig.get("signal") == _wh_sig:
             sig["warthog_confluence"] = True
+        # Options-flow: entry on a put/call wall or the expected-move edge (no-op
+        # until the operator feeds the snapshot).
+        try:
+            from gold import options_flow as ofl
+            if ofl.configured() and sig.get("entry") is not None:
+                if ofl.confluence(sig["signal"], sig["entry"])["status"] == "confirms":
+                    sig["options_confluence"] = True
+        except Exception:
+            pass
         cands.append(_with_campaign(sig))
 
     # MARCENT / AFCENT — the tiered intraday scan (protraction softened to a score).
