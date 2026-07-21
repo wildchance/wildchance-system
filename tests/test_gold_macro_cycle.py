@@ -19,8 +19,8 @@ def test_audit_pct_changes_reconcile():
 
 def test_positioning_state_moderate_room_to_add():
     ps = gpa.positioning_state()
-    assert ps["net"] == 181339 and ps["zone"] == "neutral"
-    assert ps["below_peak"] == 251238 - 181339
+    assert ps["net"] == 170000 and ps["zone"] == "neutral"
+    assert ps["below_peak"] == 251238 - 170000
 
 
 def test_positioning_zones():
@@ -30,7 +30,7 @@ def test_positioning_zones():
     assert gpa.positioning_state()["zone"] == "stretched"
     gpa.SNAPSHOT["cot_noncomm_net"] = -5000
     assert gpa.positioning_state()["zone"] == "net_short"
-    gpa.SNAPSHOT["cot_noncomm_net"] = 181339          # restore
+    gpa.SNAPSHOT["cot_noncomm_net"] = 170000          # restore
 
 
 # --- DXY inverse ------------------------------------------------------------
@@ -76,7 +76,7 @@ def test_regime_gate_blocks_stretched_long():
     gpa.SNAPSHOT["cot_noncomm_net"] = 230000
     g = gcycle.regime_gate("long")
     assert g["ok"] is False and "crowded long" in g["reason"]
-    gpa.SNAPSHOT["cot_noncomm_net"] = 181339          # restore
+    gpa.SNAPSHOT["cot_noncomm_net"] = 170000          # restore
 
 
 def test_sources_registry_present():
