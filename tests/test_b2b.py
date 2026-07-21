@@ -84,7 +84,7 @@ def test_recon_folds_in_b2b_confluence():
     box = build_cbdr(3320.0, 3300.0)
     b2b = {"signal": "LONG", "swept": "low", "anchored": True,
            "anchor_session": "ny_14", "invalidation": 3260.0}
-    sweep = gr.recon_sweep(3268.0, dxy_price=106.0, box=box,
+    sweep = gr.recon_sweep(3268.0, dxy_price=111.0, box=box,
                            rbusbis_dir="falling", b2b=b2b)
     buy = next(s for s in sweep["setups"] if s["side"] == "LONG")
     assert buy["b2b_confluence"] is True
