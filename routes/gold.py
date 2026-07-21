@@ -349,6 +349,29 @@ async def zones_digest(balance: float = Query(5000, gt=0),
     return {"sent": sent, "armed": plan["armed"], "plan": plan}
 
 
+@router.get("/recon")
+async def recon_get(gold: float = Query(None, description="override gold price"),
+                    dxy: float = Query(None, description="live DXY price (optional)"),
+                    window: str = Query("prelondon", description="CBDR window for the ±SD map")):
+    """Drone fib-recon sweep — the fused gold + DXY board (HTF ladder, OB zones,
+    CBDR deviation extreme, DXY lock) with any armed setups. Read-only, no alert."""
+    from services.recon_service import recon
+    return await recon(dxy_price=dxy, gold_price=gold, window=window,
+                       notify=False, armed_only=False)
+
+
+@router.post("/recon")
+async def recon_post(dxy: float = Query(None, description="live DXY price (optional)"),
+                     window: str = Query("prelondon"),
+                     armed_only: bool = Query(True, description="alert only on an armed board"),
+                     notify: bool = Query(True), force: bool = Query(False)):
+    """Run the recon sweep and push the board to Telegram when a setup is armed
+    (best-effort dedup — cron-friendly, stays quiet until the board changes)."""
+    from services.recon_service import recon
+    return await recon(dxy_price=dxy, window=window, notify=notify,
+                       armed_only=armed_only, force=force)
+
+
 @router.get("/flip-ladder")
 async def flip_ladder(deposit: float = Query(700, gt=0),
                       denom: str = Query("USD", description="cent | USD | KES | KWD"),
