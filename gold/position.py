@@ -104,37 +104,47 @@ def _r(entry: float, exit_price: float, risk: float, long: bool) -> float:
 HOLD_TYPES = ("swing", "sniper", "prelondon", "crt")
 
 
-def prelondon_exit(state: dict, levels: dict, price: float) -> Optional[dict]:
+def prelondon_exit(state: dict, levels: dict, price: float,
+                   min_capture_pips: float = None) -> Optional[dict]:
     """Hands-off session-hold exit: close a held trade at the next pre-London CBDR
     deviation level in its favour — a LONG at the +1SD (then +1.5SD) sell-limit,
     a SHORT at the −1SD (then −1.5SD) buy-limit. Returns a close action or None.
 
-    ``levels`` is a CBDR box's level dict (needs the ±1SD / ±1.5SD keys). This is
-    the mechanical "ride the trend to the next pre-London range, no emotion" rule.
+    A deviation level only releases the hold when the captured move meets the
+    MINIMUM CAPTURE floor (cheetah = 250 pips) — if the nearer level banks less,
+    the hold rides on for the deeper level, so no trade is closed short of the Big-5
+    cheetah. The close reason carries the Big-5 tier the capture reaches.
     """
     if not levels:
         return None
+    from gold.big5 import MIN_CAPTURE_PIPS, pips_of, tier_for_pips
+    floor = MIN_CAPTURE_PIPS if min_capture_pips is None else min_capture_pips
     long = state.get("side") == "long"
     entry = float(state["entry"])
     risk = abs(entry - float(state.get("stop_initial", state.get("stop", entry))))
+
     if long:
         deep, first = levels.get("+1.5SD"), levels.get("+1SD")
-        if deep is not None and price >= deep:
-            hit, tag = deep, "PRELONDON+1.5SD"
-        elif first is not None and price >= first:
-            hit, tag = first, "PRELONDON+1SD"
-        else:
-            return None
+        reached = [("+1.5SD", deep), ("+1SD", first)]
+        hit = next(((lbl, lv) for lbl, lv in reached if lv is not None and price >= lv), None)
     else:
         deep, first = levels.get("-1.5SD"), levels.get("-1SD")
-        if deep is not None and price <= deep:
-            hit, tag = deep, "PRELONDON-1.5SD"
-        elif first is not None and price <= first:
-            hit, tag = first, "PRELONDON-1SD"
-        else:
-            return None
-    return {"close": True, "exit_price": round(hit, 2), "exit_reason": tag,
-            "result_r": _r(entry, hit, risk, long)}
+        reached = [("-1.5SD", deep), ("-1SD", first)]
+        hit = next(((lbl, lv) for lbl, lv in reached if lv is not None and price <= lv), None)
+    if hit is None:
+        return None
+    lbl, lv = hit
+    captured = pips_of(entry, lv)
+    if captured < floor:
+        # nearer level banks less than the cheetah floor — keep holding the trend.
+        return None
+    tier = tier_for_pips(captured)
+    tier_name = (tier["name"] if tier else "sub-cheetah")
+    return {"close": True, "exit_price": round(lv, 2),
+            "exit_reason": f"PRELONDON{lbl}·{tier_name}",
+            "result_r": _r(entry, lv, risk, long),
+            "capture_pips": captured,
+            "tier": tier}
 
 
 def evaluate(state: dict, price: float, now: dt.datetime) -> dict:
