@@ -54,6 +54,20 @@ INPUTS = {
 }
 
 
+def feed_inputs(real_rate_direction: str = None, fed_cycle: str = None,
+                cb_survey_conviction: str = None, etf_flow_direction: str = None,
+                dollar_funding: str = None, as_of: str = None) -> dict:
+    """Operator-feed the macro regime inputs from an audit report (WGC part)."""
+    for k, v in (("real_rate_direction", real_rate_direction), ("fed_cycle", fed_cycle),
+                 ("cb_survey_conviction", cb_survey_conviction),
+                 ("etf_flow_direction", etf_flow_direction), ("dollar_funding", dollar_funding)):
+        if v is not None:
+            INPUTS[k] = v
+    if as_of:
+        INPUTS["as_of"] = as_of
+    return dict(INPUTS)
+
+
 def dollar_gold_bias() -> str:
     """The dollar-implied gold bias — live RBUSBIS when refreshed, else the
     anticipated DXY structure."""
@@ -129,6 +143,10 @@ def regime_read() -> dict:
     ps = gpa.positioning_state()
     if ps["zone"] == "stretched":
         contradictions.append("COT stretched — crowded long is a distribution risk")
+    liq = gpa.liquidity_state()
+    if liq["state"] == "impaired":
+        contradictions.append(f"open interest {liq['vs_peak_pct']}% below peak — thin tape: "
+                              "widen stops, size down, expect sharper sweeps")
 
     return {
         "as_of": INPUTS["as_of"],
@@ -139,6 +157,16 @@ def regime_read() -> dict:
                          "invalidation": gmacro.SNAPSHOT["invalidation"],
                          "targets": gmacro.SNAPSHOT["targets"]},
         "positioning": ps,
+        "liquidity": liq,
+        "gold_long_lock": gdxy.dxy_flip_status(),
+        "fused_verdict": (
+            f"{'ACCUMULATION floor' if bias == 'long' else 'DISTRIBUTION' if bias == 'short' else 'NEUTRAL'}"
+            f" ({regime}) over a "
+            + ("near-term HEADWIND (real rates up / dollar bid) — "
+               if INPUTS['real_rate_direction'].startswith('rising') else "")
+            + f"gold longs {gdxy.dxy_flip_status()['gold_longs'].upper()} until DXY flips; "
+            + (f"thin tape ({liq['vs_peak_pct']}% OI) → widen stops" if liq["state"] == "impaired"
+               else "normal depth")),
         "contradictions": contradictions,
         "data_gaps": [
             "BIS OTC gold notional / RBUSBIS not live-wired (semi-annual/monthly)",
