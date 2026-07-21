@@ -72,6 +72,15 @@ async def flip_alert(dxy_price: Optional[float] = None, notify: bool = True,
                 rbusbis_dir = usd["direction"]
     except Exception:
         pass
+    # live DXY level (genuine index only; proxy is directional, not a level)
+    if dxy_price is None:
+        try:
+            from services.dxy_service import latest_dxy
+            d = await latest_dxy()
+            if d and d.get("is_level"):
+                dxy_price = d["price"]
+        except Exception:
+            pass
 
     status = gdxy.dxy_flip_status(dxy_price, rbusbis_dir)
     state = status["gold_longs"]                 # "locked" | "unlocked"
