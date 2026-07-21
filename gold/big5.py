@@ -27,6 +27,11 @@ BIG5 = [
     (1500, "elephant", "🐘"),
 ]
 
+# Above the Big-5: a move that runs past the 1500-pip elephant (roughly to 2500)
+# is a WHALE — the exceptional trend-day runner.
+ELEPHANT_PIPS = 1500
+WHALE = {"name": "whale", "emoji": "🐋", "band": (1500, 2500)}
+
 MIN_CAPTURE_PIPS = 250          # cheetah — the hold's minimum-capture floor
 
 
@@ -35,8 +40,16 @@ def pips_of(entry: float, exit_price: float) -> float:
     return round(abs(exit_price - entry) / GOLD_PIP, 1)
 
 
+def is_whale(pips: float) -> bool:
+    """A capture beyond the 1500-pip elephant (the 1500-2500 whale band)."""
+    return pips > ELEPHANT_PIPS
+
+
 def tier_for_pips(pips: float) -> Optional[dict]:
-    """The highest Big-5 tier a pip count reaches (None if below cheetah)."""
+    """The tier a pip count reaches: whale past the elephant, else the highest
+    Big-5 tier (None below cheetah)."""
+    if pips > ELEPHANT_PIPS:
+        return {"pips_floor": ELEPHANT_PIPS, "name": WHALE["name"], "emoji": WHALE["emoji"]}
     hit = None
     for min_pips, name, emoji in BIG5:
         if pips >= min_pips:
@@ -62,7 +75,7 @@ def classify_capture(entry: float, exit_price: float, side: str) -> dict:
     return {
         "pips": pips, "usd_move": round(abs(directional), 2),
         "tier": tier, "next": next_tier(pips) if pips > 0 else next_tier(0),
-        "meets_min": pips >= MIN_CAPTURE_PIPS,
+        "meets_min": pips >= MIN_CAPTURE_PIPS, "whale": is_whale(pips),
         "label": (f"{tier['emoji']} {tier['name']} (+{int(pips)} pips)"
                   if tier else f"{int(pips)} pips (below cheetah)"),
     }
