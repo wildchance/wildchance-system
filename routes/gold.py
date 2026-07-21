@@ -222,6 +222,16 @@ async def monitor(price: float = Query(None, gt=0,
     return result
 
 
+@router.get("/budget")
+async def budget(db: AsyncSession = Depends(get_db)):
+    """Weekly trade budget board — this week's per-tier counts vs the cadence caps
+    (swing 1 · intraday 5 · intrasession 5 · crt 10 · sniper 5 · prelondon 5 · sd_fade 3)."""
+    from gold import trade_budget as tb
+    since = tb.week_start()
+    positions = await gp.list_positions(db, limit=300)
+    return tb.budget_status(tb.count_by_tier(positions, since))
+
+
 @router.get("/positions")
 async def positions(status: str = Query(None, description="OPEN | CLOSED (default all)"),
                     limit: int = Query(50, ge=1, le=200),
