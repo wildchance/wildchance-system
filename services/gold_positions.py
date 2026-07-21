@@ -158,11 +158,16 @@ def _running_r(row, price: float) -> Optional[float]:
 
 
 async def monitor(db: AsyncSession, price: float,
-                  now: Optional[_dt.datetime] = None) -> dict:
+                  now: Optional[_dt.datetime] = None,
+                  prelondon_levels: Optional[dict] = None) -> dict:
     """Advance PENDING (fill/cancel) and OPEN (TP/SL/time-stop) positions.
 
     Also emits a lifecycle ``events`` list — armed→filled→TP/BE→closed, each with
-    the running (or realized) R — so the alert layer can narrate every transition."""
+    the running (or realized) R — so the alert layer can narrate every transition.
+
+    ``prelondon_levels`` (a CBDR box's level dict) turns on the hands-off session
+    hold: a held tier (swing/sniper/prelondon/crt) is closed at the next pre-London
+    CBDR deviation in its favour (long → +1/+1.5SD, short → −1/−1.5SD)."""
     now = now or _utcnow()
     events: List[dict] = []
 
@@ -209,6 +214,25 @@ async def monitor(db: AsyncSession, price: float,
             "be_active": bool(row.be_active), "opened_at": opened,
             "deadline": deadline, "trade_type": row.trade_type,
         }
+        # Hands-off session hold: a held tier exits at the next pre-London CBDR
+        # deviation in its favour (checked BEFORE the normal evaluate).
+        if prelondon_levels and row.trade_type in pos.HOLD_TYPES:
+            pl = pos.prelondon_exit(
+                {"side": row.side, "entry": row.entry, "stop_initial": row.stop_initial},
+                prelondon_levels, price)
+            if pl:
+                row.status = "CLOSED"
+                row.exit_price = pl["exit_price"]
+                row.exit_reason = pl["exit_reason"]
+                row.result_r = pl["result_r"]
+                row.closed_at = now
+                closed.append(_to_dict(row))
+                events.append({"kind": "closed", "id": row.id, "side": row.side,
+                               "trade_type": row.trade_type, "exit_reason": pl["exit_reason"],
+                               "exit_price": pl["exit_price"], "result_r": pl["result_r"],
+                               "source": row.source})
+                continue
+
         was_tp, was_be = int(row.tp_hit or 0), bool(row.be_active)
         action = pos.evaluate(state, price, now)
         row.tp_hit = action["tp_hit"]
