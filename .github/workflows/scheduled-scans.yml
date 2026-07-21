@@ -35,6 +35,8 @@ on:
     - cron: "0 7 * * 1-5"       # GOLD scan + intraday — London open Q2 (weekdays)
     - cron: "0 13 * * 1-5"      # GOLD scan + intraday — New York open Q3 (weekdays)
     - cron: "30 13 * * 1-5"     # GOLD intraday — NY-AM distribution window (weekdays)
+    - cron: "0 4 * * *"         # Asian 00:00 (UTC-4) new day — 4H b2b + recon swing check
+    - cron: "0 18 * * *"        # NY 14:00 (UTC-4) new CBDR — 4H b2b + recon swing check
   workflow_dispatch:             # manual run = full test (forces every digest)
 
 jobs:
@@ -193,5 +195,10 @@ jobs:
               post "/gold/stratops/deploy"                      # includes sniper-stack candidates
               ;;
             "30 13 * * 1-5")    post "/gold/intraday?balance=5000&require_distribution=true&notify=true" ;;
+            "0 4 * * *"|"0 18 * * *")
+              # New-trading-day boundaries (Asian 00:00 / NY 14:00 UTC-4): the 4H
+              # b2b bomber + full recon board for swing confluence.
+              post "/gold/recon?force=true"
+              ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac
