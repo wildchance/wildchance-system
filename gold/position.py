@@ -161,3 +161,33 @@ def evaluate(state: dict, price: float, now: dt.datetime) -> dict:
 
     out["note"] = (f"holding — TP{tp_hit} reached" if tp_hit else "holding — no target yet")
     return out
+
+
+# --- lifecycle alert narration ----------------------------------------------
+
+def format_lifecycle_events(events, symbol: str = "XAU/USD"):
+    """Telegram card narrating position transitions (armed→filled→TP/BE→closed),
+    each with running or realized R. Returns None if there is nothing to report."""
+    if not events:
+        return None
+    icon = {"filled": "🎯", "tp": "✅", "breakeven": "🛡️", "closed": "🏁",
+            "cancelled": "🚫"}
+    lines = [f"📟 *GOLD Trade Lifecycle — {symbol}*", ""]
+    for e in events:
+        k = e.get("kind")
+        tt = e.get("trade_type", "")
+        side = (e.get("side") or "").upper()
+        if k == "filled":
+            lines.append(f"{icon[k]} FILLED {side} {tt} @ {e.get('entry')}  (SL {e.get('stop')})")
+        elif k == "tp":
+            lines.append(f"{icon[k]} TP{e.get('tp_hit')} {side} {tt}  ·  running {e.get('running_r'):+}R")
+        elif k == "breakeven":
+            lines.append(f"{icon[k]} STOP→BE {side} {tt}  ·  locked, running {e.get('running_r'):+}R")
+        elif k == "closed":
+            r = e.get("result_r")
+            r_str = f"{r:+}R" if r is not None else "—"
+            lines.append(f"{icon[k]} CLOSED {side} {tt} @ {e.get('exit_price')} "
+                         f"({e.get('exit_reason')})  ·  {r_str}")
+        elif k == "cancelled":
+            lines.append(f"{icon[k]} CANCELLED {tt} — {e.get('reason', '')}")
+    return "\n".join(lines)
