@@ -123,9 +123,11 @@ def gold_structure_trigger(price: Optional[float] = None) -> dict:
 
 
 # The DXY manipulation-up extreme: gold longs cannot unlock until price has REACHED
-# this ceiling band (post-midterm blow-off) and then rolled over. Below it, any
-# softness is the PRE-manipulation base, not the flip.
-EXTREME_MIN = 104.589       # ceiling-band base (0.5 fib) — the manipulation target
+# this band (post-midterm blow-off) and then rolled over. Below it, any softness is
+# the PRE-manipulation base, not the flip. Per the operator's read the manipulation
+# top is the 110–117 zone, so the unlock floor is 110 (117 = the max extreme).
+MANIPULATION_TOP = (110.0, 117.0)     # operator's anticipated DXY blow-off band
+EXTREME_MIN = MANIPULATION_TOP[0]     # 110 — reach here (then roll) to unlock gold longs
 
 
 def _env_override() -> Optional[bool]:
@@ -153,8 +155,10 @@ def dxy_flip_status(price: Optional[float] = None,
     """
     reg = dollar_regime(price)
     trig = gold_structure_trigger(price)
-    at_extreme = ((price is not None and price >= EXTREME_MIN)
-                  or trig.get("trigger") in ("gold_ceiling", "dollar_premium"))
+    # "At extreme" for the gold-long unlock means price has reached the 110-117
+    # manipulation-top band — NOT the lower 104-107 gold-ceiling trigger (that band
+    # caps gold but is below the dollar's final blow-off).
+    at_extreme = price is not None and price >= EXTREME_MIN
     ov = override if override is not None else _env_override()
     if ov is not None:
         unlocked = bool(ov)
