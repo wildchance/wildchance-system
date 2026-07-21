@@ -61,7 +61,7 @@ def test_recon_buy_arms_after_flip():
     box = build_cbdr(3320.0, 3300.0)
     # override the DXY flip to unlocked → the anchored buy arms
     from gold import dxy as gdxy
-    sweep = gr.recon_sweep(3268.0, dxy_price=106.0, box=box, rbusbis_dir="falling")
+    sweep = gr.recon_sweep(3268.0, dxy_price=111.0, box=box, rbusbis_dir="falling")
     buy = next((s for s in sweep["setups"] if s["side"] == "LONG"), None)
     assert buy is not None and buy["armed"] is True
     assert sweep["armed"] is True
