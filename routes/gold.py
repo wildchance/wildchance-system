@@ -188,11 +188,13 @@ async def bias():
 @router.post("/monitor")
 async def monitor(price: float = Query(None, gt=0,
                       description="override live price (else fetched)"),
+                  notify: bool = Query(True, description="push lifecycle alerts to Telegram"),
                   db: AsyncSession = Depends(get_db)):
     """Advance every OPEN gold swing: trail to BE after TP1, close on TP/SL/time-stop.
 
     Cron-friendly — call frequently through Mon/Tue so the weekend swing is closed
-    at target or at the Monday-close/Tuesday-open time-stop.
+    at target or at the Monday-close/Tuesday-open time-stop. Pushes a lifecycle
+    alert (armed→filled→TP/BE→closed, with running R) on every transition.
     """
     if price is None:
         try:
@@ -201,7 +203,13 @@ async def monitor(price: float = Query(None, gt=0,
             price = None
     if price is None:
         raise HTTPException(status_code=502, detail="could not fetch XAU/USD price")
-    return await gp.monitor(db, float(price))
+    result = await gp.monitor(db, float(price))
+    if notify and result.get("events"):
+        from gold.position import format_lifecycle_events
+        text = format_lifecycle_events(result["events"])
+        if text:
+            result["alert_sent"] = await gold_scan._tg(text)
+    return result
 
 
 @router.get("/positions")
