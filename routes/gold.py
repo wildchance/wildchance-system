@@ -577,6 +577,29 @@ async def macro():
     return gmacro.macro_read()
 
 
+@router.post("/macro/feed")
+async def macro_feed(
+        cot_noncomm_net: float = Query(None), cot_open_interest: float = Query(None),
+        etf_holdings_t: float = Query(None), cb_purchases_2026e_t: float = Query(None),
+        etf_h1_flows_usd_bn: float = Query(None), gold_price: float = Query(None),
+        real_rate_direction: str = Query(None, description="rising | falling | flat"),
+        fed_cycle: str = Query(None, description="hiking | cutting | hold_hawkish_risk"),
+        cb_survey_conviction: str = Query(None, description="strong | moderate | weak"),
+        etf_flow_direction: str = Query(None, description="accumulation | easing_outflows | outflows"),
+        as_of: str = Query(None, description="report date e.g. 2026-07-21")):
+    """Operator-feed the WGC/macro audit numbers (the manual part of the regime
+    stack): CB tonnage, ETF holdings/flows, COT net/OI, real-rate & Fed reads.
+    Returns the refreshed fused regime verdict."""
+    gpa.feed(as_of=as_of, cot_noncomm_net=cot_noncomm_net,
+             cot_open_interest=cot_open_interest, etf_holdings_t=etf_holdings_t,
+             cb_purchases_2026e_t=cb_purchases_2026e_t,
+             etf_h1_flows_usd_bn=etf_h1_flows_usd_bn, gold_price=gold_price)
+    gcycle.feed_inputs(real_rate_direction=real_rate_direction, fed_cycle=fed_cycle,
+                       cb_survey_conviction=cb_survey_conviction,
+                       etf_flow_direction=etf_flow_direction, as_of=as_of)
+    return {"snapshot_as_of": gpa.SNAPSHOT["as_of"], "regime": gcycle.regime_read()}
+
+
 @router.get("/news")
 async def news():
     """Current gold news state — same-day block, window flag, and the live tier-1
