@@ -152,6 +152,12 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
     positions = await gp.list_positions(db, status="OPEN", limit=100)
     positions += await gp.list_positions(db, status="PENDING", limit=100)
 
+    # Weekly trade budget — this week's per-tier counts (soft cadence cap).
+    from gold import trade_budget as tb
+    _wk = tb.week_start()
+    _all_wk = await gp.list_positions(db, limit=300)
+    _wk_counts = tb.count_by_tier(_all_wk, _wk)
+
     result = stratops.allocate(cands, positions)
     result["candidates"] = len(cands)
     result["dxy_long_lock"] = {"trend_longs_locked": _trend_locked,
@@ -165,15 +171,25 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
                          "note": ("HTF warthog OTE agrees" if _wh_sig in ("LONG", "SHORT")
                                   else "no HTF warthog setup")}
 
-    # P4 paper deploy — open each allocated candidate as a tracked position.
+    # P4 paper deploy — open each allocated candidate as a tracked position,
+    # respecting the weekly per-tier budget (soft cadence cap).
     if deploy and result["take"]:
-        deployed = []
+        deployed, budget_blocked = [], []
         for row in result["take"]:
             card = cands[row["idx"]]
+            tt = card.get("trade_type") or "swing"
+            gate = tb.budget_gate(tt, _wk_counts.get(tt, 0))
+            if not gate["ok"]:
+                budget_blocked.append({"trade_type": tt, "score": row["score"],
+                                       "reason": gate["reason"]})
+                continue
             opened = await gp.open_from_signal(db, card, source="stratops_paper")
-            deployed.append({"trade_type": row["trade_type"], "score": row["score"],
-                             "position": opened})
+            if opened and opened.get("id"):
+                _wk_counts[tt] = _wk_counts.get(tt, 0) + 1
+            deployed.append({"trade_type": tt, "score": row["score"], "position": opened})
         result["deployed"] = deployed
+        result["budget_blocked"] = budget_blocked
+    result["budget"] = tb.budget_status(_wk_counts)
     # Surface the standing campaign objective even if no candidate fired.
     try:
         from utils.price_fetcher import get_forex_price
