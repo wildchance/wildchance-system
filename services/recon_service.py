@@ -104,6 +104,15 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
     if gold_price is None:
         return {"error": "could not fetch XAU/USD price"}
 
+    # live DXY level (genuine index only — the proxy is directional, not a level)
+    if dxy_price is None:
+        try:
+            from services.dxy_service import latest_dxy
+            d = await latest_dxy()
+            if d and d.get("is_level"):
+                dxy_price = d["price"]
+        except Exception:
+            pass
     box = await _live_box(window)
     rbusbis = await _rbusbis_dir()
     b2b = await _b2b()
