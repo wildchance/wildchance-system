@@ -65,9 +65,9 @@ def test_sniper_stack_flags_min_lot_clamp():
 
 
 def test_sniper_stack_flags_cap_breach_on_wide_zone():
-    # The 108-wide deep-discount zone at min lot risks ~$186 > the $120 cap — must
-    # be flagged, not silently deployed.
-    s = gz.sniper_stack("deep_discount_3328_3436", balance=1000, risk_usd=30, layers=3)
+    # The 250-wide weekly-OB zone at min lot risks well over the $120 cap — must be
+    # flagged, not silently deployed.
+    s = gz.sniper_stack("weekly_ob_3250_3500", balance=1000, risk_usd=30, layers=3)
     assert s["min_lot_clamped"] is True
     assert s["within_cap"] is False
     assert "EXCEEDS" in s["note"]
@@ -178,3 +178,32 @@ def test_zone_candidates_empty_at_range_extreme():
     # above every sell shelf → no aligned zone to layer into
     assert ss._zone_candidates(4300.0, balance=5000, risk_usd=20) == [] or \
         all(c["signal"] == "SHORT" for c in ss._zone_candidates(4300.0, 5000, 20))
+
+
+# --- zone plan + Telegram digest (real-time touch alerts) --------------------
+
+def test_zone_plan_builds_both_legs():
+    plan = gz.zone_plan(4018.0, balance=5000, risk_usd=20)
+    roles = {l["role"] for l in plan["legs"]}
+    assert roles == {"buy", "sell"}
+    buy = next(l for l in plan["legs"] if l["role"] == "buy")
+    assert buy["signal"] == "LONG"
+    assert buy["target"] == 4045.0                 # opposite rail = the bag
+    assert buy["stop"] < min(buy["entries"])       # stop below the entry ladder
+    assert buy["htf"] in ("aligns", "opposes", "neutral")
+
+
+def test_zone_plan_arms_only_on_touch():
+    # far above both shelves but within touch of the sell shelf → armed sell leg
+    near = gz.zone_plan(4050.0, balance=5000)      # inside sell_4045_4065
+    assert near["armed"] is True
+    # mid-range, >150 pips from either shelf → nothing armed
+    far = gz.zone_plan(4005.0, balance=5000, touch_pips=10)
+    assert far["armed"] is False
+
+
+def test_format_zone_digest_has_levels():
+    txt = gz.format_zone_digest(gz.zone_plan(4050.0, balance=5000))
+    assert "GOLD Zone Plan" in txt
+    assert "SL" in txt and "TP" in txt
+    assert "⚡ARMED" in txt                         # 4050 is inside the sell shelf
