@@ -65,10 +65,11 @@ WEIGHTS = {
     "rr": 8,             # tier reward:risk headroom
 }
 
-# 4H b2b-bomber agreement is a swing-continuation confluence bonus (added on top
-# of the 100-point base, then clamped) — a confirmed sweep+8h continuation in the
-# trade's direction lifts it up the engagement list.
+# Swing-continuation confluence bonuses (added on top of the 100-point base, then
+# clamped) — a 4H b2b bomber and/or an HTF warthog OTE agreeing with the trade
+# direction lift it up the engagement list.
 B2B_BONUS = 10
+WARTHOG_BONUS = 10
 
 
 def score_candidate(c: dict) -> dict:
@@ -98,8 +99,9 @@ def score_candidate(c: dict) -> dict:
     best_rr = max((t.get("rr", 0) for t in tps), default=0)
     p["rr"] = min(WEIGHTS["rr"], WEIGHTS["rr"] * best_rr / 8.0)   # 8R = full marks
 
-    # 4H b2b-bomber agreement — swing-continuation confluence bonus.
+    # 4H b2b-bomber + HTF warthog agreement — swing-continuation confluence bonuses.
     p["b2b"] = B2B_BONUS if c.get("b2b_confluence") is True else 0
+    p["warthog"] = WARTHOG_BONUS if c.get("warthog_confluence") is True else 0
 
     # Scale by the tier's MEASURED confidence factor (P3 backtest fit): a GREEN
     # tier leans in, a RED tier is discounted before allocation.
@@ -107,6 +109,7 @@ def score_candidate(c: dict) -> dict:
     score = round(min(100.0, sum(p.values()) * factor), 1)
     return {"score": score, "excluded": None, "tier_factor": factor,
             "b2b": c.get("b2b_confluence") is True,
+            "warthog": c.get("warthog_confluence") is True,
             "parts": {k: round(v, 1) for k, v in p.items()}}
 
 
@@ -120,8 +123,10 @@ def rank(candidates: Sequence[dict]) -> List[dict]:
         s = score_candidate(c)
         s["idx"] = i
         scored.append({**c, "stratops": s})
-    # best-first; ties break toward a b2b-confirmed continuation.
-    scored.sort(key=lambda x: (x["stratops"]["score"], 1 if x["stratops"].get("b2b") else 0),
+    # best-first; ties break toward a b2b/warthog-confirmed continuation.
+    scored.sort(key=lambda x: (x["stratops"]["score"],
+                               (1 if x["stratops"].get("b2b") else 0)
+                               + (1 if x["stratops"].get("warthog") else 0)),
                 reverse=True)
     return scored
 
