@@ -102,6 +102,40 @@ def to_ohlc(bars: List[DatedOHLC]) -> List[Tuple[float, float, float, float]]:
     return [(o, h, l, c) for (_d, o, h, l, c) in bars]
 
 
+async def fetch_ohlc_raw(symbol: str, interval: str = "4h", outputsize: int = 30,
+                         timezone: str = "UTC") -> List[dict]:
+    """OHLC bars with the FULL datetime preserved (oldest-first) for any interval.
+
+    fetch_ohlc collapses timestamps to a date — fine for daily/weekly but it
+    scrambles intraday order and loses the hour. This keeps the whole timestamp so
+    the 4H b2b bomber can sequence candles and read session anchors. Returns
+    [{time, open, high, low, close}]. Empty on any failure.
+    """
+    if not TWELVEDATA_KEY:
+        return []
+    params = {"symbol": normalize_symbol(symbol), "interval": interval,
+              "outputsize": max(1, min(int(outputsize), 5000)),
+              "timezone": timezone, "apikey": TWELVEDATA_KEY}
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            data = (await client.get("https://api.twelvedata.com/time_series",
+                                     params=params)).json()
+        out: List[dict] = []
+        for v in data.get("values") or []:
+            ts = v.get("datetime", "")
+            if not ts:
+                continue
+            try:
+                out.append({"time": ts, "open": float(v["open"]), "high": float(v["high"]),
+                            "low": float(v["low"]), "close": float(v["close"])})
+            except (KeyError, ValueError, TypeError):
+                continue
+        out.sort(key=lambda b: b["time"])          # ascending (feed is newest-first)
+        return out
+    except Exception:
+        return []
+
+
 def to_hlc(bars: List[DatedOHLC]) -> List[Tuple[float, float, float]]:
     """(high, low, close) tuples for the ATR engine."""
     return [(h, l, c) for (_d, _o, h, l, c) in bars]
