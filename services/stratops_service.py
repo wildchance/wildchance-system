@@ -92,6 +92,18 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
     _long_lock = gcycle.regime_gate("long", strict=True)
     _trend_locked = (not _long_lock["ok"]) and ("strict:" in _long_lock["reason"])
 
+    # Live 4H b2b bomber — the swing-continuation confluence that lifts an aligned
+    # candidate up the engagement list (and flags it a session-hold).
+    _b2b_sig = None
+    try:
+        from services.ohlc_service import fetch_ohlc_raw
+        from gold.b2b import b2b_bomber
+        _ohlc = await fetch_ohlc_raw("XAU/USD", interval="4h", outputsize=30)
+        if len(_ohlc) >= 4:
+            _b2b_sig = b2b_bomber(_ohlc).get("signal")
+    except Exception:
+        pass
+
     def add(sig):
         if not sig or sig.get("signal") not in ("LONG", "SHORT"):
             return
@@ -100,6 +112,9 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
             locked_out.append({"trade_type": sig.get("trade_type"),
                                "entry": sig.get("entry"), "reason": _long_lock["reason"]})
             return
+        if _b2b_sig in ("LONG", "SHORT") and sig.get("signal") == _b2b_sig:
+            sig["b2b_confluence"] = True
+            sig["hold"] = "hold the trend to the next pre-London CBDR (±1/±1.5SD)"
         cands.append(_with_campaign(sig))
 
     # MARCENT / AFCENT — the tiered intraday scan (protraction softened to a score).
@@ -132,6 +147,10 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
     result["dxy_long_lock"] = {"trend_longs_locked": _trend_locked,
                                "status": _long_lock.get("dxy_flip"),
                                "locked_out": locked_out}
+    result["b2b"] = {"signal": _b2b_sig,
+                     "note": ("4H b2b agrees — aligned candidates held to the next "
+                              "pre-London CBDR" if _b2b_sig in ("LONG", "SHORT")
+                              else "no 4H b2b continuation")}
 
     # P4 paper deploy — open each allocated candidate as a tracked position.
     if deploy and result["take"]:
