@@ -56,3 +56,18 @@ async def fetch_dxy(interval: str = "1h", outputsize: int = 60) -> Tuple[Optiona
     if eur:
         return [1.0 / p for p in eur if p], "proxy:1/EURUSD"
     return None, "unavailable"
+
+
+async def latest_dxy(interval: str = "1h") -> Optional[dict]:
+    """The latest DXY close for the flip/extreme logic.
+
+    ``is_level`` is True only for a genuine index symbol — the 1/EUR-USD proxy
+    tracks DIRECTION but not the price LEVEL (it prints ~0.92, not ~100), so it is
+    never fed into the 110/117 level gate; callers fall back to the anticipated
+    structure when is_level is False.
+    """
+    closes, source = await fetch_dxy(interval, outputsize=5)
+    if not closes:
+        return None
+    is_level = not source.startswith("proxy")
+    return {"price": round(closes[-1], 3), "source": source, "is_level": is_level}
