@@ -145,10 +145,26 @@ async def open_limit(db: AsyncSession, card: dict, source: str,
     return _to_dict(row)
 
 
+def _running_r(row, price: float) -> Optional[float]:
+    """Unrealized R for an OPEN position at the live price."""
+    try:
+        risk = abs(float(row.entry) - float(row.stop_initial))
+        if risk <= 0:
+            return None
+        sign = 1.0 if row.side == "long" else -1.0
+        return round(sign * (price - float(row.entry)) / risk, 2)
+    except Exception:
+        return None
+
+
 async def monitor(db: AsyncSession, price: float,
                   now: Optional[_dt.datetime] = None) -> dict:
-    """Advance PENDING (fill/cancel) and OPEN (TP/SL/time-stop) positions."""
+    """Advance PENDING (fill/cancel) and OPEN (TP/SL/time-stop) positions.
+
+    Also emits a lifecycle ``events`` list — armed→filled→TP/BE→closed, each with
+    the running (or realized) R — so the alert layer can narrate every transition."""
     now = now or _utcnow()
+    events: List[dict] = []
 
     # 1) PENDING limits — fill on touch, cancel at expiry.
     pres = await db.execute(select(GoldPosition).where(GoldPosition.status == "PENDING"))
@@ -164,10 +180,15 @@ async def monitor(db: AsyncSession, price: float,
             row.opened_at = now
             row.deadline = deadline_for(row.trade_type, now)
             filled.append({"id": row.id, "trade_type": row.trade_type, "entry": row.entry})
+            events.append({"kind": "filled", "id": row.id, "side": row.side,
+                           "trade_type": row.trade_type, "entry": row.entry,
+                           "stop": row.stop, "source": row.source, "price": price})
         elif action["action"] == "cancel":
             row.status = "CANCELLED"
             row.closed_at = now
             cancelled.append({"id": row.id, "trade_type": row.trade_type})
+            events.append({"kind": "cancelled", "id": row.id, "trade_type": row.trade_type,
+                           "reason": "limit expired unfilled"})
     if filled or cancelled:
         await db.commit()
 
@@ -188,6 +209,7 @@ async def monitor(db: AsyncSession, price: float,
             "be_active": bool(row.be_active), "opened_at": opened,
             "deadline": deadline, "trade_type": row.trade_type,
         }
+        was_tp, was_be = int(row.tp_hit or 0), bool(row.be_active)
         action = pos.evaluate(state, price, now)
         row.tp_hit = action["tp_hit"]
         row.be_active = action["be_active"]
@@ -199,13 +221,26 @@ async def monitor(db: AsyncSession, price: float,
             row.result_r = action["result_r"]
             row.closed_at = now
             closed.append(_to_dict(row))
+            events.append({"kind": "closed", "id": row.id, "side": row.side,
+                           "trade_type": row.trade_type, "exit_reason": action["exit_reason"],
+                           "exit_price": action["exit_price"], "result_r": action["result_r"],
+                           "source": row.source})
         else:
+            # transitions on a still-open position: new TP reached / stop→BE trail
+            if row.tp_hit > was_tp:
+                events.append({"kind": "tp", "id": row.id, "side": row.side,
+                               "trade_type": row.trade_type, "tp_hit": row.tp_hit,
+                               "running_r": _running_r(row, price), "price": price})
+            if row.be_active and not was_be:
+                events.append({"kind": "breakeven", "id": row.id, "side": row.side,
+                               "trade_type": row.trade_type, "stop": row.stop,
+                               "running_r": _running_r(row, price), "price": price})
             updated.append({"id": row.id, "tp_hit": row.tp_hit,
                             "be_active": row.be_active, "note": action["note"]})
     await db.commit()
     return {"price": price, "checked": len(rows),
             "filled": filled, "cancelled": cancelled,
-            "closed": closed, "still_open": updated}
+            "closed": closed, "still_open": updated, "events": events}
 
 
 async def list_positions(db: AsyncSession, status: Optional[str] = None,
