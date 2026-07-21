@@ -389,6 +389,21 @@ async def b2b(bars: int = Query(30, ge=4, le=200, description="how many 4H candl
     return b2b_bomber(ohlc)
 
 
+@router.post("/confirm")
+async def confirm(balance: float = Query(5000, gt=0),
+                  risk_usd: float = Query(20.0, gt=0),
+                  window: str = Query("prelondon"),
+                  deploy: bool = Query(False, description="open the confirmed entry (paper)"),
+                  notify: bool = Query(True),
+                  db: AsyncSession = Depends(get_db)):
+    """Take the trade on the sweep-and-reject: watch the CBDR ±1/±1.5SD levels, fire
+    only when price sweeps a level and CLOSES BACK INSIDE on the M15 — alert, and
+    (deploy) open it with the stop beyond the swept wick."""
+    from services.confirm_service import confirm as run_confirm
+    return await run_confirm(balance=balance, risk_usd=risk_usd, window=window,
+                             notify=notify, deploy=deploy, db=db)
+
+
 @router.get("/warthog")
 async def warthog(interval: str = Query("1h", description="HTF: 1h / 4h"),
                   bars: int = Query(80, ge=8, le=300),
