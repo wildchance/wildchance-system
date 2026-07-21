@@ -9,12 +9,18 @@ from __future__ import annotations
 
 from typing import List, Optional
 
+from decouple import config
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.execution_model import ExecutionOrder
 
 MAGIC = 770001                          # identifies this system's trades in MT5
+
+# The single live-execution switch. Default OFF (paper). Flip to true in the app
+# env ONLY once the MT5 VPS bridge is up — then every tracked position also
+# enqueues a broker order for the connector to place. No code change to go live.
+EXECUTION_ENABLED = config("EXECUTION_ENABLED", default=False, cast=bool)
 
 
 def build_order(sig: dict, symbol: str = "XAUUSD", source: str = "gold") -> Optional[dict]:
@@ -46,6 +52,23 @@ def build_order(sig: dict, symbol: str = "XAUUSD", source: str = "gold") -> Opti
         "comment": (sig.get("profile") or source)[:31],
         "source": source,
     }
+
+
+async def maybe_enqueue(db: AsyncSession, sig: dict, source: str = "gold") -> Optional[dict]:
+    """Enqueue an MT5 order for the bridge — but ONLY when live execution is on.
+
+    Called from the position-open path so that flipping EXECUTION_ENABLED=true is
+    all it takes to route the same tracked trades to the broker. Paper (OFF) is a
+    no-op. Never raises: a broker-queue failure must not block the tracked open."""
+    if not EXECUTION_ENABLED:
+        return None
+    try:
+        order = build_order(sig, source=source)
+        if not order:
+            return None
+        return await enqueue(db, order)
+    except Exception:
+        return None
 
 
 async def enqueue(db: AsyncSession, order: dict) -> dict:
