@@ -65,11 +65,13 @@ WEIGHTS = {
     "rr": 8,             # tier reward:risk headroom
 }
 
-# Swing-continuation confluence bonuses (added on top of the 100-point base, then
-# clamped) — a 4H b2b bomber and/or an HTF warthog OTE agreeing with the trade
-# direction lift it up the engagement list.
+# Swing-continuation + positioning confluence bonuses (added on top of the 100-point
+# base, then clamped) — a 4H b2b bomber, an HTF warthog OTE, and/or options-flow
+# agreement (entry on a put/call wall or the expected-move edge) each lift a
+# candidate up the engagement list.
 B2B_BONUS = 10
 WARTHOG_BONUS = 10
+OPTIONS_BONUS = 10
 
 
 def score_candidate(c: dict) -> dict:
@@ -99,9 +101,10 @@ def score_candidate(c: dict) -> dict:
     best_rr = max((t.get("rr", 0) for t in tps), default=0)
     p["rr"] = min(WEIGHTS["rr"], WEIGHTS["rr"] * best_rr / 8.0)   # 8R = full marks
 
-    # 4H b2b-bomber + HTF warthog agreement — swing-continuation confluence bonuses.
+    # 4H b2b-bomber + HTF warthog + options-flow agreement — confluence bonuses.
     p["b2b"] = B2B_BONUS if c.get("b2b_confluence") is True else 0
     p["warthog"] = WARTHOG_BONUS if c.get("warthog_confluence") is True else 0
+    p["options"] = OPTIONS_BONUS if c.get("options_confluence") is True else 0
 
     # Scale by the tier's MEASURED confidence factor (P3 backtest fit): a GREEN
     # tier leans in, a RED tier is discounted before allocation.
@@ -110,6 +113,7 @@ def score_candidate(c: dict) -> dict:
     return {"score": score, "excluded": None, "tier_factor": factor,
             "b2b": c.get("b2b_confluence") is True,
             "warthog": c.get("warthog_confluence") is True,
+            "options": c.get("options_confluence") is True,
             "parts": {k: round(v, 1) for k, v in p.items()}}
 
 
