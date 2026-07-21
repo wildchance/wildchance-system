@@ -65,6 +65,32 @@ async def _rbusbis_dir() -> Optional[str]:
     return None
 
 
+async def _b2b() -> Optional[dict]:
+    """Live 4H b2b-bomber read (best-effort)."""
+    try:
+        from services.ohlc_service import fetch_ohlc_raw
+        from gold.b2b import b2b_bomber
+        ohlc = await fetch_ohlc_raw("XAU/USD", interval="4h", outputsize=30)
+        if len(ohlc) >= 4:
+            return b2b_bomber(ohlc)
+    except Exception:
+        pass
+    return None
+
+
+async def _warthog(interval: str = "1h") -> Optional[dict]:
+    """Live HTF warthog (sweep + OTE) read (best-effort)."""
+    try:
+        from services.ohlc_service import fetch_ohlc_raw
+        from gold.warthog import warthog as wh, to_ohlc
+        raw = await fetch_ohlc_raw("XAU/USD", interval=interval, outputsize=80)
+        if len(raw) >= 8:
+            return wh(to_ohlc(raw))
+    except Exception:
+        pass
+    return None
+
+
 async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] = None,
                 window: str = "prelondon", notify: bool = True,
                 armed_only: bool = True, force: bool = False) -> dict:
@@ -80,7 +106,10 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
 
     box = await _live_box(window)
     rbusbis = await _rbusbis_dir()
-    sweep = gr.recon_sweep(gold_price, dxy_price=dxy_price, box=box, rbusbis_dir=rbusbis)
+    b2b = await _b2b()
+    warthog = await _warthog()
+    sweep = gr.recon_sweep(gold_price, dxy_price=dxy_price, box=box,
+                           rbusbis_dir=rbusbis, b2b=b2b, warthog=warthog)
 
     sig = _signature(sweep)
     last = _read_last()
