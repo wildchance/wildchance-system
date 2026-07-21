@@ -203,7 +203,17 @@ async def monitor(price: float = Query(None, gt=0,
             price = None
     if price is None:
         raise HTTPException(status_code=502, detail="could not fetch XAU/USD price")
-    result = await gp.monitor(db, float(price))
+    # Live pre-London CBDR levels — the hands-off session-hold exit rail.
+    pl_levels = None
+    try:
+        from services.cbdr_service import fetch_cbdr_window
+        from cbdr.engine import build_cbdr
+        w = await fetch_cbdr_window("XAU/USD", window="prelondon")
+        if w and w.get("high") is not None and w.get("low") is not None:
+            pl_levels = build_cbdr(w["high"], w["low"]).levels
+    except Exception:
+        pl_levels = None
+    result = await gp.monitor(db, float(price), prelondon_levels=pl_levels)
     if notify and result.get("events"):
         from gold.position import format_lifecycle_events
         text = format_lifecycle_events(result["events"])
