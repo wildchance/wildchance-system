@@ -379,6 +379,21 @@ async def b2b(bars: int = Query(30, ge=4, le=200, description="how many 4H candl
     return b2b_bomber(ohlc)
 
 
+@router.get("/warthog")
+async def warthog(interval: str = Query("1h", description="HTF: 1h / 4h"),
+                  bars: int = Query(80, ge=8, le=300),
+                  side: str = Query(None, description="force long/short (else BMS trend)")):
+    """Warthog — HTF liquidity sweep + OTE catapult: the swept high/low, the BMS
+    trend, and the OTE continuation entry (stop beyond the swept extreme) toward the
+    next liquidity pool. 1H and above."""
+    from services.ohlc_service import fetch_ohlc_raw
+    from gold.warthog import warthog as wh, to_ohlc
+    raw = await fetch_ohlc_raw("XAU/USD", interval=interval, outputsize=bars)
+    if len(raw) < 8:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD HTF bars")
+    return wh(to_ohlc(raw), side=side)
+
+
 @router.get("/recon")
 async def recon_get(gold: float = Query(None, description="override gold price"),
                     dxy: float = Query(None, description="live DXY price (optional)"),
