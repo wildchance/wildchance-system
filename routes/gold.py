@@ -222,6 +222,32 @@ async def monitor(price: float = Query(None, gt=0,
     return result
 
 
+@router.get("/options")
+async def options_get(side: str = Query(None, description="check confluence for long/short"),
+                      level: float = Query(None, description="entry level to check")):
+    """Options-flow read — put/call walls + the expected-move envelope + skew. If
+    side+level given, also the confluence for that entry."""
+    from gold import options_flow as ofl
+    out = ofl.snapshot()
+    if side and level is not None:
+        out["confluence"] = ofl.confluence(side, level)
+    return out
+
+
+@router.post("/options")
+async def options_set(future: float = Query(..., description="reference future price"),
+                      put_wall: float = Query(None), call_wall: float = Query(None),
+                      sigma1: float = Query(None), sigma2: float = Query(None),
+                      sigma3: float = Query(None),
+                      put_vol: float = Query(None), call_vol: float = Query(None)):
+    """Feed the options snapshot (operator-fed, like WGC): the future, put/call
+    walls, the 1σ/2σ/3σ expected-move half-widths, and put/call volume."""
+    from gold import options_flow as ofl
+    return ofl.set_inputs(future=future, put_wall=put_wall, call_wall=call_wall,
+                          sigma1=sigma1, sigma2=sigma2, sigma3=sigma3,
+                          put_vol=put_vol, call_vol=call_vol)
+
+
 @router.get("/budget")
 async def budget(db: AsyncSession = Depends(get_db)):
     """Weekly trade budget board — this week's per-tier counts vs the cadence caps
