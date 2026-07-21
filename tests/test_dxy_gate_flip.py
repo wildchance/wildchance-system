@@ -17,14 +17,14 @@ def test_flip_locked_pre_manipulation_base():
 
 
 def test_flip_at_extreme_alone_still_locked():
-    # at the ceiling extreme but no roll-over yet → topped, not flipped → LOCKED
-    s = gdxy.dxy_flip_status(106.0)
+    # at the 110-117 manipulation top but no roll-over yet → topped, not flipped → LOCKED
+    s = gdxy.dxy_flip_status(111.0)
     assert s["at_extreme"] is True and s["unlocked"] is False
 
 
 def test_flip_unlocks_on_extreme_plus_rollover():
-    # reached the extreme AND RBUSBIS now falling = the flip → UNLOCKED
-    s = gdxy.dxy_flip_status(106.0, rbusbis_dir="falling")
+    # reached the 110 top AND RBUSBIS now falling = the flip → UNLOCKED
+    s = gdxy.dxy_flip_status(111.0, rbusbis_dir="falling")
     assert s["unlocked"] is True and s["gold_longs"] == "unlocked"
 
 
@@ -51,13 +51,13 @@ def test_strict_blocks_long_pre_flip():
 
 
 def test_strict_allows_long_after_flip():
-    g = gcycle.regime_gate("long", dxy_price=106.0, strict=True)
+    g = gcycle.regime_gate("long", dxy_price=111.0, strict=True)
     # inject the roll-over via the live RBUSBIS input
     from gold import macro_cycle as mc
     saved = mc.INPUTS.get("dollar_rbusbis_dir")
     try:
         mc.INPUTS["dollar_rbusbis_dir"] = "falling"
-        g = gcycle.regime_gate("long", dxy_price=106.0, strict=True)
+        g = gcycle.regime_gate("long", dxy_price=111.0, strict=True)
         assert g["ok"] is True
         assert g["dxy_flip"]["unlocked"] is True
     finally:
