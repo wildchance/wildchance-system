@@ -526,6 +526,67 @@ async def warthog(interval: str = Query("1h", description="HTF: 1h / 4h"),
     return wh(to_ohlc(raw), side=side)
 
 
+@router.get("/retracement")
+async def retracement(interval: str = Query("4h", description="HTF for the impulse leg: 4h / 1h / 1day"),
+                      bars: int = Query(40, ge=8, le=300),
+                      price: float = Query(None, description="override live price"),
+                      window: str = Query("prelondon", description="CBDR window for the discount extreme")):
+    """Live retracement read — which of the THREE states are we in RIGHT NOW?
+
+      SELL-the-OTE     — down-leg retraced into OTE 62–79%, swept a high + rejected,
+                         HTF not bullish → sell the top with the trend (full size).
+      scalp-the-bounce — swept a low + reclaimed at a −1SD/−1.5SD extreme or fresh
+                         buy OB → a small range-fade scalp (never a trend long).
+      LEAVE            — the dangerous middle (30–50%, no sweep-reject) → stand down.
+
+    Makes the system's decision visible at a glance so a retracement in a bullish
+    leg is never sold (and a bounce is never held as a trend long)."""
+    from services.ohlc_service import fetch_ohlc_raw
+    from gold import retracement as gret
+    from gold import radar as grd
+    raw = await fetch_ohlc_raw("XAU/USD", interval=interval, outputsize=bars)
+    if len(raw) < 8:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD HTF bars")
+    obars = gret.to_ohlc(raw)
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            price = obars[-1][3]
+    # Fused HTF ORB bias (daily/weekly/monthly) — the trend filter.
+    htf_bias = None
+    try:
+        daily = await fetch_ohlc("XAU/USD", "1day", 90)
+        weekly = await fetch_ohlc("XAU/USD", "1week", 60)
+        monthly = await fetch_ohlc("XAU/USD", "1month", 48)
+        htf_bias = grd.combine_htf(
+            daily=grd.order_blocks(daily, timeframe="1D") if len(daily) >= 8 else [],
+            weekly=grd.order_blocks(weekly, timeframe="1W") if len(weekly) >= 8 else [],
+            monthly=grd.order_blocks(monthly, timeframe="1M") if len(monthly) >= 8 else [],
+        ).get("htf_bias")
+    except Exception:
+        pass
+    # Is the DXY flip on (trend longs unlocked)? and the pre-London CBDR box.
+    dxy_unlocked = False
+    try:
+        dxy_unlocked = bool(gdxy.dxy_flip_status().get("unlocked"))
+    except Exception:
+        pass
+    box = None
+    try:
+        from services.recon_service import _live_box
+        box = await _live_box(window)
+    except Exception:
+        pass
+    read = gret.retracement_state(obars, price=float(price), htf_bias=htf_bias,
+                                  box=box, dxy_unlocked=dxy_unlocked)
+    read["interval"] = interval
+    read["price"] = round(float(price), 2)
+    read["dxy_unlocked"] = dxy_unlocked
+    read["display"] = gret.format_retracement(read)
+    return read
+
+
 @router.get("/recon")
 async def recon_get(gold: float = Query(None, description="override gold price"),
                     dxy: float = Query(None, description="live DXY price (optional)"),
