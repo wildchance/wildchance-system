@@ -196,6 +196,17 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
                 conviction_applied.append({"trade_type": c.get("trade_type"),
                                            "signal": c.get("signal"), "mult": mult})
 
+    # Live retracement state — surface which of the THREE states we're in RIGHT NOW
+    # (SELL-the-OTE / scalp-the-bounce / LEAVE) so the engagement list shows it
+    # without a second call. Reuses the bias/lock already computed above.
+    retracement_read = None
+    try:
+        from services import retracement_service as rsvc
+        retracement_read = await rsvc.live_read(
+            htf_bias=_htf_orb_bias, dxy_unlocked=(not _trend_locked))
+    except Exception:
+        pass
+
     positions = await gp.list_positions(db, status="OPEN", limit=100)
     positions += await gp.list_positions(db, status="PENDING", limit=100)
 
@@ -221,6 +232,9 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
                             "note": ("HTF ORB size-bump on agreeing range-fade trades "
                                      "(never unlocks trend longs)" if conviction_applied
                                      else "no conviction bump this cycle")}
+    if retracement_read is not None:
+        from services import retracement_service as rsvc
+        result["retracement"] = rsvc.summary(retracement_read)
 
     # P4 paper deploy — open each allocated candidate as a tracked position,
     # respecting the weekly per-tier budget (soft cadence cap).
@@ -240,6 +254,21 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
             deployed.append({"trade_type": tt, "score": row["score"], "position": opened})
         result["deployed"] = deployed
         result["budget_blocked"] = budget_blocked
+        # Auto-feed the SELL-the-OTE read into the queue too — when actionable and
+        # its tier's weekly budget allows, hand the entry/stop/targets straight to
+        # the paper tracker (deduped so it can't double-open).
+        if (retracement_read and retracement_read.get("state") == "SELL_OTE"
+                and retracement_read.get("actionable")):
+            from services import retracement_service as rsvc
+            tt = retracement_read.get("trade_type") or "swing"
+            gate = tb.budget_gate(tt, _wk_counts.get(tt, 0))
+            if gate["ok"]:
+                opened = await rsvc.auto_feed(db, retracement_read, balance, risk_usd)
+                if opened and opened.get("id"):
+                    _wk_counts[tt] = _wk_counts.get(tt, 0) + 1
+                result["retracement_deployed"] = opened
+            else:
+                result["retracement_deployed"] = {"skipped": gate["reason"]}
     result["budget"] = tb.budget_status(_wk_counts)
     # Surface the standing campaign objective even if no candidate fired.
     try:
