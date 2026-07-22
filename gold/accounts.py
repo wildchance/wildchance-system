@@ -31,30 +31,30 @@ def _run_gain(lot: float, pips: float) -> float:
 
 # --- acc4: stepped compounding (0.05 start, 2× then 10× the account) ---------
 
-def compound_stepped(deposit: float = 750.0, run_targets_pct=(100, 100, 1000, 1000),
-                     pips: int = 1500, start_lot: float = 0.05, denom: str = "USD") -> dict:
-    """4 × 1500-pip runs. Run 1 opens at ``start_lot`` (0.05); the rest are lot-
-    sized to hit each run's target % of the running balance — the first two double
-    the account (build capital), the last two 10× it (compound). Deposit 700-1000.
+def compound_stepped(deposit: float = 750.0, lots=(0.05, 0.10, 1.0, 10.0),
+                     pips: int = 1500, denom: str = "USD") -> dict:
+    """4 × 1500-pip runs at the FIXED lot sequence 0.05 → 0.10 → 1.0 → 10.0.
+
+    Run 1 doubles the stake, run 2 doubles again (build capital), then runs 3-4 step
+    the lot to 1.0 and 10.0 for the 1000%-class compounding. Deposit ~750 (700-1000)
+    → ~168,000 cumulative. Only the ENTRY lot was moved 0.01→0.05 to give the early
+    runs room; the 0.10/1.0/10.0 tail is unchanged.
     """
     rows, balance = [], float(deposit)
-    for i, tgt in enumerate(run_targets_pct, 1):
-        if i == 1:
-            lot = round(start_lot, 2)
-            gain = _run_gain(lot, pips)
-        else:
-            gain = round(balance * tgt / 100.0, 2)
-            lot = round(gain / (pips * GOLD_PIP * GOLD_USD_PER_POINT), 2)
+    for i, lot in enumerate(lots, 1):
+        gain = _run_gain(lot, pips)
+        prev = balance
         balance = round(balance + gain, 2)
-        rows.append({"run": i, "lot": lot, "pips": pips, "target_pct": tgt,
-                     "gain": gain, "balance": balance})
+        rows.append({"run": i, "lot": round(lot, 2), "pips": pips, "gain": gain,
+                     "target_pct": round(gain / prev * 100) if prev else None,
+                     "balance": balance})
     return {"account": "acc4", "strategy": "compound_stepped", "denom": denom,
-            "deposit": deposit, "runs": len(run_targets_pct), "pip_target": pips,
-            "start_lot": start_lot, "final_balance": balance,
+            "deposit": deposit, "runs": len(lots), "pip_target": pips,
+            "start_lot": lots[0], "lots": list(lots), "final_balance": balance,
             "multiple": round(balance / deposit, 1) if deposit else None,
-            "run_targets_pct": list(run_targets_pct), "ladder": rows,
-            "note": (f"{len(run_targets_pct)} × {pips}-pip runs from 0.05 lot — "
-                     f"2× then 10×: {denom} {deposit:g} → {balance:,.0f}")}
+            "run_targets_pct": [r["target_pct"] for r in rows], "ladder": rows,
+            "note": (f"{len(lots)} × {pips}-pip runs, lots {list(lots)}: "
+                     f"{denom} {deposit:g} → {balance:,.0f}")}
 
 
 # --- acc5: full-trend 2500-pip retracement layering -------------------------
