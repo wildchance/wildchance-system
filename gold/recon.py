@@ -46,7 +46,8 @@ def _nearest_dxy_fib(price: Optional[float]) -> dict:
 
 def recon_sweep(gold_price: float, dxy_price: Optional[float] = None,
                 box=None, rbusbis_dir: Optional[str] = None,
-                b2b: Optional[dict] = None, warthog: Optional[dict] = None) -> dict:
+                b2b: Optional[dict] = None, warthog: Optional[dict] = None,
+                radar: Optional[dict] = None) -> dict:
     """Fuse the gold + DXY fib maps into one recon report with armed setups.
 
     ``b2b`` is an optional 4H b2b-bomber read; ``warthog`` an optional HTF sweep+OTE
@@ -83,18 +84,20 @@ def recon_sweep(gold_price: float, dxy_price: Optional[float] = None,
     # --- fuse into armed setups --------------------------------------------
     b2b_sig = (b2b or {}).get("signal") if b2b else None
     wh_sig = (warthog or {}).get("signal") if warthog else None
+    radar_bias = (radar or {}).get("bias") if radar else None    # "long"/"short"
     setups = []
     if buy_anchor["ok"]:
         confl = b2b_sig == "LONG"
         wh_ok = wh_sig == "LONG"
         opt_ok = _opt_confl("long", gold_price)
+        rd_ok = radar_bias == "long"
         setups.append({
             "side": "LONG", "zone": buy_anchor["ob_zone"], "cbdr_level": buy_anchor["cbdr_level"],
             "armed": bool(longs_unlocked), "b2b_confluence": confl, "warthog_confluence": wh_ok,
-            "options_confluence": opt_ok,
+            "options_confluence": opt_ok, "radar_confluence": rd_ok,
             "gate": ("armed — OB + deviation extreme + DXY flipped"
                      + (" + 4H b2b" if confl else "") + (" + warthog OTE" if wh_ok else "")
-                     + (" + 📊 put-wall" if opt_ok else "")
+                     + (" + 📊 put-wall" if opt_ok else "") + (" + 📡 OB" if rd_ok else "")
                      if longs_unlocked else
                      "STAGED — OB + deviation extreme, but DXY longs still LOCKED"),
         })
@@ -102,13 +105,14 @@ def recon_sweep(gold_price: float, dxy_price: Optional[float] = None,
         confl = b2b_sig == "SHORT"
         wh_ok = wh_sig == "SHORT"
         opt_ok = _opt_confl("short", gold_price)
+        rd_ok = radar_bias == "short"
         setups.append({
             "side": "SHORT", "zone": sell_anchor["ob_zone"], "cbdr_level": sell_anchor["cbdr_level"],
             "armed": True, "b2b_confluence": confl, "warthog_confluence": wh_ok,
-            "options_confluence": opt_ok,
+            "options_confluence": opt_ok, "radar_confluence": rd_ok,
             "gate": "armed — sell OB + deviation extreme (shorts run while DXY bid)"
                     + (" + 4H b2b" if confl else "") + (" + warthog OTE" if wh_ok else "")
-                    + (" + 📊 call-wall" if opt_ok else ""),
+                    + (" + 📊 call-wall" if opt_ok else "") + (" + 📡 OB" if rd_ok else ""),
         })
     armed = any(s["armed"] for s in setups)
 
@@ -125,7 +129,7 @@ def recon_sweep(gold_price: float, dxy_price: Optional[float] = None,
             "trigger": dtrig.get("trigger"), "gold_longs": dflip["gold_longs"],
             "at_extreme": dflip["at_extreme"], "nearest_fib": dfib, "note": dflip["note"],
         },
-        "b2b": b2b, "warthog": warthog, "options": opt_snapshot,
+        "b2b": b2b, "warthog": warthog, "options": opt_snapshot, "radar": radar,
         "setups": setups, "armed": armed,
         "note": (f"gold {gloc['region']} @ {round(gold_price, 2)} | dollar "
                  f"{dreg['regime']}/{dreg['phase']} | longs {dflip['gold_longs']} | "
@@ -169,13 +173,19 @@ def format_recon(sweep: dict) -> str:
         w = opt.get("walls") or {}
         fb = (opt.get("flow") or {}).get("bias")
         lines.append(f"  📊 options: put wall {w.get('put_wall')} / call wall {w.get('call_wall')} ({fb})")
+    rd = sweep.get("radar")
+    if rd and rd.get("active_retest"):
+        a = rd["active_retest"]
+        lines.append(f"  📡 OB: retesting {'fresh ' if a.get('fresh') else ''}{a['type']} "
+                     f"{a['zone']} → {rd['bias'].upper()}")
     lines.append("")
     if sweep["setups"]:
         for s in sweep["setups"]:
             flag = "⚡" if s["armed"] else "⏸"
             confl = ("  +b2b✅" if s.get("b2b_confluence") else "") + \
                     ("  +🐗OTE" if s.get("warthog_confluence") else "") + \
-                    ("  +📊wall" if s.get("options_confluence") else "")
+                    ("  +📊wall" if s.get("options_confluence") else "") + \
+                    ("  +📡OB" if s.get("radar_confluence") else "")
             lines.append(f"{flag} *{s['side']}* {s['zone']} @ {s['cbdr_level']} — {s['gate']}{confl}")
     else:
         lines.append("_no OB+deviation anchor yet — price between zones_")
