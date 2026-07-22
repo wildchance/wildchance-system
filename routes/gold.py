@@ -485,6 +485,32 @@ async def radar_continuity(sell: str = Query(None, description="comma prices e.g
     return gr.set_continuity(sell=s, buy=b)
 
 
+@router.get("/radar/htf")
+async def radar_htf():
+    """Multi-timeframe OB map — daily / weekly / monthly order blocks fused into one
+    HTF bias, then combined with the weekly profile for the conviction read."""
+    from gold import radar as gr
+    daily = await fetch_ohlc("XAU/USD", "1day", 90)
+    weekly = await fetch_ohlc("XAU/USD", "1week", 60)
+    monthly = await fetch_ohlc("XAU/USD", "1month", 48)
+    d_ob = gr.order_blocks(daily, timeframe="1D") if len(daily) >= 8 else []
+    w_ob = gr.order_blocks(weekly, timeframe="1W") if len(weekly) >= 8 else []
+    m_ob = gr.order_blocks(monthly, timeframe="1M") if len(monthly) >= 8 else []
+    combined = gr.combine_htf(daily=d_ob, weekly=w_ob, monthly=m_ob)
+    # weekly profile direction for the fusion
+    wk_bias = None
+    try:
+        from gold.ict import classify_week
+        wk = classify_week(daily)
+        wk_bias = (wk or {}).get("bias")
+    except Exception:
+        pass
+    fusion = gr.fuse_with_weekly_profile(combined["htf_bias"], wk_bias)
+    return {"combined": combined, "weekly_profile_bias": wk_bias, "fusion": fusion,
+            "fresh": {"daily": gr.unmitigated(d_ob), "weekly": gr.unmitigated(w_ob),
+                      "monthly": gr.unmitigated(m_ob)}}
+
+
 @router.get("/warthog")
 async def warthog(interval: str = Query("1h", description="HTF: 1h / 4h"),
                   bars: int = Query(80, ge=8, le=300),
