@@ -541,50 +541,30 @@ async def retracement(interval: str = Query("4h", description="HTF for the impul
 
     Makes the system's decision visible at a glance so a retracement in a bullish
     leg is never sold (and a bounce is never held as a trend long)."""
-    from services.ohlc_service import fetch_ohlc_raw
-    from gold import retracement as gret
-    from gold import radar as grd
-    raw = await fetch_ohlc_raw("XAU/USD", interval=interval, outputsize=bars)
-    if len(raw) < 8:
+    from services import retracement_service as rsvc
+    read = await rsvc.live_read(gold_price=price, interval=interval, bars=bars,
+                                window=window)
+    if read.get("reason", "").startswith("not enough"):
         raise HTTPException(status_code=502, detail="not enough XAU/USD HTF bars")
-    obars = gret.to_ohlc(raw)
-    if price is None:
-        try:
-            price = await get_forex_price("XAU/USD")
-        except Exception:
-            price = obars[-1][3]
-    # Fused HTF ORB bias (daily/weekly/monthly) — the trend filter.
-    htf_bias = None
-    try:
-        daily = await fetch_ohlc("XAU/USD", "1day", 90)
-        weekly = await fetch_ohlc("XAU/USD", "1week", 60)
-        monthly = await fetch_ohlc("XAU/USD", "1month", 48)
-        htf_bias = grd.combine_htf(
-            daily=grd.order_blocks(daily, timeframe="1D") if len(daily) >= 8 else [],
-            weekly=grd.order_blocks(weekly, timeframe="1W") if len(weekly) >= 8 else [],
-            monthly=grd.order_blocks(monthly, timeframe="1M") if len(monthly) >= 8 else [],
-        ).get("htf_bias")
-    except Exception:
-        pass
-    # Is the DXY flip on (trend longs unlocked)? and the pre-London CBDR box.
-    dxy_unlocked = False
-    try:
-        dxy_unlocked = bool(gdxy.dxy_flip_status().get("unlocked"))
-    except Exception:
-        pass
-    box = None
-    try:
-        from services.recon_service import _live_box
-        box = await _live_box(window)
-    except Exception:
-        pass
-    read = gret.retracement_state(obars, price=float(price), htf_bias=htf_bias,
-                                  box=box, dxy_unlocked=dxy_unlocked)
-    read["interval"] = interval
-    read["price"] = round(float(price), 2)
-    read["dxy_unlocked"] = dxy_unlocked
-    read["display"] = gret.format_retracement(read)
     return read
+
+
+@router.post("/retracement")
+async def retracement_alert(interval: str = Query("4h"),
+                            window: str = Query("prelondon"),
+                            notify: bool = Query(True),
+                            force: bool = Query(False, description="send even if unchanged"),
+                            deploy: bool = Query(False, description="open the SELL_OTE card (paper) on a fresh transition"),
+                            balance: float = Query(5000, gt=0),
+                            risk_usd: float = Query(20.0, gt=0),
+                            db: AsyncSession = Depends(get_db)):
+    """Retracement-state transition alert — fires ONE Telegram when the state flips
+    (LEAVE→SELL_OTE, etc). Cron-friendly dedup (quiet until it changes). With
+    ``deploy`` it also opens the SELL_OTE entry as a paper position on the flip."""
+    from services import retracement_service as rsvc
+    return await rsvc.state_alert(interval=interval, window=window, notify=notify,
+                                  force=force, deploy=deploy, db=db,
+                                  balance=balance, risk_usd=risk_usd)
 
 
 @router.get("/recon")
