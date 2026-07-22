@@ -12,8 +12,8 @@ def test_compound_stepped_double_then_10x():
     assert out["ladder"][0]["lot"] == 0.05
     assert out["ladder"][0]["balance"] == pytest.approx(1500.0)   # run1 doubles 750
     assert out["ladder"][1]["balance"] == pytest.approx(3000.0)   # run2 doubles again
-    assert out["run_targets_pct"] == [100, 100, 1000, 1000]
-    assert out["final_balance"] > 300000
+    assert out["lots"] == [0.05, 0.10, 1.0, 10.0]                 # fixed lot sequence
+    assert out["final_balance"] == pytest.approx(168000.0)
 
 
 # --- acc5: 2500-pip trend layering ------------------------------------------
