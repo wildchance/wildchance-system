@@ -7,12 +7,13 @@ from gold import accounts as ga
 
 # --- acc4: 10x compounding to 167,350 ---------------------------------------
 
-def test_compound_10x_hits_167350():
-    out = ga.compound_10x(700, runs=4)
-    assert out["final_balance"] == pytest.approx(167350.0, abs=1.0)
-    lots = [r["lot"] for r in out["ladder"]]
-    assert lots == [0.01, 0.10, 1.00, 10.00]
-    assert out["ladder"][-1]["gain"] == pytest.approx(150000.0)
+def test_compound_stepped_double_then_10x():
+    out = ga.compound_stepped(750)
+    assert out["ladder"][0]["lot"] == 0.05
+    assert out["ladder"][0]["balance"] == pytest.approx(1500.0)   # run1 doubles 750
+    assert out["ladder"][1]["balance"] == pytest.approx(3000.0)   # run2 doubles again
+    assert out["run_targets_pct"] == [100, 100, 1000, 1000]
+    assert out["final_balance"] > 300000
 
 
 # --- acc5: 2500-pip trend layering ------------------------------------------
@@ -34,12 +35,12 @@ def test_trend_layer_2500():
 def test_fleet_has_five_accounts():
     assert set(ga.FLEET) == {"acc1", "acc2", "acc3", "acc4", "acc5"}
     assert ga.FLEET["acc1"]["strategy"] == "cent_flipper"
-    assert ga.FLEET["acc4"]["strategy"] == "compound_10x"
+    assert ga.FLEET["acc4"]["strategy"] == "compound_stepped"
 
 
 def test_account_plan_dispatch():
     assert ga.account_plan("acc1", denom="cent")["strategy"] == "cent_flipper"
-    assert ga.account_plan("acc4")["final_balance"] == pytest.approx(167350.0, abs=1.0)
+    assert ga.account_plan("acc4")["start_lot"] == 0.05
     assert "phases" in ga.account_plan("acc2")
     assert ga.account_plan("acc5", anchor=4000.0)["strategy"] == "trend_layer_2500"
     assert "error" in ga.account_plan("acc9")
