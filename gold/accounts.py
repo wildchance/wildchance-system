@@ -29,59 +29,72 @@ def _run_gain(lot: float, pips: float) -> float:
     return round(lot * (pips * GOLD_PIP) * GOLD_USD_PER_POINT, 2)
 
 
-# --- acc4: 10x-per-run compounding ------------------------------------------
+# --- acc4: stepped compounding (0.05 start, 2× then 10× the account) ---------
 
-def compound_10x(deposit: float = 700.0, runs: int = 4, pips: int = 1500,
-                 denom: str = "USD") -> dict:
-    """Start 0.01, ×10 the lot after every 1500-pip run. 700 → 167,350 in 4 runs."""
-    rows, balance, lot = [], float(deposit), 0.01
-    for i in range(1, runs + 1):
-        gain = _run_gain(lot, pips)
+def compound_stepped(deposit: float = 750.0, run_targets_pct=(100, 100, 1000, 1000),
+                     pips: int = 1500, start_lot: float = 0.05, denom: str = "USD") -> dict:
+    """4 × 1500-pip runs. Run 1 opens at ``start_lot`` (0.05); the rest are lot-
+    sized to hit each run's target % of the running balance — the first two double
+    the account (build capital), the last two 10× it (compound). Deposit 700-1000.
+    """
+    rows, balance = [], float(deposit)
+    for i, tgt in enumerate(run_targets_pct, 1):
+        if i == 1:
+            lot = round(start_lot, 2)
+            gain = _run_gain(lot, pips)
+        else:
+            gain = round(balance * tgt / 100.0, 2)
+            lot = round(gain / (pips * GOLD_PIP * GOLD_USD_PER_POINT), 2)
         balance = round(balance + gain, 2)
-        rows.append({"run": i, "lot": round(lot, 2), "pips": pips,
+        rows.append({"run": i, "lot": lot, "pips": pips, "target_pct": tgt,
                      "gain": gain, "balance": balance})
-        lot = round(lot * 10, 4)
-    return {"account": "acc4", "strategy": "compound_10x", "denom": denom,
-            "deposit": deposit, "runs": runs, "pip_target": pips,
-            "final_balance": balance, "multiple": round(balance / deposit, 1) if deposit else None,
-            "ladder": rows,
-            "note": f"{runs} × {pips}-pip runs, lot ×10 each: {denom} {deposit:g} → {balance:,.0f}"}
+    return {"account": "acc4", "strategy": "compound_stepped", "denom": denom,
+            "deposit": deposit, "runs": len(run_targets_pct), "pip_target": pips,
+            "start_lot": start_lot, "final_balance": balance,
+            "multiple": round(balance / deposit, 1) if deposit else None,
+            "run_targets_pct": list(run_targets_pct), "ladder": rows,
+            "note": (f"{len(run_targets_pct)} × {pips}-pip runs from 0.05 lot — "
+                     f"2× then 10×: {denom} {deposit:g} → {balance:,.0f}")}
 
 
 # --- acc5: full-trend 2500-pip retracement layering -------------------------
 
 def trend_layer_plan(anchor: float, direction: str = "long", range_pips: int = 2500,
-                     layers: int = 6, base_lot: float = 0.02, scale: float = 2.2,
+                     cap_pips: int = 1450, layers: int = 6, base_lot: float = 0.02,
+                     scale: float = 2.2, leverage: str = "1:2000/3000",
                      denom: str = "USD") -> dict:
-    """Layer INTO a full 2500-pip trend on the retracements — scaling the lot each
-    layer (the handwritten ladder). Entries step through the range against the move;
-    the shared target is the far end of the 2500-pip leg.
+    """Layer INTO a 2500-pip trend on the retracements, then RIDE to full TP.
 
-    ``anchor`` is the leg start; ``direction`` the trend. Deeper layers (better price)
-    carry a bigger lot, so the average entry rides toward the extreme.
+    Entries scale-in over the FIRST ``cap_pips`` of the move (the handwritten ladder
+    that stops ~3630/3632); once the cap is filled the position holds untouched to
+    the full ``range_pips`` target. Deeper layers carry a bigger lot (high leverage
+    ~1:2000/3000), so the average entry sits well inside the discount and the whole
+    stack rides the last leg to target with the account grown in good risk flow.
     """
     long = direction.lower() in ("long", "buy")
     span = range_pips * GOLD_PIP                       # 2500 pips → $250 move
+    cap = cap_pips * GOLD_PIP
     target = round(anchor + (span if long else -span), 2)
-    step = span / max(1, layers)
+    step = cap / max(1, layers - 1)                    # layers fill only within the cap
     rows, lot, total_lot = [], base_lot, 0.0
     for i in range(1, layers + 1):
-        # retracement entries: for a long, step DOWN into discount; short steps up.
         entry = round(anchor - step * (i - 1) if long else anchor + step * (i - 1), 2)
         lot_i = round(lot, 2)
         total_lot = _round_lot(total_lot + lot_i)
         rows.append({"layer": i, "entry": entry, "lot": lot_i,
                      "pips_to_target": round(abs(target - entry) / GOLD_PIP)})
         lot = lot * scale
+    cap_price = rows[-1]["entry"]
     avg_entry = round(sum(r["entry"] * r["lot"] for r in rows) / max(total_lot, 1e-9), 2)
     est_gain = _run_gain(total_lot, round(abs(target - avg_entry) / GOLD_PIP))
     return {"account": "acc5", "strategy": "trend_layer_2500", "denom": denom,
             "direction": "long" if long else "short", "anchor": anchor,
-            "range_pips": range_pips, "target": target, "layers": layers,
+            "range_pips": range_pips, "cap_pips": cap_pips, "cap_price": cap_price,
+            "target": target, "layers": layers, "leverage": leverage,
             "avg_entry": avg_entry, "total_lot": total_lot, "est_gain_usd": est_gain,
             "orders": rows,
-            "note": f"{layers}-layer scale-in over {range_pips} pips → target {target} "
-                    f"(avg {avg_entry}, {total_lot} lot)"}
+            "note": f"{layers}-layer scale-in capped at {cap_price} (first {cap_pips} pips), "
+                    f"then rides to target {target} (avg {avg_entry}, {total_lot} lot, {leverage})"}
 
 
 # --- the fleet registry ------------------------------------------------------
@@ -93,8 +106,8 @@ FLEET = {
              "default_deposit": 5000},
     "acc3": {"strategy": "middle_compound", "desc": "[500,500,1500]-pip cycles",
              "default_deposit": 5000},
-    "acc4": {"strategy": "compound_10x", "desc": "4 runs · lot ×10 · 700→167,350",
-             "default_deposit": 700},
+    "acc4": {"strategy": "compound_stepped", "desc": "4×1500-pip · 0.05 start · 2× then 10×",
+             "default_deposit": 750},
     "acc5": {"strategy": "trend_layer_2500", "desc": "full-trend 2500-pip layering",
              "default_deposit": 100000},
 }
@@ -117,8 +130,8 @@ def account_plan(acc_id: str, deposit: Optional[float] = None, denom: str = "USD
                 "phases": phase_plan(dep), "lots": lot_ladder(dep)}
     elif strat == "middle_compound":
         plan = {"account": acc_id, **fl.middle_ladder(dep, cycles=4, denom=denom)}
-    elif strat == "compound_10x":
-        plan = compound_10x(dep, denom=denom)
+    elif strat == "compound_stepped":
+        plan = compound_stepped(dep, denom=denom)
     elif strat == "trend_layer_2500":
         plan = trend_layer_plan(anchor, denom=denom)
     else:
