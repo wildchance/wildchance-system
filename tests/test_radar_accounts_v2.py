@@ -71,9 +71,9 @@ def test_acc4_stepped_first_two_double():
     # run1 gain at 0.05 lot / 1500 pips = 750 → doubles 750 to 1500
     assert rows[0]["balance"] == pytest.approx(1500.0)
     assert rows[1]["balance"] == pytest.approx(3000.0)  # 2nd run doubles again
-    # last two runs 10x the account
-    assert rows[2]["target_pct"] == 1000 and rows[3]["target_pct"] == 1000
-    assert out["final_balance"] > 300000
+    # fixed lot tail steps to 1.0 then 10.0 → 168,000 cumulative
+    assert rows[2]["lot"] == 1.0 and rows[3]["lot"] == 10.0
+    assert out["final_balance"] == pytest.approx(168000.0)
 
 
 def test_acc4_registered():
