@@ -111,15 +111,23 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
             _wh_sig = _wh(_to_ohlc(_raw)).get("signal")
     except Exception:
         pass
-    # HTF OB radar bias (daily order-block retest).
-    _radar_bias = None
+    # HTF OB radar bias (daily order-block retest) + the fused HTF ORB bias across
+    # daily/weekly/monthly for conviction scaling.
+    _radar_bias = _htf_orb_bias = None
     try:
         from gold import radar as _rd
         from services.ohlc_service import fetch_ohlc
-        _daily = await fetch_ohlc("XAU/USD", "1day", 60)
+        _daily = await fetch_ohlc("XAU/USD", "1day", 90)
         if len(_daily) >= 8:
             _px = _daily[-1][4]
             _radar_bias = _rd.radar_scan(_daily, _px).get("bias")
+            _wk = await fetch_ohlc("XAU/USD", "1week", 60)
+            _mo = await fetch_ohlc("XAU/USD", "1month", 48)
+            _htf_orb_bias = _rd.combine_htf(
+                daily=_rd.order_blocks(_daily, timeframe="1D"),
+                weekly=_rd.order_blocks(_wk, timeframe="1W") if len(_wk) >= 8 else [],
+                monthly=_rd.order_blocks(_mo, timeframe="1M") if len(_mo) >= 8 else [],
+            ).get("htf_bias")
     except Exception:
         pass
 
@@ -174,6 +182,20 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
     except Exception:
         pass
 
+    # HTF-ORB conviction scaling — a fresh HTF ORB bias leans the SIZE of already-
+    # allowed range-fade candidates that agree (never unlocks / never touches trend
+    # tiers; the DXY gate still owns those).
+    conviction_applied = []
+    if _htf_orb_bias in ("long", "short"):
+        from gold import conviction as gconv
+        for i, c in enumerate(cands):
+            mult, reason = gconv.conviction_multiplier(
+                c.get("signal"), c.get("trade_type"), _htf_orb_bias)
+            if mult > 1.0:
+                cands[i] = gconv.apply_conviction(c, mult)
+                conviction_applied.append({"trade_type": c.get("trade_type"),
+                                           "signal": c.get("signal"), "mult": mult})
+
     positions = await gp.list_positions(db, status="OPEN", limit=100)
     positions += await gp.list_positions(db, status="PENDING", limit=100)
 
@@ -195,6 +217,10 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
     result["warthog"] = {"signal": _wh_sig,
                          "note": ("HTF warthog OTE agrees" if _wh_sig in ("LONG", "SHORT")
                                   else "no HTF warthog setup")}
+    result["conviction"] = {"htf_orb_bias": _htf_orb_bias, "applied": conviction_applied,
+                            "note": ("HTF ORB size-bump on agreeing range-fade trades "
+                                     "(never unlocks trend longs)" if conviction_applied
+                                     else "no conviction bump this cycle")}
 
     # P4 paper deploy — open each allocated candidate as a tracked position,
     # respecting the weekly per-tier budget (soft cadence cap).
