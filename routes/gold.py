@@ -248,6 +248,33 @@ async def options_set(future: float = Query(..., description="reference future p
                           put_vol=put_vol, call_vol=call_vol)
 
 
+@router.get("/accounts")
+async def accounts(denom: str = Query("USD", description="cent | USD | KES | KWD"),
+                   anchor: float = Query(4000.0, description="leg anchor for acc5")):
+    """The 5-account fleet plan — each account's growth/layer ladder."""
+    from gold import accounts as ga
+    return ga.fleet_plan(denom=denom, anchor=anchor)
+
+
+@router.get("/accounts/{acc_id}")
+async def account_one(acc_id: str, deposit: float = Query(None),
+                      denom: str = Query("USD"), anchor: float = Query(4000.0)):
+    """One account's plan (acc1..acc5)."""
+    from gold import accounts as ga
+    return ga.account_plan(acc_id, deposit=deposit, denom=denom, anchor=anchor)
+
+
+@router.post("/accounts/fanout")
+async def accounts_fanout(entry: float = Query(...), stop: float = Query(...),
+                          side: str = Query("short", description="long | short")):
+    """Copy-trade fan-out: size one signal to the default 5-account fleet.
+    (Balances/denoms are the fleet defaults; POST your own via the body later.)"""
+    from gold import accounts as ga
+    fleet = [{"id": aid, "balance": m["default_deposit"], "denom": "USD", "risk_pct": 1.0}
+             for aid, m in ga.FLEET.items()]
+    return ga.copy_fanout({"side": side, "entry": entry, "stop": stop}, fleet)
+
+
 @router.get("/budget")
 async def budget(db: AsyncSession = Depends(get_db)):
     """Weekly trade budget board — this week's per-tier counts vs the cadence caps
