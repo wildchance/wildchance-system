@@ -91,6 +91,19 @@ async def _warthog(interval: str = "1h") -> Optional[dict]:
     return None
 
 
+async def _radar(gold_price: float) -> Optional[dict]:
+    """Live daily OB-radar scan (best-effort)."""
+    try:
+        from services.ohlc_service import fetch_ohlc
+        from gold import radar as rd
+        daily = await fetch_ohlc("XAU/USD", "1day", 60)
+        if len(daily) >= 8:
+            return rd.radar_scan(daily, gold_price)
+    except Exception:
+        pass
+    return None
+
+
 async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] = None,
                 window: str = "prelondon", notify: bool = True,
                 armed_only: bool = True, force: bool = False) -> dict:
@@ -117,8 +130,9 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
     rbusbis = await _rbusbis_dir()
     b2b = await _b2b()
     warthog = await _warthog()
+    radar = await _radar(gold_price)
     sweep = gr.recon_sweep(gold_price, dxy_price=dxy_price, box=box,
-                           rbusbis_dir=rbusbis, b2b=b2b, warthog=warthog)
+                           rbusbis_dir=rbusbis, b2b=b2b, warthog=warthog, radar=radar)
 
     sig = _signature(sweep)
     last = _read_last()
