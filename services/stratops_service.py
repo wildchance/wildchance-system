@@ -111,6 +111,17 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
             _wh_sig = _wh(_to_ohlc(_raw)).get("signal")
     except Exception:
         pass
+    # HTF OB radar bias (daily order-block retest).
+    _radar_bias = None
+    try:
+        from gold import radar as _rd
+        from services.ohlc_service import fetch_ohlc
+        _daily = await fetch_ohlc("XAU/USD", "1day", 60)
+        if len(_daily) >= 8:
+            _px = _daily[-1][4]
+            _radar_bias = _rd.radar_scan(_daily, _px).get("bias")
+    except Exception:
+        pass
 
     def add(sig):
         if not sig or sig.get("signal") not in ("LONG", "SHORT"):
@@ -125,6 +136,11 @@ async def muster(db: AsyncSession, balance: float = 5000.0,
             sig["hold"] = "hold the trend to the next pre-London CBDR (±1/±1.5SD)"
         if _wh_sig in ("LONG", "SHORT") and sig.get("signal") == _wh_sig:
             sig["warthog_confluence"] = True
+        # HTF OB radar: the daily order-block retest agrees with the trade side.
+        if _radar_bias in ("long", "short"):
+            want = "LONG" if _radar_bias == "long" else "SHORT"
+            if sig.get("signal") == want:
+                sig["radar_confluence"] = True
         # Options-flow: entry on a put/call wall or the expected-move edge (no-op
         # until the operator feeds the snapshot).
         try:
