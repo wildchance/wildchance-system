@@ -134,13 +134,26 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
     sweep = gr.recon_sweep(gold_price, dxy_price=dxy_price, box=box,
                            rbusbis_dir=rbusbis, b2b=b2b, warthog=warthog, radar=radar)
 
+    # Live retracement state on the board — SELL-the-OTE / scalp-the-bounce / LEAVE.
+    retracement = None
+    try:
+        from services import retracement_service as rsvc
+        retracement = await rsvc.live_read(gold_price=gold_price, box=box)
+    except Exception:
+        pass
+
     sig = _signature(sweep)
     last = _read_last()
     changed = sig != last
     should = force or ((sweep["armed"] or not armed_only) and changed)
     sent = False
     if notify and should:
-        sent = await gold_scan._tg(gr.format_recon(sweep))
+        text = gr.format_recon(sweep)
+        if retracement and retracement.get("actionable"):
+            text += "\n\n" + retracement["display"]
+        sent = await gold_scan._tg(text)
     _write_last(sig)
+    from services import retracement_service as rsvc
     return {"sent": sent, "armed": sweep["armed"], "changed": changed,
-            "had_box": box is not None, "rbusbis_dir": rbusbis, "sweep": sweep}
+            "had_box": box is not None, "rbusbis_dir": rbusbis, "sweep": sweep,
+            "retracement": rsvc.summary(retracement) if retracement else None}
