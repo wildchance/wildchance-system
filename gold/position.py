@@ -103,6 +103,12 @@ def _r(entry: float, exit_price: float, risk: float, long: bool) -> float:
 # deviation), vs the intraday scalps that keep their own tight time-stop.
 HOLD_TYPES = ("swing", "sniper", "prelondon", "crt")
 
+# Counter-trend bounce-scalps trail to break-even as soon as they are +1R in
+# profit (BEFORE any TP prints), so a small mean-reversion scalp taken against a
+# bearish trend / the DXY lock can never quietly become a hold or a full-risk loss.
+SCALP_BE_TIERS = ("sd_fade",)
+SCALP_BE_R = 1.0
+
 
 def prelondon_exit(state: dict, levels: dict, price: float,
                    min_capture_pips: float = None) -> Optional[dict]:
@@ -173,6 +179,12 @@ def evaluate(state: dict, price: float, now: dt.datetime) -> dict:
     # Break-even trail: once TP1 prints, the stop moves to entry and stays there.
     if tp_hit >= 1:
         be_active = True
+    # Scalp guard: a counter-trend bounce-scalp trails to BE the moment it is +1R
+    # in profit, even before any TP — it must never become an accidental hold.
+    if (not be_active and state.get("trade_type") in SCALP_BE_TIERS and risk > 0):
+        run_r = ((price - entry) if long else (entry - price)) / risk
+        if run_r >= SCALP_BE_R:
+            be_active = True
     eff_stop = entry if be_active else stop0
 
     out = {"close": False, "exit_price": None, "exit_reason": None,
