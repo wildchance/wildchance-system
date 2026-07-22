@@ -457,6 +457,34 @@ async def confirm(balance: float = Query(5000, gt=0),
                              notify=notify, deploy=deploy, db=db)
 
 
+@router.get("/radar")
+async def radar(interval: str = Query("1day", description="HTF: 1day / 4h"),
+                bars: int = Query(60, ge=8, le=300),
+                price: float = Query(None, description="override live price")):
+    """OB radar — HTF bullish/bearish order blocks (last up/down-close wick+close),
+    which one price is retesting now, the trade bias, and the continuity TP ladder."""
+    from gold import radar as gr
+    ohlc = await fetch_ohlc("XAU/USD", interval, max(bars, 20))
+    if len(ohlc) < 8:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD HTF bars")
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            price = ohlc[-1][4]
+    return gr.radar_scan(ohlc, float(price))
+
+
+@router.post("/radar/continuity")
+async def radar_continuity(sell: str = Query(None, description="comma prices e.g. 4135,4075,4000,3885"),
+                           buy: str = Query(None, description="comma prices e.g. 4195,4275,4380")):
+    """Set the continuity TP ladder (the risk book)."""
+    from gold import radar as gr
+    s = [float(x) for x in sell.split(",")] if sell else None
+    b = [float(x) for x in buy.split(",")] if buy else None
+    return gr.set_continuity(sell=s, buy=b)
+
+
 @router.get("/warthog")
 async def warthog(interval: str = Query("1h", description="HTF: 1h / 4h"),
                   bars: int = Query(80, ge=8, le=300),
