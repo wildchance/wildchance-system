@@ -72,6 +72,7 @@ WEIGHTS = {
 B2B_BONUS = 10
 WARTHOG_BONUS = 10
 OPTIONS_BONUS = 10
+RADAR_BONUS = 10       # HTF order-block retest agrees with the trade direction
 
 
 def score_candidate(c: dict) -> dict:
@@ -101,10 +102,11 @@ def score_candidate(c: dict) -> dict:
     best_rr = max((t.get("rr", 0) for t in tps), default=0)
     p["rr"] = min(WEIGHTS["rr"], WEIGHTS["rr"] * best_rr / 8.0)   # 8R = full marks
 
-    # 4H b2b-bomber + HTF warthog + options-flow agreement — confluence bonuses.
+    # 4H b2b-bomber + HTF warthog + options-flow + OB-radar agreement — bonuses.
     p["b2b"] = B2B_BONUS if c.get("b2b_confluence") is True else 0
     p["warthog"] = WARTHOG_BONUS if c.get("warthog_confluence") is True else 0
     p["options"] = OPTIONS_BONUS if c.get("options_confluence") is True else 0
+    p["radar"] = RADAR_BONUS if c.get("radar_confluence") is True else 0
 
     # Scale by the tier's MEASURED confidence factor (P3 backtest fit): a GREEN
     # tier leans in, a RED tier is discounted before allocation.
