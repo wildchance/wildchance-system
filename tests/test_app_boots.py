@@ -32,3 +32,23 @@ def test_telegram_bot_import_is_defensive():
     # exists whether or not python-telegram-bot / cryptography imported cleanly.
     import main
     assert hasattr(main, "_TELEGRAM_BOT_OK")
+
+
+def test_gold_scan_has_no_toplevel_ohlc_import():
+    # ohlc_service imports gold_scan (its Telegram sender); if gold_scan imports
+    # fetch_ohlc back at MODULE TOP the two form a circular import that crashes
+    # boot ('partially initialized module'). fetch_ohlc must be imported lazily
+    # inside scan(), so it must NOT be a module-level attribute of gold_scan.
+    import services.gold_scan as gs
+    assert not hasattr(gs, "fetch_ohlc"), (
+        "gold_scan imports fetch_ohlc at module top — reintroduces the "
+        "ohlc_service<->gold_scan circular import")
+
+
+def test_ohlc_and_gold_scan_import_both_orders():
+    # Importing either module first must succeed (no order-dependent cycle).
+    import importlib
+    import services.ohlc_service, services.gold_scan
+    importlib.reload(services.ohlc_service)
+    importlib.reload(services.gold_scan)
+    assert hasattr(services.ohlc_service, "fetch_ohlc")
