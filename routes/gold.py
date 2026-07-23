@@ -681,6 +681,57 @@ async def kingdom_report(price: float = Query(None, description="override live p
     return await _kr(db, "XAU/USD", price, cbdr_high, cbdr_low, interval)
 
 
+@router.post("/kingdom-report")
+async def kingdom_report_post(price: float = Query(None),
+                              cbdr_high: float = Query(None, description="daily CBDR high"),
+                              cbdr_low: float = Query(None, description="daily CBDR low"),
+                              interval: str = Query("4h"),
+                              notify: bool = Query(True, description="push digest to Telegram"),
+                              db: AsyncSession = Depends(get_db)):
+    """Generate the 14-branch report and push the headline digest to Telegram —
+    the daily automated run. Feed daily CBDR high/low for the ingestion protocol."""
+    from services.kingdom_service import kingdom_alert
+    return await kingdom_alert(db, "XAU/USD", price, cbdr_high, cbdr_low, interval, notify)
+
+
+@router.get("/volume-profile")
+async def volume_profile(interval: str = Query("1day"), bars: int = Query(60, ge=5, le=500),
+                         bins: int = Query(30, ge=10, le=100), price: float = Query(None)):
+    """Volume/TPO profile (B2) — POC / VAH / VAL + where price sits vs value."""
+    from gold import volume_profile as gvp
+    ohlc = await fetch_ohlc("XAU/USD", interval, bars)
+    if len(ohlc) < 3:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD bars")
+    return gvp.profile_read(ohlc, price, bins)
+
+
+@router.get("/scenario")
+async def scenario(price: float = Query(None), window: str = Query("prelondon"),
+                   interval: str = Query("1h")):
+    """Four-scenario read (B13) — liquidity-sweep / direct-expansion / deep-hunt /
+    dead-cat, with the execution lean, off the live CBDR box."""
+    from gold import scenarios as gsc
+    from gold import radar as grd
+    from services.recon_service import _live_box
+    box = await _live_box(window)
+    if box is None:
+        raise HTTPException(status_code=502, detail="no CBDR box available")
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            raise HTTPException(status_code=502, detail="no price")
+    htf_bias = None
+    try:
+        daily = await fetch_ohlc("XAU/USD", "1day", 90)
+        htf_bias = grd.combine_htf(daily=grd.order_blocks(daily, timeframe="1D")
+                                   if len(daily) >= 8 else []).get("htf_bias")
+    except Exception:
+        pass
+    bars = await fetch_ohlc("XAU/USD", interval, 6)
+    return gsc.classify_scenario(box, float(price), htf_bias, bars)
+
+
 @router.get("/recon")
 async def recon_get(gold: float = Query(None, description="override gold price"),
                     dxy: float = Query(None, description="live DXY price (optional)"),
