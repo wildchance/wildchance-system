@@ -607,6 +607,80 @@ async def retracement_alert(interval: str = Query("4h"),
                                   balance=balance, risk_usd=risk_usd)
 
 
+@router.get("/volatility")
+async def volatility(interval: str = Query("4h"), bars: int = Query(120, ge=20, le=500),
+                     price: float = Query(None)):
+    """Volatility engine (B9) — ATR, realized vol, regime percentile, expected range."""
+    from gold import volatility as gv
+    ohlc = await fetch_ohlc("XAU/USD", interval, bars)
+    if len(ohlc) < 20:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD bars")
+    return gv.volatility_read(ohlc, price)
+
+
+@router.get("/intermarket")
+async def intermarket(interval: str = Query("1day"), bars: int = Query(60, ge=20, le=300)):
+    """Intermarket intelligence (B11) — DXY/yields/oil/SPX/silver correlation matrix
+    + one net-correlation score (confirming / diverging / mixed)."""
+    from services.intermarket_service import intermarket_matrix
+    return await intermarket_matrix("XAU/USD", interval, bars)
+
+
+@router.get("/trap")
+async def trap(level: float = Query(..., description="the level being tested"),
+               interval: str = Query("1h"), bars: int = Query(10, ge=3, le=50),
+               side: str = Query(None, description="optional: confirm sweep-reject long/short")):
+    """Trap detection (B10) — conditional-probability read (clean-breakout / bull-trap
+    / bear-trap / capitulation) for the most recent test of a level."""
+    from gold import trap_probability as gt
+    ohlc = await fetch_ohlc("XAU/USD", interval, max(bars, 4))
+    if side:
+        return gt.trap_from_sweep(ohlc, level, side)
+    return gt.trap_probabilities(ohlc, level)
+
+
+@router.get("/cot-projection")
+async def cot_projection():
+    """COT projection (B7) — the official net projected forward past the 3-5 day lag
+    using price action + options flow."""
+    from services.cot_projection_service import project_cot
+    return await project_cot("XAU/USD")
+
+
+@router.get("/events")
+async def events():
+    """Event horizon (B14) — the live tier-1 calendar mapped to impact/decay/stack."""
+    from gold import event_horizon as eh
+    from services.news_guard import high_impact_calendar
+    import datetime as _dt
+    cal = await high_impact_calendar()
+    now = _dt.datetime.now(_dt.timezone.utc)
+    evs = []
+    for ev in cal or []:
+        try:
+            d = _dt.datetime.fromisoformat(ev["date"]).replace(tzinfo=_dt.timezone.utc)
+            evs.append({"name": ev.get("event") or "", "ccy": ev.get("ccy"),
+                        "hours_until": (d - now).total_seconds() / 3600.0})
+        except Exception:
+            continue
+    return eh.event_horizon(evs)
+
+
+@router.get("/kingdom-report")
+async def kingdom_report(price: float = Query(None, description="override live price"),
+                         cbdr_high: float = Query(None, description="daily CBDR high (ingestion)"),
+                         cbdr_low: float = Query(None, description="daily CBDR low (ingestion)"),
+                         interval: str = Query("4h"),
+                         db: AsyncSession = Depends(get_db)):
+    """The full 14-branch Kingdom intelligence report — assembles every branch
+    (macro, CBDR, liquidity, SMC, options, COT+projection, central bank, volatility,
+    trap, intermarket, regime checklist, command, event horizon) into one structured
+    JSON with the Kingdom Consensus table + Vaultum Directive. Feed daily CBDR
+    high/low for the ingestion protocol. Read-only."""
+    from services.kingdom_service import kingdom_report as _kr
+    return await _kr(db, "XAU/USD", price, cbdr_high, cbdr_low, interval)
+
+
 @router.get("/recon")
 async def recon_get(gold: float = Query(None, description="override gold price"),
                     dxy: float = Query(None, description="live DXY price (optional)"),
