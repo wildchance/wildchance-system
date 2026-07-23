@@ -47,6 +47,7 @@ jobs:
         env:
           BASE: ${{ secrets.APP_BASE_URL }}
           ACCT: ${{ vars.USDJPY_ACCOUNT_SIZE }}
+          EXEC_TOKEN: ${{ secrets.EXECUTION_TOKEN }}
           SCHED: ${{ github.event.schedule }}
           MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
         run: |
@@ -130,6 +131,9 @@ jobs:
             "0 8 1 * *")        post "/scorecard/digest" ;;
             "0 * * * *")
               post "/intraday/scan"
+              if [ -n "$EXEC_TOKEN" ]; then
+                post "/execution/reconcile?token=$EXEC_TOKEN"   # MT5 bridge drift guard (live only)
+              fi
               post "/gold/monitor"     # trail/close tracked gold swings (TP/SL/time-stop)
               post "/gold/zones/digest?touch_only=true"   # alert only when price hits a zone
               post "/gold/recon?armed_only=true"          # drone sweep — alert on armed board
@@ -189,10 +193,12 @@ jobs:
               post "/edgefinder/digest"
               ;;
             "0 7 * * 1-5")
+              post "/gold/options/refresh"    # pull live options walls (no-op if no feed)
               post "/gold/scan?balance=5000&notify=true"
               post "/gold/intraday?balance=5000&notify=true"
               ;;
             "0 13 * * 1-5")
+              post "/gold/options/refresh"    # pull live options walls (no-op if no feed)
               post "/gold/scan?balance=5000&notify=true"
               post "/gold/intraday?balance=5000&notify=true"
               post "/gold/zones/digest?touch_only=false"        # full buy/sell-limit plan at NY open
