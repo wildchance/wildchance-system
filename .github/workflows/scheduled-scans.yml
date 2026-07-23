@@ -88,6 +88,7 @@ jobs:
             post "/gold/scorecard/digest?force=true"
             post "/gold/zones/digest?touch_only=false"
             post "/gold/recon?force=true"
+            post "/gold/retracement?deploy=true&force=true"
             post "/gold/confirm?deploy=true"
             post "/gold/stratops/deploy"
             exit 0
@@ -132,6 +133,7 @@ jobs:
               post "/gold/monitor"     # trail/close tracked gold swings (TP/SL/time-stop)
               post "/gold/zones/digest?touch_only=true"   # alert only when price hits a zone
               post "/gold/recon?armed_only=true"          # drone sweep — alert on armed board
+              post "/gold/retracement"                    # 3-state read — ping only on a flip
               post "/gold/confirm?deploy=true"            # take the sweep-and-reject on the M15
               ;;
             "0 22 * * 0")
@@ -199,8 +201,10 @@ jobs:
             "30 13 * * 1-5")    post "/gold/intraday?balance=5000&require_distribution=true&notify=true" ;;
             "0 4 * * *"|"0 18 * * *")
               # New-trading-day boundaries (Asian 00:00 / NY 14:00 UTC-4): the 4H
-              # b2b bomber + full recon board for swing confluence.
+              # b2b bomber + full recon board for swing confluence + the retracement
+              # state (paper-deploy SELL-the-OTE on a fresh flip).
               post "/gold/recon?force=true"
+              post "/gold/retracement?deploy=true"
               ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac
