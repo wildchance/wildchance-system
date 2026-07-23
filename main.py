@@ -18,7 +18,8 @@ from database.db import init_db
 # whole trading API. Import it defensively and degrade to a no-op if it fails.
 try:
     from routes.telegram_routes import router as telegram_router
-    from routes.telegram_routes import register_bot
+    from routes.telegram_routes import bot_startup as _bot_startup
+    from routes.telegram_routes import bot_shutdown as _bot_shutdown
     _TELEGRAM_BOT_OK = True
 except BaseException as _tg_err:  # ImportError, OR a cryptography rust
                                   # PanicException (which subclasses BaseException,
@@ -32,7 +33,10 @@ except BaseException as _tg_err:  # ImportError, OR a cryptography rust
     telegram_router = None
     _TELEGRAM_BOT_OK = False
 
-    def register_bot(app):        # no-op fallback
+    async def _bot_startup():      # no-op fallbacks
+        return None
+
+    async def _bot_shutdown():
         return None
 
 from routes.admin import router as admin_router
@@ -80,10 +84,38 @@ from services.usdjpy_scheduler import start_scanner
 from services.wildchance_scheduler import start_wildchance_scheduler
 
 
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown via the modern lifespan context (on_event is deprecated and
+    will be removed — this keeps DB-init + schedulers working across fastapi bumps)."""
+    # --- startup ---
+    await init_db()
+    start_scanner()                    # daily USD/JPY mean-reversion scan
+    start_wildchance_scheduler()       # wildchance 6h/daily/weekly confluence
+    asyncio.create_task(polygon_stream.start())   # real-time Polygon.io + Redis
+    if _TELEGRAM_BOT_OK:
+        try:
+            await _bot_startup()       # register the Telegram webhook (optional)
+        except Exception as e:
+            import logging
+            logging.getLogger("uvicorn.error").warning("bot_startup skipped: %s", e)
+    yield
+    # --- shutdown ---
+    if _TELEGRAM_BOT_OK:
+        try:
+            await _bot_shutdown()
+        except Exception:
+            pass
+
+
 app = FastAPI(
     title="Wildchance Trading Bot API",
     description="Trading Bot Dashboard and API",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS Configuration
@@ -99,22 +131,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-register_bot(app)
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize the database and launch the background schedulers + real-time stream"""
-    await init_db()
-    
-    # Existing schedulers
-    start_scanner()                    # daily USD/JPY mean-reversion scan
-    start_wildchance_scheduler()       # wildchance 6h/daily/weekly confluence
-
-    # Start real-time Polygon.io WebSocket + Redis cache
-    asyncio.create_task(polygon_stream.start())
-
-
 @app.get("/")
 async def home():
     return {
@@ -126,8 +142,38 @@ async def home():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
-    return {"status": "healthy"}
+    """Deep health check — proves the app is actually WIRED, not just 'up'.
+
+    Returns the mounted-route count (a 7-route app = include_router silently
+    dropped every router, the boot bug), DB reachability, and the telegram bot
+    state. A monitor pinging this catches an 'up but empty' deploy immediately."""
+    route_paths = [r.path for r in app.routes if hasattr(r, "path")]
+    routes_total = len(route_paths)
+    gold_routes = len([p for p in route_paths if p.startswith("/gold")])
+    # Healthy only if the real router surface mounted (built-ins alone are ~7).
+    wired = routes_total > 100
+
+    db_ok = None
+    try:
+        from database.db import engine
+        from sqlalchemy import text
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception:
+        db_ok = False
+
+    healthy = wired and (db_ok is not False)
+    return {
+        "status": "healthy" if healthy else "degraded",
+        "wired": wired,
+        "routes_total": routes_total,
+        "gold_routes": gold_routes,
+        "db_reachable": db_ok,
+        "telegram_bot": "enabled" if _TELEGRAM_BOT_OK else "disabled",
+        "execution_mode": ("LIVE" if config("EXECUTION_ENABLED", default=False, cast=bool)
+                           else "PAPER"),
+    }
 
 
 # Include all routers
