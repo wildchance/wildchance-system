@@ -156,6 +156,7 @@ async def gold_report(db: AsyncSession, month: Optional[str] = None) -> dict:
             "opened_at": str(t.opened_at),
         })
     all_r = [r["result_r"] for r in rows]
+    _by_source = by_group(rows, "source")
     by_month = by_group(rows, "month")
     current_month = month or (max(by_month) if by_month else None)
     return {
@@ -170,7 +171,15 @@ async def gold_report(db: AsyncSession, month: Optional[str] = None) -> dict:
         "by_exit": by_group(rows, "exit_reason"),
         # Per-source cohorts — measure each engine on its own (e.g. is the
         # retracement_paper SELL-the-OTE edge real vs stratops_paper / gold_scan?).
-        "by_source": by_group(rows, "source"),
+        "by_source": _by_source,
+        # Compact per-source GREEN/AMBER/RED verdict + confidence — the at-a-glance
+        # go/no-go for each engine (each cohort's own reflection, not the all-time).
+        "source_verdicts": {
+            src: {"verdict": sc.get("verdict"), "n": sc.get("n"),
+                  "confidence_factor": sc.get("confidence_factor"),
+                  "win_rate": sc.get("win_rate"), "profit_factor": sc.get("profit_factor")}
+            for src, sc in sorted(_by_source.items())
+        },
     }
 
 
