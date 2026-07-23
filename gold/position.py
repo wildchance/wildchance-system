@@ -242,7 +242,11 @@ def format_lifecycle_events(events, symbol: str = "XAU/USD"):
         elif k == "tp":
             lines.append(f"{icon[k]} TP{e.get('tp_hit')} {side} {tt}  ·  running {e.get('running_r'):+}R")
         elif k == "breakeven":
-            lines.append(f"{icon[k]} STOP→BE {side} {tt}  ·  locked, running {e.get('running_r'):+}R")
+            if e.get("scalp"):
+                lines.append(f"🩹 scalp→BE {side} {tt}  ·  +1R locked early "
+                             f"(counter-trend guard), running {e.get('running_r'):+}R")
+            else:
+                lines.append(f"{icon[k]} STOP→BE {side} {tt}  ·  locked, running {e.get('running_r'):+}R")
         elif k == "closed":
             r = e.get("result_r")
             r_str = f"{r:+}R" if r is not None else "—"
