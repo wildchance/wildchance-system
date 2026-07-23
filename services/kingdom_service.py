@@ -23,6 +23,47 @@ def _bias_vote(b: Optional[str]) -> int:
             "short": -1, "bear": -1, "bearish": -1}.get((b or "").lower(), 0)
 
 
+def format_kingdom(rep: dict) -> str:
+    """Condensed Telegram digest of the 14-branch report (the headline read)."""
+    kc = rep.get("kingdom_consensus", {})
+    vd = rep.get("vaultum_directive", {})
+    br = rep.get("branches", {})
+    icon = {"long": "🟢", "short": "🔴", "neutral": "⚪"}.get(kc.get("net_bias"), "⚪")
+    lines = [f"👑 *KINGDOM REPORT — {rep.get('asset')}* @ {rep.get('price')}",
+             f"{icon} Consensus: *{(kc.get('net_bias') or '—').upper()}* "
+             f"(score {kc.get('vote_score'):+d} · {kc.get('bullish')}🟢/{kc.get('bearish')}🔴)"]
+    reg = (vd.get("regime_invalidation") or {})
+    if reg.get("verdict"):
+        lines.append(f"🛡️ Regime: *{reg['verdict']}*"
+                     + (f" — broke {', '.join(reg.get('failed') or [])}" if reg.get("failed") else ""))
+    sc = ((br.get("B13") or {}).get("scenario") or {})
+    if sc.get("scenario"):
+        lines.append(f"🎯 Scenario: {sc['scenario'].replace('_',' ')} → {sc.get('lean')}")
+    macro = (br.get("B1") or {})
+    if macro.get("macro_paradox_resolution"):
+        lines.append(f"⚖️ {macro['macro_paradox_resolution']}")
+    vol = ((br.get("B9") or {}).get("regime") or {})
+    if vol.get("regime"):
+        lines.append(f"📊 Vol: {vol['regime']} · temporal ×{(vd.get('temporal_risk') or {}).get('vol_multiplier', 1.0)}")
+    return "\n".join(lines)
+
+
+async def kingdom_alert(db, asset: str = "XAU/USD", price: Optional[float] = None,
+                        cbdr_high: Optional[float] = None, cbdr_low: Optional[float] = None,
+                        interval: str = "4h", notify: bool = True) -> dict:
+    """Generate the report and push the digest to Telegram (for the daily cron)."""
+    rep = await kingdom_report(db, asset, price, cbdr_high, cbdr_low, interval)
+    sent = False
+    if notify:
+        try:
+            from services import gold_scan
+            sent = await gold_scan._tg(format_kingdom(rep))
+        except Exception:
+            pass
+    return {"sent": sent, "consensus": rep.get("kingdom_consensus"),
+            "vaultum_directive": rep.get("vaultum_directive"), "report": rep}
+
+
 async def kingdom_report(db: AsyncSession, asset: str = "XAU/USD",
                          price: Optional[float] = None,
                          cbdr_high: Optional[float] = None,
@@ -103,9 +144,15 @@ async def kingdom_report(db: AsyncSession, asset: str = "XAU/USD",
                  "box": {"high": box.high, "low": box.low, "mid": box.mid,
                          "range": box.range},
                  "sd_levels": box.levels, "read": rb,
-                 "extension": extension_read(float(price), box) if price else None,
-                 "volume_profile": {"status": "unavailable — no volume feed (POC/VAH/VAL)"}},
+                 "extension": extension_read(float(price), box) if price else None},
                 bias=(rb or {}).get("bias"))
+            # POC/VAH/VAL from the TPO profile (no volume feed → time-at-price).
+            try:
+                from gold import volume_profile as gvp
+                if daily and len(daily) >= 3:
+                    branches["B2"]["volume_profile"] = gvp.profile_read(daily, price)
+            except Exception:
+                pass
         else:
             add(2, "CBDR Execution Engine", {"status": "no CBDR box"})
     except Exception as e:
@@ -123,10 +170,14 @@ async def kingdom_report(db: AsyncSession, asset: str = "XAU/USD",
     try:
         from gold import radar as grd
         scan = grd.radar_scan(daily, float(price)) if (daily and price) else {}
+        breakers = grd.breaker_blocks(daily) if daily else []
+        swept = bool(scan.get("active_retest"))
+        narrative = grd.narrative_cycle(htf_bias or "neutral", float(price), box, swept) \
+            if price else None
         add(4, "Smart Money Concepts",
             {"htf_orb_bias": htf_bias, "active_retest": scan.get("active_retest"),
              "continuity": scan.get("continuity"),
-             "note": "MTF order-block structure (D/W/M); breaker-block not yet modelled"},
+             "breaker_blocks": breakers[-5:], "narrative_cycle": narrative},
             bias=htf_bias)
     except Exception as e:
         add(4, "Smart Money Concepts", {"error": str(e)})
@@ -157,8 +208,10 @@ async def kingdom_report(db: AsyncSession, asset: str = "XAU/USD",
     # ---- B8 Central Bank Intelligence ---------------------------------------
     try:
         from gold import purchases_audit as gpa
+        from gold import macro_cycle as mc
         add(8, "Central Bank Intelligence",
-            {"positioning": gpa.positioning_state(), "liquidity": gpa.liquidity_state()})
+            {"positioning": gpa.positioning_state(), "liquidity": gpa.liquidity_state(),
+             "price_inelastic_demand": mc.price_inelastic_demand()})
     except Exception as e:
         add(8, "Central Bank Intelligence", {"error": str(e)})
 
@@ -217,11 +270,18 @@ async def kingdom_report(db: AsyncSession, asset: str = "XAU/USD",
     # ---- B13 Kingdom Strategic Command --------------------------------------
     try:
         from services.stratops_service import muster
+        from gold import scenarios as gsc
         m = await muster(db)
+        scenario = None
+        if box is not None and price:
+            sbars = await fetch_ohlc(asset, interval, 6)
+            scenario = gsc.classify_scenario(box, float(price), htf_bias, sbars)
         add(13, "Kingdom Strategic Command",
-            {"take": m.get("take"), "hold": m.get("hold"), "stand_down": m.get("stand_down"),
+            {"scenario": scenario,
+             "take": m.get("take"), "hold": m.get("hold"), "stand_down": m.get("stand_down"),
              "campaign": m.get("campaign"), "dxy_long_lock": m.get("dxy_long_lock"),
-             "retracement": m.get("retracement"), "account": m.get("account")})
+             "retracement": m.get("retracement"), "account": m.get("account")},
+            bias=(scenario or {}).get("lean"))
     except Exception as e:
         add(13, "Kingdom Strategic Command", {"error": str(e)})
 
