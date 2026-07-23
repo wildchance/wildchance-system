@@ -266,8 +266,13 @@ async def monitor(db: AsyncSession, price: float,
                                "trade_type": row.trade_type, "tp_hit": row.tp_hit,
                                "running_r": _running_r(row, price), "price": price})
             if row.be_active and not was_be:
+                # A scalp that locked to BE at +1R BEFORE any TP is the counter-trend
+                # guard firing — narrate it distinctly from the normal post-TP1 trail.
+                scalp_be = bool(row.tp_hit == 0
+                                and row.trade_type in pos.SCALP_BE_TIERS)
                 events.append({"kind": "breakeven", "id": row.id, "side": row.side,
                                "trade_type": row.trade_type, "stop": row.stop,
+                               "scalp": scalp_be,
                                "running_r": _running_r(row, price), "price": price})
             updated.append({"id": row.id, "tp_hit": row.tp_hit,
                             "be_active": row.be_active, "note": action["note"]})
