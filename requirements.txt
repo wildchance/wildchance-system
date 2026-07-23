@@ -1,12 +1,1 @@
-fastapi
-uvicorn[standard]
-python-decouple
-sqlalchemy
-asyncpg
-psycopg2-binary
-httpx
-requests
-python-telegram-bot==20.3
-redis>=5
-polygon-api-client
-qrcode[pil]
+
