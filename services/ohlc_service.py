@@ -1,109 +1,141 @@
-"""Drone recon orchestration — fetch live gold + DXY + CBDR box, sweep, alert.
+"""Generic OHLC bar fetch for any instrument — feeds ATR + MMM engines.
 
-Network glue over gold.recon: pulls the live gold price, best-effort builds the
-pre-London CBDR box (for the ±1/±1.5SD deviation factor), reads the live RBUSBIS
-direction, runs the fused sweep, and alerts on an ARMED setup (best-effort marker
-dedup so a cron stays quiet until the board actually changes).
+TwelveData time_series returns OHLC for FX, metals and indices. This normalizes
+a symbol (EURUSD → EUR/USD, XAUUSD → XAU/USD) and returns bars oldest-first so
+the pure engines can consume them. Empty list on any failure (boot-safe).
 """
 
 from __future__ import annotations
 
-import os
-from typing import Optional
+import datetime as dt
+import re
+from typing import List, Optional, Tuple
 
-from gold import recon as gr
-from services import gold_scan  # Telegram sender
+import httpx
+from decouple import config
 
-_STATE_DIR = os.environ.get("STATE_DIR", "state")
-_MARKER = os.path.join(_STATE_DIR, "recon.state")
+TWELVEDATA_KEY = config("TWELVEDATA_API_KEY", default=None)
+
+# (date, open, high, low, close)
+DatedOHLC = Tuple[dt.date, float, float, float, float]
 
 
-def _read_last() -> Optional[str]:
+def normalize_symbol(symbol: str) -> str:
+    """EURUSD → EUR/USD; XAUUSD → XAU/USD; already-slashed passes through."""
+    s = (symbol or "").upper().strip()
+    if "/" in s:
+        return s
+    if re.fullmatch(r"[A-Z]{6}", s):
+        return f"{s[:3]}/{s[3:]}"
+    return s
+
+
+async def fetch_ohlc(symbol: str, interval: str = "1day",
+                     outputsize: int = 60) -> List[DatedOHLC]:
+    """Recent OHLC bars, oldest-first. interval: 1day / 1week / 1h / 4h …"""
+    if not TWELVEDATA_KEY:
+        return []
+    params = {
+        "symbol": normalize_symbol(symbol),
+        "interval": interval,
+        "outputsize": max(1, min(int(outputsize), 5000)),
+        "apikey": TWELVEDATA_KEY,
+    }
     try:
-        with open(_MARKER) as f:
-            return f.read().strip() or None
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.get("https://api.twelvedata.com/time_series",
+                                 params=params)
+            data = r.json()
+        values = data.get("values") or []
+        out: List[DatedOHLC] = []
+        for v in values:
+            try:
+                out.append((
+                    dt.date.fromisoformat(v["datetime"][:10]),
+                    float(v["open"]), float(v["high"]),
+                    float(v["low"]), float(v["close"]),
+                ))
+            except (KeyError, ValueError, TypeError):
+                continue
+        out.sort(key=lambda t: t[0])          # ascending (feed is newest-first)
+        return out
     except Exception:
-        return None
+        return []
 
 
-def _write_last(sig: str) -> None:
+async def fetch_hourly_raw(symbol: str, timezone: str = "UTC",
+                           outputsize: int = 48) -> List[dict]:
+    """1h bars WITH the hour preserved, in ``timezone``, oldest-first.
+
+    fetch_ohlc collapses timestamps to a date; the session-level map needs the hour
+    (1am / 7am) in the chart's timezone (e.g. America/New_York), so this keeps it.
+    Returns [{date, hour, open, high, low, close}]. Empty on any failure.
+    """
+    if not TWELVEDATA_KEY:
+        return []
+    params = {"symbol": normalize_symbol(symbol), "interval": "1h",
+              "outputsize": max(1, min(int(outputsize), 5000)),
+              "timezone": timezone, "apikey": TWELVEDATA_KEY}
     try:
-        os.makedirs(_STATE_DIR, exist_ok=True)
-        with open(_MARKER, "w") as f:
-            f.write(sig)
+        async with httpx.AsyncClient(timeout=15) as client:
+            data = (await client.get("https://api.twelvedata.com/time_series",
+                                     params=params)).json()
+        out: List[dict] = []
+        for v in data.get("values") or []:
+            ts = v.get("datetime", "")
+            if len(ts) < 13:
+                continue
+            try:
+                out.append({"date": ts[:10], "hour": int(ts[11:13]),
+                            "open": float(v["open"]), "high": float(v["high"]),
+                            "low": float(v["low"]), "close": float(v["close"])})
+            except (KeyError, ValueError, TypeError):
+                continue
+        out.sort(key=lambda b: (b["date"], b["hour"]))
+        return out
     except Exception:
-        pass
+        return []
 
 
-def _signature(sweep: dict) -> str:
-    """Compact armed-state signature for dedup (side+zone+level+armed)."""
-    return "|".join(f"{s['side']}:{s['zone']}:{s['cbdr_level']}:{int(s['armed'])}"
-                    for s in sweep.get("setups", [])) or "none"
+def to_ohlc(bars: List[DatedOHLC]) -> List[Tuple[float, float, float, float]]:
+    """Strip dates → (open, high, low, close) tuples for the MMM engine."""
+    return [(o, h, l, c) for (_d, o, h, l, c) in bars]
 
 
-async def _live_box(window: str = "prelondon"):
+async def fetch_ohlc_raw(symbol: str, interval: str = "4h", outputsize: int = 30,
+                         timezone: str = "UTC") -> List[dict]:
+    """OHLC bars with the FULL datetime preserved (oldest-first) for any interval.
+
+    fetch_ohlc collapses timestamps to a date — fine for daily/weekly but it
+    scrambles intraday order and loses the hour. This keeps the whole timestamp so
+    the 4H b2b bomber can sequence candles and read session anchors. Returns
+    [{time, open, high, low, close}]. Empty on any failure.
+    """
+    if not TWELVEDATA_KEY:
+        return []
+    params = {"symbol": normalize_symbol(symbol), "interval": interval,
+              "outputsize": max(1, min(int(outputsize), 5000)),
+              "timezone": timezone, "apikey": TWELVEDATA_KEY}
     try:
-        from services.cbdr_service import fetch_cbdr_window
-        from cbdr.engine import build_cbdr
-        w = await fetch_cbdr_window("XAU/USD", window=window)
-        if w and w.get("high") is not None and w.get("low") is not None:
-            return build_cbdr(w["high"], w["low"])
+        async with httpx.AsyncClient(timeout=15) as client:
+            data = (await client.get("https://api.twelvedata.com/time_series",
+                                     params=params)).json()
+        out: List[dict] = []
+        for v in data.get("values") or []:
+            ts = v.get("datetime", "")
+            if not ts:
+                continue
+            try:
+                out.append({"time": ts, "open": float(v["open"]), "high": float(v["high"]),
+                            "low": float(v["low"]), "close": float(v["close"])})
+            except (KeyError, ValueError, TypeError):
+                continue
+        out.sort(key=lambda b: b["time"])          # ascending (feed is newest-first)
+        return out
     except Exception:
-        pass
-    return None
+        return []
 
 
-async def _rbusbis_dir() -> Optional[str]:
-    try:
-        from services import fred_service as fred
-        if fred.configured():
-            usd = await fred.dollar_read()
-            if usd:
-                return usd["direction"]
-    except Exception:
-        pass
-    return None
-
-
-async def _b2b() -> Optional[dict]:
-    """Live 4H b2b-bomber read (best-effort)."""
-    try:
-        from services.ohlc_service import fetch_ohlc_raw
-        from gold.b2b import b2b_bomber
-        ohlc = await fetch_ohlc_raw("XAU/USD", interval="4h", outputsize=30)
-        if len(ohlc) >= 4:
-            return b2b_bomber(ohlc)
-    except Exception:
-        pass
-    return None
-
-
-async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] = None,
-                window: str = "prelondon", notify: bool = True,
-                armed_only: bool = True, force: bool = False) -> dict:
-    """Run the fused gold/DXY recon sweep and optionally alert on an armed board."""
-    if gold_price is None:
-        try:
-            from utils.price_fetcher import get_forex_price
-            gold_price = await get_forex_price("XAU/USD")
-        except Exception:
-            gold_price = None
-    if gold_price is None:
-        return {"error": "could not fetch XAU/USD price"}
-
-    box = await _live_box(window)
-    rbusbis = await _rbusbis_dir()
-    b2b = await _b2b()
-    sweep = gr.recon_sweep(gold_price, dxy_price=dxy_price, box=box,
-                           rbusbis_dir=rbusbis, b2b=b2b)
-
-    sig = _signature(sweep)
-    last = _read_last()
-    changed = sig != last
-    should = force or ((sweep["armed"] or not armed_only) and changed)
-    sent = False
-    if notify and should:
-        sent = await gold_scan._tg(gr.format_recon(sweep))
-    _write_last(sig)
-    return {"sent": sent, "armed": sweep["armed"], "changed": changed,
-            "had_box": box is not None, "rbusbis_dir": rbusbis, "sweep": sweep}
+def to_hlc(bars: List[DatedOHLC]) -> List[Tuple[float, float, float]]:
+    """(high, low, close) tuples for the ATR engine."""
+    return [(h, l, c) for (_d, _o, h, l, c) in bars]
