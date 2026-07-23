@@ -86,23 +86,29 @@ async def _start_and_register_webhook():
         print(f"❌ Telegram webhook setup failed: {e}")
 
 
-def register_bot(app: FastAPI):
-    @app.on_event("startup")
-    async def _startup():
-        if application is not None:
-            await _start_and_register_webhook()
+async def bot_startup():
+    """Register the Telegram webhook (called from main's lifespan handler)."""
+    if application is not None:
+        await _start_and_register_webhook()
 
-    @app.on_event("shutdown")
-    async def _shutdown():
-        if application is None:
-            return
-        try:
-            await application.bot.delete_webhook()
-            await application.stop()
-            await application.shutdown()
-            print("✅ Telegram bot stopped")
-        except Exception as e:
-            print(f"❌ Error stopping bot: {e}")
+
+async def bot_shutdown():
+    """Tear the bot down (called from main's lifespan handler)."""
+    if application is None:
+        return
+    try:
+        await application.bot.delete_webhook()
+        await application.stop()
+        await application.shutdown()
+        print("✅ Telegram bot stopped")
+    except Exception as e:
+        print(f"❌ Error stopping bot: {e}")
+
+
+def register_bot(app: FastAPI):
+    """Backward-compat shim. Startup/shutdown are now driven by main.py's lifespan
+    context (on_event is deprecated); kept so existing callers don't break."""
+    return None
 
 
 @router.post(WEBHOOK_PATH)
