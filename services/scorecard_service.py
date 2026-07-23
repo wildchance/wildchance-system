@@ -150,6 +150,7 @@ async def gold_report(db: AsyncSession, month: Optional[str] = None) -> dict:
             "month": _month(t.opened_at),
             "action": t.action,
             "trade_type": getattr(t, "trade_type", None),
+            "source": getattr(t, "source", None),
             "result_r": t.result_r,
             "exit_reason": getattr(t, "exit_reason", None),
             "opened_at": str(t.opened_at),
@@ -167,6 +168,9 @@ async def gold_report(db: AsyncSession, month: Optional[str] = None) -> dict:
         "by_action": by_group(rows, "action"),
         "by_type": by_group(rows, "trade_type"),
         "by_exit": by_group(rows, "exit_reason"),
+        # Per-source cohorts — measure each engine on its own (e.g. is the
+        # retracement_paper SELL-the-OTE edge real vs stratops_paper / gold_scan?).
+        "by_source": by_group(rows, "source"),
     }
 
 
