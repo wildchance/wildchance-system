@@ -169,6 +169,78 @@ def sweep_ob_confluence(bars: Sequence, price: float, ob: dict, tol: float = 3.0
                        f"{level} and rejected" if rej else "no sweep+reject at the OB yet")}
 
 
+def breaker_blocks(bars: Sequence, obs: Sequence[dict] = None,
+                   lookahead: int = 3) -> List[dict]:
+    """Breaker blocks — an order block that FAILED and flipped polarity.
+
+    When a bullish demand OB is broken (a later candle CLOSES below its bottom) it
+    becomes a BEARISH breaker (former support → resistance); a broken bearish supply
+    OB becomes a BULLISH breaker. The retest of a breaker is a high-probability
+    continuation entry in the breaking direction.
+    """
+    if obs is None:
+        obs = order_blocks(bars, lookahead=lookahead)
+    n = len(bars)
+    out: List[dict] = []
+    for ob in obs:
+        lo, hi = ob["zone"]
+        broken_at = None
+        for k in range(n):
+            _o, _h, _l, c, _t = _ohlc(bars[k])
+            if ob["type"] == "bullish" and c < lo:        # demand failed
+                broken_at = k
+                flip = "bearish"
+                zone = [lo, hi]
+                break
+            if ob["type"] == "bearish" and c > hi:        # supply failed
+                broken_at = k
+                flip = "bullish"
+                zone = [lo, hi]
+                break
+        if broken_at is None:
+            continue
+        # retested after the break?
+        retested = any(_ohlc(bars[j])[2] <= hi and _ohlc(bars[j])[1] >= lo
+                       for j in range(broken_at + 1, n))
+        out.append({"type": flip, "kind": "breaker", "zone": zone,
+                    "from": ob["type"], "timeframe": ob.get("timeframe", "1D"),
+                    "broken_at": broken_at, "retested": retested, "fresh": not retested,
+                    "note": f"{ob['type']} OB {zone} failed → {flip} breaker "
+                            + ("(retested)" if retested else "(fresh)")})
+    return out
+
+
+# Institutional narrative cycle phases (the smart-money campaign clock).
+def narrative_cycle(htf_bias: str, price: float, box=None,
+                    swept: Optional[bool] = None) -> dict:
+    """Label the current institutional phase — accumulation / manipulation /
+    distribution / reaccumulation — from the HTF bias + where price sits in the
+    range + whether liquidity was just swept. The 'narrative cycle' the desk trades
+    around: accumulate the discount, manipulate (sweep) to trap, expand, distribute
+    the premium."""
+    disc = None
+    if box is not None:
+        disc = "discount" if price < box.mid else "premium"
+    if htf_bias == "long":
+        if disc == "discount":
+            phase = "accumulation" if not swept else "manipulation"
+            note = "smart money loading the discount" + (" (post-sweep spring)" if swept else "")
+        else:
+            phase = "distribution" if disc == "premium" else "expansion"
+            note = "marking up into premium — watch for distribution"
+    elif htf_bias == "short":
+        if disc == "premium":
+            phase = "distribution" if not swept else "manipulation"
+            note = "offloading the premium" + (" (post-sweep trap)" if swept else "")
+        else:
+            phase = "reaccumulation" if disc == "discount" else "expansion"
+            note = "marking down into discount"
+    else:
+        phase, note = "rebalance", "no directional narrative — two-way rotation"
+    return {"phase": phase, "htf_bias": htf_bias, "location": disc,
+            "swept": swept, "note": f"{phase.upper()} — {note}"}
+
+
 def combine_htf(daily: Sequence[dict] = (), weekly: Sequence[dict] = (),
                 monthly: Sequence[dict] = ()) -> dict:
     """Fuse the fresh-OB bias across daily / weekly / monthly. Higher timeframes
