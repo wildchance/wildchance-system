@@ -16,7 +16,11 @@ from __future__ import annotations
 import httpx
 from decouple import config
 
-from services.ohlc_service import fetch_ohlc
+# NOTE: fetch_ohlc is imported LAZILY inside scan() (see below), not here at module
+# top. ohlc_service imports gold_scan for its Telegram sender, so a top-level import
+# the other way creates a circular import that crashes boot (whichever module the
+# import graph reaches first ends up half-initialised). The lazy import breaks the
+# cycle without changing behaviour.
 from services.wildchance_service import get_latest_feed
 from utils.price_fetcher import get_forex_price
 from gold.ict import classify_week, confluence as ict_confluence
@@ -64,6 +68,7 @@ async def scan(balance: float = 5000.0, tier: str = "6", risk_usd: float = 20.0,
                require_regime: bool = True, require_news: bool = True,
                loc_deep: float = 0.5, notify: bool = False) -> dict:
     """Build (and optionally send) the current gold signal."""
+    from services.ohlc_service import fetch_ohlc      # lazy — breaks the import cycle
     daily = await fetch_ohlc("XAU/USD", "1day", 25)
     if len(daily) < 3:
         return {"signal": "NO TRADE", "reason": "no XAU/USD daily bars"}
