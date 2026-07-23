@@ -15,6 +15,7 @@ import datetime as _dt
 _SENSITIVITY = 4000.0
 _WOW_MOMENTUM = 0.3
 _OPTIONS_TILT = 1500.0
+_ETF_TILT = 1200.0
 
 
 async def project_cot(symbol: str = "XAU/USD") -> dict:
@@ -53,12 +54,22 @@ async def project_cot(symbol: str = "XAU/USD") -> dict:
     except Exception:
         pass
 
+    # ETF flow lean — physical/paper accumulation leads spec positioning.
+    etf_lean = 0
+    try:
+        from gold import macro_cycle as mc
+        etf_lean = {"accumulation": 1, "easing_outflows": 0,
+                    "outflows": -1}.get(mc.INPUTS.get("etf_flow_direction"), 0)
+    except Exception:
+        pass
+
     drift = 0.0
     if price_change_pct is not None:
         drift += price_change_pct * _SENSITIVITY
     if wow:
         drift += _WOW_MOMENTUM * wow
     drift += opt_lean * _OPTIONS_TILT
+    drift += etf_lean * _ETF_TILT
     projected = int(net + drift)
 
     return {
@@ -67,7 +78,7 @@ async def project_cot(symbol: str = "XAU/USD") -> dict:
         "wow_net_change": wow,
         "price_change_since_report_pct": (round(price_change_pct * 100, 2)
                                           if price_change_pct is not None else None),
-        "options_lean": opt_lean,
+        "options_lean": opt_lean, "etf_lean": etf_lean,
         "projected_net": projected, "projected_drift": int(drift),
         "direction": ("adding longs" if drift > 0 else
                       "cutting longs" if drift < 0 else "flat"),
