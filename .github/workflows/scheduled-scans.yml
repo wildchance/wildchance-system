@@ -118,6 +118,7 @@ jobs:
               post "/wildchance/scrape?tier=daily"
               post "/gold/news"        # refresh the tier-1 news calendar daily
               post "/gold/dxy/flip"    # alert if DXY flipped the gold-long lock state
+              post "/gold/kingdom-report?notify=true"   # daily 14-branch report → Telegram
               ;;
             "0 0,12,18 * * *")
               post "/wildchance/scrape?tier=6h"
