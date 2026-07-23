@@ -68,6 +68,26 @@ def feed_inputs(real_rate_direction: str = None, fed_cycle: str = None,
     return dict(INPUTS)
 
 
+def price_inelastic_demand() -> dict:
+    """Score how price-INELASTIC the structural gold demand is (B8, 0-1).
+
+    Central banks that buy THROUGH drawdowns + strong reserve-survey conviction +
+    ETF outflows fading = demand that doesn't chase price = a firm structural floor
+    (buy dips, hold). Low score = demand is price-sensitive (no floor)."""
+    conv = INPUTS.get("cb_survey_conviction")
+    etf = INPUTS.get("etf_flow_direction")
+    conv_map = {"strong": 0.5, "moderate": 0.3, "weak": 0.1}
+    etf_map = {"accumulation": 0.4, "easing_outflows": 0.25, "outflows": 0.0}
+    score = min(1.0, conv_map.get(conv, 0.2) + etf_map.get(etf, 0.15))
+    band = "high" if score >= 0.6 else "moderate" if score >= 0.35 else "low"
+    return {"score": round(score, 2), "band": band,
+            "cb_conviction": conv, "etf_flow": etf,
+            "note": (f"price-inelastic demand {band} ({score:.2f}) — "
+                     + {"high": "firm structural floor: buy dips, hold",
+                        "moderate": "partial floor",
+                        "low": "demand is price-sensitive — no reliable floor"}[band])}
+
+
 def dollar_gold_bias() -> str:
     """The dollar-implied gold bias — live RBUSBIS when refreshed, else the
     anticipated DXY structure."""
