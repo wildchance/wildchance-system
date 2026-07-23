@@ -55,6 +55,16 @@ async def orders(limit: int = Query(50, ge=1, le=500), db: AsyncSession = Depend
     return {"orders": await te.recent(db, limit)}
 
 
+@router.get("/reconcile")
+async def reconcile(token: str = Query(...),
+                    stuck_minutes: int = Query(15, ge=1, le=240),
+                    db: AsyncSession = Depends(get_db)):
+    """Drift guard — compare the MT5 bridge's order state vs the tracked positions
+    and flag orphan fills / stuck orders. Token-guarded. Run on a schedule once live."""
+    _auth(token)
+    return await te.reconcile(db, stuck_minutes=stuck_minutes)
+
+
 @router.get("/status")
 async def status(db: AsyncSession = Depends(get_db)):
     """Live-execution readiness: is the switch on, the token set, and how many
