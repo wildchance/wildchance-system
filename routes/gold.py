@@ -248,6 +248,22 @@ async def options_set(future: float = Query(..., description="reference future p
                           put_vol=put_vol, call_vol=call_vol)
 
 
+@router.post("/options/refresh")
+async def options_refresh(url: str = Query(None, description="override OPTIONS_FEED_URL")):
+    """Pull the options snapshot from the configured live feed (OPTIONS_FEED_URL)
+    and ingest it. No-op if no feed is set — the operator POST /gold/options path
+    still works. Cron-friendly."""
+    from services import options_service as osvc
+    return await osvc.refresh(url=url)
+
+
+@router.get("/options/feed-status")
+async def options_feed_status():
+    """Is a live options feed wired, and is a snapshot loaded?"""
+    from services import options_service as osvc
+    return osvc.feed_status()
+
+
 @router.get("/accounts")
 async def accounts(denom: str = Query("USD", description="cent | USD | KES | KWD"),
                    anchor: float = Query(4000.0, description="leg anchor for acc5")):
@@ -343,6 +359,30 @@ async def backtest(horizon: int = Query(7, ge=1, le=30),
     if len(daily) < 30:
         raise HTTPException(status_code=502, detail="not enough XAU/USD daily history")
     return backtest_swing(daily, horizon=horizon, require_discount=require_discount)
+
+
+@router.get("/backtest/retracement")
+async def backtest_retracement_ep(interval: str = Query("4h", description="HTF: 4h / 1h / 1day"),
+                                  bars: int = Query(300, ge=40, le=2000),
+                                  lookahead: int = Query(6, ge=1, le=30),
+                                  tp_r: float = Query(2.0, gt=0)):
+    """Backtest the 3-state retracement classifier over history — SELL-the-OTE and
+    scalp-the-bounce win-rate / avg-R, so the edge is known BEFORE it trades live
+    paper. Uses the fused HTF ORB bias as the trend filter."""
+    from gold import retracement as gret
+    from gold import radar as grd
+    ohlc = await fetch_ohlc("XAU/USD", interval, bars)
+    if len(ohlc) < 40:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD HTF bars")
+    htf_bias = None
+    try:
+        daily = await fetch_ohlc("XAU/USD", "1day", 90)
+        htf_bias = grd.combine_htf(
+            daily=grd.order_blocks(daily, timeframe="1D") if len(daily) >= 8 else []
+        ).get("htf_bias")
+    except Exception:
+        pass
+    return gret.backtest_retracement(ohlc, lookahead=lookahead, htf_bias=htf_bias, tp_r=tp_r)
 
 
 @router.get("/backtest/intraday")
