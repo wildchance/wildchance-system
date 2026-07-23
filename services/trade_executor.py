@@ -121,3 +121,56 @@ def _to_dict(r: ExecutionOrder) -> dict:
         "status": r.status, "ticket": r.ticket, "fill_price": r.fill_price,
         "created_at": str(r.created_at) if r.created_at else None,
     }
+
+
+async def reconcile(db: AsyncSession, stuck_minutes: int = 15) -> dict:
+    """Drift guard for live execution — compare the MT5 bridge's order state against
+    the tracked gold positions and flag anything out of sync.
+
+    Catches: orders the bridge filled with no matching OPEN position (a fill the
+    tracker doesn't know about), orders stuck pending/sent past ``stuck_minutes``
+    (bridge not polling / VPS down), and the raw status tally. ``in_sync`` is True
+    only when there is no drift. Read-only — run it on a schedule once live."""
+    import datetime as _dt
+    orders = await recent(db, 300)
+    from services import gold_positions as gp
+    positions = await gp.list_positions(db, limit=300)
+
+    by_status: dict = {}
+    for o in orders:
+        by_status[o["status"]] = by_status.get(o["status"], 0) + 1
+
+    filled = [o for o in orders if o["status"] == "filled"]
+    rejected = [o for o in orders if o["status"] == "rejected"]
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    stuck = []
+    for o in orders:
+        if o["status"] in ("pending", "sent") and o.get("created_at"):
+            try:
+                ct = _dt.datetime.fromisoformat(o["created_at"])
+                if ct.tzinfo is None:
+                    ct = ct.replace(tzinfo=_dt.timezone.utc)
+                if (now - ct).total_seconds() > stuck_minutes * 60:
+                    stuck.append(o)
+            except Exception:
+                pass
+
+    open_pos = [p for p in positions if (p.get("status") == "OPEN")]
+    open_keys = {(p.get("source"), p.get("side")) for p in open_pos}
+    # a filled order whose (source, side) has no OPEN tracked position = drift
+    orphan_fills = [o for o in filled if (o.get("source"), o.get("side")) not in open_keys]
+
+    drift = len(orphan_fills) + len(stuck)
+    return {
+        "orders_total": len(orders), "by_status": by_status,
+        "filled": len(filled), "rejected": len(rejected),
+        "open_positions": len(open_pos),
+        "stuck_count": len(stuck), "stuck_pending": stuck,
+        "orphan_fill_count": len(orphan_fills), "orphan_fills": orphan_fills,
+        "drift": drift, "in_sync": drift == 0,
+        "execution_enabled": EXECUTION_ENABLED,
+        "note": ("bridge and tracker agree" if drift == 0 else
+                 f"{drift} drift item(s): {len(orphan_fills)} orphan fill(s), "
+                 f"{len(stuck)} stuck order(s) — check the VPS bridge"),
+    }
