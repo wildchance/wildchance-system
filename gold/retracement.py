@@ -151,6 +151,67 @@ def retracement_state(bars: Sequence, price: Optional[float] = None,
             "sweep": sweep, "htf_bias": htf_bias, "reason": why}
 
 
+def backtest_retracement(bars: Sequence, lookahead: int = 6,
+                         htf_bias: Optional[str] = None, tp_r: float = 2.0,
+                         dxy_unlocked: bool = False) -> dict:
+    """Replay the 3-state classifier over history to measure the edge BEFORE it
+    trades live paper. At each bar it classifies on the history-so-far; when the
+    state is actionable (SELL_OTE / SCALP_BOUNCE) it measures the forward outcome
+    over the next ``lookahead`` bars — +tp_r·R (win) vs −1R (stop) — and tallies a
+    win-rate / avg-R per state. A conservative model: if a bar's range hits BOTH
+    the target and the stop, the stop is assumed first."""
+    obars = to_ohlc(bars)
+    n = len(obars)
+    results = {"SELL_OTE": [], "SCALP_BOUNCE": []}
+    trades = []
+    for i in range(8, n - 1):
+        read = retracement_state(bars[:i + 1], htf_bias=htf_bias,
+                                 dxy_unlocked=dxy_unlocked)
+        st = read.get("state")
+        if st not in ("SELL_OTE", "SCALP_BOUNCE") or not read.get("actionable"):
+            continue
+        entry, stop = read.get("entry"), read.get("stop")
+        if entry is None or stop is None:
+            continue
+        risk = abs(entry - stop)
+        if risk <= 0:
+            continue
+        long = read.get("signal") == "LONG"
+        tp = entry + (tp_r * risk if long else -tp_r * risk)
+        fwd = obars[i + 1:i + 1 + lookahead]
+        outcome = None
+        for (o, h, l, c) in fwd:
+            hit_tp = h >= tp if long else l <= tp
+            hit_sl = l <= stop if long else h >= stop
+            if hit_sl:                       # stop assumed first on an ambiguous bar
+                outcome = -1.0
+                break
+            if hit_tp:
+                outcome = tp_r
+                break
+        if outcome is None:                  # unresolved → mark to the last close
+            c = fwd[-1][3] if fwd else entry
+            outcome = round(((c - entry) if long else (entry - c)) / risk, 2)
+        results[st].append(outcome)
+        trades.append({"idx": i, "state": st, "signal": read.get("signal"),
+                       "entry": entry, "stop": stop, "r": outcome})
+
+    def _stat(rs):
+        if not rs:
+            return {"n": 0, "win_rate": None, "avg_r": None, "total_r": 0.0}
+        wins = [x for x in rs if x > 0]
+        return {"n": len(rs), "win_rate": round(len(wins) / len(rs), 3),
+                "avg_r": round(sum(rs) / len(rs), 3), "total_r": round(sum(rs), 2)}
+
+    return {"bars": n, "lookahead": lookahead, "tp_r": tp_r,
+            "SELL_OTE": _stat(results["SELL_OTE"]),
+            "SCALP_BOUNCE": _stat(results["SCALP_BOUNCE"]),
+            "trades": trades[-50:],
+            "note": (f"SELL-the-OTE {_stat(results['SELL_OTE'])['n']} signals, "
+                     f"scalp {_stat(results['SCALP_BOUNCE'])['n']} — win-rate/avg-R "
+                     "measured forward over the sample")}
+
+
 def format_retracement(read: dict) -> str:
     """One-glance Telegram/console line for the current retracement state."""
     icon = {"SELL_OTE": "🔻", "SCALP_BOUNCE": "🟢", "LEAVE": "⏸️"}.get(read["state"], "❔")
