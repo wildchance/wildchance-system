@@ -108,3 +108,33 @@ def test_alert_quiet_when_unchanged(monkeypatch):
 
     out = _run(rsvc.state_alert(notify=True))
     assert out["changed"] is False and out["sent"] is False
+
+
+# --- #3 scalp-BE narration ----------------------------------------------------
+
+def test_scalp_be_line_distinct():
+    ev = [{"kind": "breakeven", "side": "long", "trade_type": "sd_fade",
+           "scalp": True, "running_r": 1.0, "stop": 4008.0}]
+    line = pos.format_lifecycle_events(ev)
+    assert "🩹 scalp→BE" in line and "counter-trend guard" in line
+
+
+def test_normal_be_line_unchanged():
+    ev = [{"kind": "breakeven", "side": "long", "trade_type": "swing",
+           "scalp": False, "running_r": 1.5, "stop": 4008.0}]
+    line = pos.format_lifecycle_events(ev)
+    assert "STOP→BE" in line and "🩹" not in line
+
+
+# --- #2 scorecard by_source cohort --------------------------------------------
+
+def test_scorecard_groups_by_source():
+    from usdjpy.scorecard import by_group
+    rows = [
+        {"source": "retracement_paper", "result_r": 3.0},
+        {"source": "retracement_paper", "result_r": -1.0},
+        {"source": "gold_scan", "result_r": 2.0},
+    ]
+    grouped = by_group(rows, "source")
+    assert set(grouped) == {"retracement_paper", "gold_scan"}
+    assert grouped["retracement_paper"]["n"] == 2
