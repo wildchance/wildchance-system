@@ -12,13 +12,41 @@ from core.trade import router as trade_router
 from core.webhook import router as webhook_router
 from database.db import init_db
 
-from routes.telegram_routes import router as telegram_router
-from routes.telegram_routes import register_bot
+# The Telegram INBOUND bot (command webhook) pulls python-telegram-bot →
+# cryptography. That is an OPTIONAL integration: outbound alerts go out over plain
+# httpx (services.*._tg), so a broken/absent telegram lib must NOT take down the
+# whole trading API. Import it defensively and degrade to a no-op if it fails.
+try:
+    from routes.telegram_routes import router as telegram_router
+    from routes.telegram_routes import register_bot
+    _TELEGRAM_BOT_OK = True
+except BaseException as _tg_err:  # ImportError, OR a cryptography rust
+                                  # PanicException (which subclasses BaseException,
+                                  # not Exception) — so BaseException is required.
+    if isinstance(_tg_err, (KeyboardInterrupt, SystemExit)):
+        raise
+    import logging as _logging
+    _logging.getLogger("uvicorn.error").warning(
+        "Telegram inbound bot disabled (%s: %s) — outbound alerts still work",
+        type(_tg_err).__name__, _tg_err)
+    telegram_router = None
+    _TELEGRAM_BOT_OK = False
+
+    def register_bot(app):        # no-op fallback
+        return None
+
 from routes.admin import router as admin_router
 from routes.market import router as market_router
 from routes.alert_webhook import router as alert_webhook
 from routes.history import router as history_router
-from routes.history_commands import router as history_cmd_router
+# Also a Telegram-command module (imports python-telegram-bot); its router carries
+# no HTTP endpoints, so degrade to None if the telegram lib is unavailable.
+try:
+    from routes.history_commands import router as history_cmd_router
+except BaseException as _hc_err:
+    if isinstance(_hc_err, (KeyboardInterrupt, SystemExit)):
+        raise
+    history_cmd_router = None
 from routes.usdjpy import router as usdjpy_router
 from routes.portfolio import router as portfolio_router
 from routes.wildchance import router as wildchance_router
@@ -45,9 +73,6 @@ from routes.edgefinder import router as edgefinder_router
 from routes.backtest import router as backtest_router
 from routes.gold import router as gold_router
 from routes.execution import router as execution_router
-from routes.structure import router as structure_router
-from routes.pairs import router as pairs_router
-from routes.amd import router as amd_router
 
 # Real-time streaming
 from services.polygon_stream import polygon_stream
@@ -110,11 +135,13 @@ app.include_router(alert_webhook)
 app.include_router(signals_router)
 app.include_router(trade_router)
 app.include_router(webhook_router)
-app.include_router(telegram_router)
+if telegram_router is not None:
+    app.include_router(telegram_router)
 app.include_router(admin_router)
 app.include_router(market_router)
 app.include_router(history_router)
-app.include_router(history_cmd_router)
+if history_cmd_router is not None:
+    app.include_router(history_cmd_router)
 app.include_router(usdjpy_router)
 app.include_router(portfolio_router)
 app.include_router(wildchance_router)
@@ -140,9 +167,6 @@ app.include_router(edgefinder_router)
 app.include_router(backtest_router)
 app.include_router(gold_router)
 app.include_router(execution_router)
-app.include_router(structure_router)
-app.include_router(pairs_router)
-app.include_router(amd_router)
 app.include_router(correlation_router)
 
 # Serve the static dashboards (EdgeFinder board at /static/dashboard/edgefinder.html).
