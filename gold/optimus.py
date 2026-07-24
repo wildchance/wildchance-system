@@ -38,10 +38,19 @@ LIVE_ZONES = {
         {"name": "ob_3987_4h", "lo": 3980.0, "hi": 3994.0, "note": "4H bullish order block"},
         {"name": "shelf_3944_3958", "lo": 3944.11, "hi": 3958.50, "note": "fib support shelf"},
         {"name": "central_limit_3885", "lo": 3880.0, "hi": 3888.0,
-         "note": "central limit — full-zone target"},
+         "note": "central limit — last floor before the void"},
+        # --- below here is the W1 no-floor VOID: nothing real until ~3506 ---
+        {"name": "weekly_buy_3506", "lo": 3500.0, "hi": 3512.0,
+         "note": "weekly buy limit — first floor across the void"},
+        {"name": "macro_buy_3291", "lo": 3285.0, "hi": 3298.0,
+         "note": "macro accumulation floor"},
     ],
     "pivots": {"bullish_mean": 4133.90},
 }
+
+# A gap larger than this (in pips) with no zone = a no-floor VOID: price travels it
+# fast, so the efficient target is the far side, not an imaginary level inside it.
+VOID_MIN_PIPS = 2000.0        # 2000 pips = 200 usd of air
 
 
 def set_live_zones(sell: Sequence[dict] = None, buy: Sequence[dict] = None,
@@ -108,6 +117,47 @@ def _next_target(side: str, entry: float) -> Optional[dict]:
     return sells[0] if sells else None
 
 
+def target_ladder(side: str, entry: float) -> dict:
+    """Map the efficient target cascade in the trade direction, flagging VOIDS — the
+    no-floor gaps price travels fast. For a SELL: the buy zones below the entry, in
+    order, each tagged with the pip gap from the previous and whether a void precedes
+    it. The 'last floor' before a big void is the disciplined take-profit; the far
+    side of the void is the extended (whale) target."""
+    if side.lower() in ("sell", "short"):
+        zones = sorted((z for z in LIVE_ZONES["buy"] if z["hi"] < entry),
+                       key=lambda z: -z["hi"])
+        edge = lambda z: z["hi"]
+    else:
+        zones = sorted((z for z in LIVE_ZONES["sell"] if z["lo"] > entry),
+                       key=lambda z: z["lo"])
+        edge = lambda z: z["lo"]
+    ladder, prev, last_floor, void_target = [], entry, None, None
+    for z in zones:
+        e = edge(z)
+        gap = _pips(prev, e)
+        void = gap >= VOID_MIN_PIPS
+        cum = _pips(entry, e)
+        tier = tier_for_pips(cum)
+        row = {"zone": z["name"], "target": e, "pips_from_prev": gap,
+               "cum_pips": cum, "void_before": void,
+               "tier": (tier or {}).get("name"),
+               "note": (f"VOID — {gap:.0f} pips of air; efficient runner target"
+                        if void else z.get("note", ""))}
+        ladder.append(row)
+        if void and void_target is None:
+            void_target = row
+        elif not void:
+            last_floor = row
+        prev = e
+    return {"side": side.upper(), "entry": round(entry, 2), "ladder": ladder,
+            "last_floor": last_floor, "void_target": void_target,
+            "note": ("efficient targets mapped"
+                     + (f"; disciplined TP {last_floor['zone']} @ {last_floor['target']}"
+                        if last_floor else "")
+                     + (f"; runner across the void to {void_target['zone']} "
+                        f"@ {void_target['target']}" if void_target else ""))}
+
+
 def precision_entry(bars: Sequence, zone: dict, side: str) -> dict:
     """The full precision read for one zone: the located OB, the reject gate (ARMED
     vs WAIT — no early fill), the 250-usd stop, and the capture grade to the next zone."""
@@ -163,14 +213,18 @@ def optimus_scan(bars: Sequence, price: float) -> dict:
     # anticipation: the next zone below (bearish) / above (bullish) from price
     direction = "sell" if not up else "buy"
     nxt = _next_target("sell" if direction == "sell" else "buy", price)
+    ladder = target_ladder(direction, price)
     return {
         "price": round(price, 2), "bias_vs_mean": "below (sell)" if not up else "above",
         "armed": armed, "watching": [r for r in reads if not r.get("armed")],
         "next_zone": (nxt or {}).get("name"),
         "next_zone_band": [nxt["lo"], nxt["hi"]] if nxt else None,
+        "target_ladder": ladder,
+        "last_floor": ladder.get("last_floor"), "void_target": ladder.get("void_target"),
         "note": (f"{len(armed)} armed precision zone(s); "
                  + (f"anticipating {direction} into {(nxt or {}).get('name')}"
-                    if nxt else "at a range extreme")),
+                    if nxt else "at a range extreme")
+                 + ("; " + ladder["note"] if ladder.get("ladder") else "")),
     }
 
 
