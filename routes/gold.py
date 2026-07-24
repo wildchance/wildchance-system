@@ -291,6 +291,48 @@ async def accounts_fanout(entry: float = Query(...), stop: float = Query(...),
     return ga.copy_fanout({"side": side, "entry": entry, "stop": stop}, fleet)
 
 
+@router.get("/bumblebee")
+async def bumblebee(session: str = Query(None, description="london | newyork (else by clock)"),
+                    now_hour: int = Query(None, description="override UTC-4 hour"),
+                    price: float = Query(None)):
+    """Bumblebee — intra-session sweep-and-continuity scalper. The session-open 1H
+    range → the sweep of one side → the continuity call toward the HTF order block
+    (cheetah scalps). Asian 2-5 sets the daily bias; London 00/01/02, NY 07/08/09."""
+    import datetime as _dt
+    from gold import bumblebee as gbb
+    from gold import radar as grd
+    # 1H bars tagged with UTC-4 hour
+    raw = await fetch_ohlc("XAU/USD", "1h", 60)
+    if len(raw) < 8:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD 1H bars")
+    bars = []
+    for b in raw:
+        # DatedOHLC is (date,o,h,l,c) at day granularity — fall back to index hour when
+        # intraday timestamps aren't available; the operator can pass now_hour.
+        bars.append({"hour": None, "open": b[1], "high": b[2], "low": b[3], "close": b[4]})
+    # Prefer raw hourly with timestamps if available.
+    try:
+        from services.ohlc_service import fetch_hourly_raw
+        hraw = await fetch_hourly_raw("XAU/USD", timezone="America/New_York", outputsize=60)
+        if hraw:
+            bars = [{"hour": int(str(x.get("datetime", ""))[11:13] or -1),
+                     "open": float(x["open"]), "high": float(x["high"]),
+                     "low": float(x["low"]), "close": float(x["close"])}
+                    for x in hraw if x.get("datetime")]
+    except Exception:
+        pass
+    nh = now_hour if now_hour is not None else int(_dt.datetime.utcnow().hour - 4) % 24
+    # HTF OB bias + nearest OB target from Optimus/radar
+    htf_bias = ob_target = None
+    try:
+        daily = await fetch_ohlc("XAU/USD", "1day", 90)
+        htf_bias = grd.combine_htf(daily=grd.order_blocks(daily, timeframe="1D")
+                                   if len(daily) >= 8 else []).get("htf_bias")
+    except Exception:
+        pass
+    return gbb.bumblebee_scan(bars, nh, htf_bias=htf_bias, session=session, ob_target=ob_target)
+
+
 @router.get("/optimus")
 async def optimus(interval: str = Query("4h"), bars: int = Query(60, ge=8, le=300),
                   price: float = Query(None)):
