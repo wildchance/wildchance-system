@@ -38,9 +38,11 @@ class Ack(BaseModel):
 
 
 @router.get("/pending")
-async def pending(token: str = Query(...), db: AsyncSession = Depends(get_db)):
+async def pending(token: str = Query(...),
+                  account: str = Query(None, description="fleet account filter: acc1..acc5"),
+                  db: AsyncSession = Depends(get_db)):
     _auth(token)
-    return {"orders": await te.pending(db)}
+    return {"orders": await te.pending(db, account=account)}
 
 
 @router.post("/ack")
