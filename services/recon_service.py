@@ -170,7 +170,17 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
             _d = await fetch_ohlc("XAU/USD", "1day", 90)
             _hbias = grd.combine_htf(daily=grd.order_blocks(_d, timeframe="1D")
                                      if len(_d) >= 8 else []).get("htf_bias")
-            bumblebee = gbb.bumblebee_scan(_hb, _nh, htf_bias=_hbias)
+            # Venom AMD phase (folds ×manipulation conviction) + HTF-OB interaction gate
+            _venom = None
+            try:
+                from gold import venom as gvenom
+                _venom = gvenom.venom_read()
+            except Exception:
+                pass
+            _ob_hit = bool((optimus and optimus.get("armed"))
+                           or (radar and radar.get("active_retest")))
+            bumblebee = gbb.bumblebee_scan(_hb, _nh, htf_bias=_hbias, venom=_venom,
+                                           ob_interacted=_ob_hit)
     except Exception:
         pass
 
@@ -178,7 +188,7 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
     last = _read_last()
     changed = sig != last
     _optimus_armed = bool(optimus and optimus.get("armed"))
-    _bee_call = bool(bumblebee and (bumblebee.get("continuity") or {}).get("signal") in ("BUY", "SELL"))
+    _bee_call = bool(bumblebee and (bumblebee.get("outcome") or {}).get("signal") in ("BUY", "SELL"))
     should = force or ((sweep["armed"] or _optimus_armed or _bee_call or not armed_only) and changed)
     sent = False
     if notify and should:
@@ -200,5 +210,5 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
             "optimus": ({"armed": optimus.get("armed"), "next_zone": optimus.get("next_zone"),
                          "note": optimus.get("note")} if optimus else None),
             "bumblebee": ({"session": bumblebee.get("session"),
-                           "continuity": bumblebee.get("continuity"),
+                           "outcome": bumblebee.get("outcome"),
                            "note": bumblebee.get("note")} if bumblebee else None)}
