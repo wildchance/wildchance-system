@@ -291,6 +291,39 @@ async def accounts_fanout(entry: float = Query(...), stop: float = Query(...),
     return ga.copy_fanout({"side": side, "entry": entry, "stop": stop}, fleet)
 
 
+@router.get("/optimus")
+async def optimus(interval: str = Query("4h"), bars: int = Query(60, ge=8, le=300),
+                  price: float = Query(None)):
+    """Optimus Prime — zone-precision locator. Finds the exact up/down-close OB at
+    each live reaction zone, gates entry on the reject (no early 250-usd stop),
+    grades the 2500-pip / 250-usd capture, and anticipates the next zone."""
+    from gold import optimus as gop
+    ohlc = await fetch_ohlc("XAU/USD", interval, bars)
+    if len(ohlc) < 8:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD HTF bars")
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            price = ohlc[-1][4]
+    scan = gop.optimus_scan(ohlc, float(price))
+    scan["display"] = gop.format_optimus(scan)
+    return scan
+
+
+@router.post("/optimus/zones")
+async def optimus_zones(sell: str = Query(None, description="JSON list of sell zones [{name,lo,hi,note}]"),
+                        buy: str = Query(None, description="JSON list of buy zones"),
+                        bullish_mean: float = Query(None, description="the mean pivot")):
+    """Feed today's live reaction map (up/down-close zones) into Optimus."""
+    import json
+    from gold import optimus as gop
+    s = json.loads(sell) if sell else None
+    b = json.loads(buy) if buy else None
+    p = {"bullish_mean": bullish_mean} if bullish_mean is not None else None
+    return gop.set_live_zones(sell=s, buy=b, pivots=p)
+
+
 @router.get("/network")
 async def network():
     """Copy-trade network structure — the ×10 upscale ladder + the structured
