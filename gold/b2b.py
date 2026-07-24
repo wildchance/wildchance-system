@@ -90,10 +90,22 @@ def b2b_bomber(bars: Sequence, anchor_hours: Sequence[int] = ANCHOR_HOURS) -> di
     anchored = hour in tuple(anchor_hours) if hour is not None else None
     session = ("asia_00" if hour == 0 else "ny_14" if hour == 14 else None)
 
+    # Actionable swing card — enter at the sweep candle's close (candle 1), stop just
+    # beyond the swept extreme (the invalidation), target the continuation extreme;
+    # the ride is the two continuation 4H closes ≈ 8 hours.
+    _buf = 1.5
+    entry = round(c1, 2)
+    stop = round((invalidation - _buf) if signal == "LONG" else (invalidation + _buf), 2)
+    target = round(target_ref, 2)
+    risk = abs(entry - stop) or 1e-9
+    rr = round(abs(target - entry) / risk, 2)
+
     return {
         "signal": signal, "pattern": "b2b_bomber", "swept": swept,
         "sweep_candle_hour_utc4": hour, "anchored": anchored, "anchor_session": session,
         "sweep_level": round(sweep_level, 2), "invalidation": round(invalidation, 2),
+        "entry": entry, "stop": stop, "target": target, "rr": rr,
+        "horizon_hours": 8, "trade_type": "swing",
         "continuation_closes": [round(c2, 2), round(c3, 2)],
         "target_ref": round(target_ref, 2),
         "note": (f"4H b2b bomber {signal}: candle 1 swept the {swept}, then 8h "
@@ -109,6 +121,7 @@ def format_b2b(read: dict) -> Optional[str]:
         return None
     arrow = "🟢" if read["signal"] == "LONG" else "🔴"
     tag = f" · {read['anchor_session']}" if read.get("anchored") else ""
-    return (f"💣 *4H B2B BOMBER — {read['signal']}*{tag}\n"
+    return (f"💣 *4H B2B BOMBER — {read['signal']}*{tag}  (~8h swing)\n"
             f"{arrow} swept the {read['swept']} then 8h back-to-back continuation\n"
-            f"   invalidation `{read['invalidation']}`  ·  target ref `{read['target_ref']}`")
+            f"   entry `{read.get('entry')}`  SL `{read.get('stop')}`  TP `{read.get('target')}`"
+            f"  ({read.get('rr')}R)")
