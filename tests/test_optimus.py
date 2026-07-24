@@ -62,6 +62,26 @@ def test_optimus_scan_anticipates_next_zone():
     assert scan["next_zone"] is not None       # e.g. ob_3987_4h / shelf / central limit
 
 
+def test_target_ladder_maps_void():
+    # selling from ~4029: floors cascade 4001→3987→3958→3885, then a VOID to 3506
+    lad = gop.target_ladder("sell", 4029.0)
+    names = [r["zone"] for r in lad["ladder"]]
+    assert "central_limit_3885" in names and "weekly_buy_3506" in names
+    # the 3885→3506 leg is flagged as a void (no floor between)
+    void_rows = [r for r in lad["ladder"] if r["void_before"]]
+    assert any(r["zone"] == "weekly_buy_3506" for r in void_rows)
+    # disciplined last floor before the void is 3885
+    assert lad["last_floor"]["zone"] == "central_limit_3885"
+
+
+def test_scan_includes_target_ladder():
+    def b(o, h, l, c):
+        return ("d", o, h, l, c)
+    bars = [b(4160, 4170, 4150, 4155), b(4155, 4158, 4020, 4030), b(4030, 4035, 4020, 4029)]
+    scan = gop.optimus_scan(bars, 4029.0)
+    assert "target_ladder" in scan and scan["last_floor"]["zone"] == "central_limit_3885"
+
+
 def test_set_live_zones_updates_map():
     out = gop.set_live_zones(
         sell=[{"name": "x", "lo": 4200, "hi": 4210}],
@@ -75,5 +95,7 @@ def test_set_live_zones_updates_map():
         buy=[{"name": "ob_4001", "lo": 3995.0, "hi": 4001.60},
              {"name": "ob_3987_4h", "lo": 3980.0, "hi": 3994.0},
              {"name": "shelf_3944_3958", "lo": 3944.11, "hi": 3958.50},
-             {"name": "central_limit_3885", "lo": 3880.0, "hi": 3888.0}],
+             {"name": "central_limit_3885", "lo": 3880.0, "hi": 3888.0},
+             {"name": "weekly_buy_3506", "lo": 3500.0, "hi": 3512.0},
+             {"name": "macro_buy_3291", "lo": 3285.0, "hi": 3298.0}],
         pivots={"bullish_mean": 4133.90})
