@@ -127,6 +127,26 @@ def test_sell_limit_ladder_tags_ob_timeframe():
     assert "4H order block" in (tagged.get(4133.90) or "")
 
 
+def test_sell_path_staircase():
+    # from 4060: retrace up into a sell OB, then impulse/retrace staircase to TP 3634
+    p = gop.sell_path(4060.0)
+    kinds = [l["type"] for l in p["legs"]]
+    assert "retrace_up" in kinds and "impulse_down" in kinds
+    # legs alternate and end at/near the TP
+    assert p["legs"][-1]["to"] <= 3640 and p["legs"][-1]["type"] == "impulse_down"
+    assert p["sell_legs"] >= 3          # multiple sell legs down the staircase
+    # every impulse leg is a lower low than the prior retrace high
+    imp = [l for l in p["legs"] if l["type"] == "impulse_down"]
+    assert imp[0]["to"] > imp[-1]["to"]  # stepping down
+
+
+def test_set_sell_path_updates():
+    out = gop.set_sell_path(sells=[4100, 4050], floors=[3900, 3800], tp=3700)
+    assert out["tp"] == 3700 and out["sells"] == [4100.0, 4050.0]
+    gop.set_sell_path(sells=[4256.19, 4217.93, 4164.03, 4128.61, 4081.68, 4063.23],
+                      floors=[3997.54, 3896.57, 3865.59, 3761.71, 3654.81], tp=3634.04)
+
+
 def test_set_fib_map_updates():
     out = gop.set_fib_map(bullish_mean=4200.0)
     assert out["bullish_mean"] == 4200.0
