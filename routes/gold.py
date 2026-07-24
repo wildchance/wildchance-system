@@ -330,6 +330,31 @@ async def optimus_sell_limits(price: float = Query(None), window: str = Query("p
     return gop.sell_limit_ladder(float(price), box)
 
 
+@router.get("/optimus/path")
+async def optimus_path(price: float = Query(None), tp: float = Query(None)):
+    """Sell-anticipation PATH — the sequenced lower-high/lower-low staircase (retrace
+    → impulse → retrace) projected down to TP. The roadmap, not just the levels."""
+    from gold import optimus as gop
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            raise HTTPException(status_code=502, detail="no price")
+    return gop.sell_path(float(price), tp)
+
+
+@router.post("/optimus/path")
+async def optimus_path_set(sells: str = Query(None, description="JSON list of sell OBs"),
+                           floors: str = Query(None, description="JSON list of demand floors"),
+                           tp: float = Query(None)):
+    """Feed today's H4 staircase (sell OBs, demand floors, TP) into the path projector."""
+    import json
+    from gold import optimus as gop
+    s = json.loads(sells) if sells else None
+    f = json.loads(floors) if floors else None
+    return gop.set_sell_path(sells=s, floors=f, tp=tp)
+
+
 @router.get("/optimus/bounce")
 async def optimus_bounce(price: float = Query(None), window: str = Query("prelondon")):
     """Counter-trend bounce map — the premium OBs above price (buy targets) that are
