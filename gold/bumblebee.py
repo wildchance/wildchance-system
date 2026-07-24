@@ -93,6 +93,87 @@ def detect_sweep(range_hi: float, range_lo: float, bars_after: Sequence) -> dict
             "reclaim": reclaim_high if side == "high" else reclaim_low if side == "low" else False}
 
 
+def range_outcome(range_hi: float, range_lo: float, bars_after: Sequence,
+                  approach_frac: float = 0.15) -> str:
+    """One of the FOUR calculated outcomes at the range — the complete set price
+    follows: sweep_high / sweep_low (took the liquidity) or failed_high / failed_low
+    (approached the extreme but couldn't take it). 'both' / 'inside' otherwise."""
+    if not bars_after:
+        return "inside"
+    rng = max(range_hi - range_lo, 1e-9)
+    tol = rng * approach_frac
+    hi = max(_hlc(b)[2] for b in bars_after)
+    lo = min(_hlc(b)[3] for b in bars_after)
+    swept_high, swept_low = hi > range_hi, lo < range_lo
+    if swept_high and swept_low:
+        return "both"
+    if swept_high:
+        return "sweep_high"
+    if swept_low:
+        return "sweep_low"
+    failed_high = (range_hi - hi) <= tol      # got within tol of the high, didn't take
+    failed_low = (lo - range_lo) <= tol
+    if failed_high and not failed_low:
+        return "failed_high"
+    if failed_low and not failed_high:
+        return "failed_low"
+    return "inside"
+
+
+# The four outcomes → (signal, kind, rationale). 2 SELL (high side), 2 BUY (low side).
+OUTCOME_SETUP = {
+    "sweep_high":  ("SELL", "reversal", "swept the high (buy-side grab) → reject down"),
+    "failed_high": ("SELL", "continuation", "failed to take the high (lower high) → bearish"),
+    "sweep_low":   ("BUY", "reversal", "swept the low (sell-side grab) → reject up"),
+    "failed_low":  ("BUY", "continuation", "failed to take the low (higher low) → bullish"),
+}
+
+
+def outcome_call(outcome: str, htf_bias: Optional[str] = None,
+                 venom: Optional[dict] = None,
+                 ob_interacted: Optional[bool] = None) -> dict:
+    """The 4-outcome setup call, folded with the HTF bias, the Venom AMD phase, and
+    the HTF-OB gate. A sweep in a ×manipulation window with OB interaction = HIGH
+    conviction; a setup with no OB interaction is held to WAIT."""
+    setup = OUTCOME_SETUP.get(outcome)
+    if not setup:
+        return {"signal": "WAIT", "outcome": outcome,
+                "note": f"{outcome} — no clean setup (both sides / inside)"}
+    signal, kind, why = setup
+    want = "short" if signal == "SELL" else "long"
+    htf_ok = htf_bias in (want, None, "neutral")
+    ob_ok = ob_interacted is not False          # None (unknown) or True passes; False blocks
+
+    conviction, manip, aligned = "base", False, 0
+    if venom:
+        conf = venom.get("confluence", {}) or {}
+        aligned = conf.get("timeframes_aligned", 0)
+        manip = bool(conf.get("htf_manipulation_window")
+                     or (venom.get("intraday", {}) or {}).get("phase") == "manipulation")
+        if outcome.startswith("sweep") and manip and aligned >= 3:
+            conviction = "HIGH (×manipulation sweep)"
+        elif outcome.startswith("sweep") and manip:
+            conviction = "elevated (manipulation sweep)"
+        elif manip:
+            conviction = "elevated (manipulation window)"
+
+    fired = signal if (htf_ok and ob_ok) else "WAIT"
+    reasons = []
+    if not htf_ok:
+        reasons.append(f"HTF bias {htf_bias} opposes")
+    if not ob_ok:
+        reasons.append("no HTF OB interaction — gated")
+    return {
+        "signal": fired, "outcome": outcome, "kind": kind, "why": why,
+        "htf_confluence": htf_ok and htf_bias == want,
+        "ob_interacted": ob_interacted, "conviction": conviction,
+        "manipulation_window": manip, "timeframes_aligned": aligned,
+        "note": (f"{outcome} → {signal} ({kind}); {why}"
+                 + (f"; conviction {conviction}" if conviction != "base" else "")
+                 + (f" — WAIT ({', '.join(reasons)})" if fired == "WAIT" else "")),
+    }
+
+
 def continuity_call(sweep_side: Optional[str], htf_bias: Optional[str]) -> dict:
     """The trade the sweep sets up, gated by HTF-OB confluence. Sweep the HIGH →
     sell toward the OB below (needs a non-bullish HTF); sweep the LOW → buy toward
@@ -196,7 +277,9 @@ def phase_for_hour(hour: int) -> Optional[dict]:
 
 
 def bumblebee_scan(bars_1h: Sequence, now_hour: int, htf_bias: Optional[str] = None,
-                   session: Optional[str] = None, ob_target: Optional[float] = None) -> dict:
+                   session: Optional[str] = None, ob_target: Optional[float] = None,
+                   venom: Optional[dict] = None,
+                   ob_interacted: Optional[bool] = None) -> dict:
     """Full Bumblebee read for the active (or given) session: the anchor range, the
     sweep, and the continuity call toward the HTF OB. Feed hour-tagged 1H bars."""
     sess = session
@@ -224,30 +307,35 @@ def bumblebee_scan(bars_1h: Sequence, now_hour: int, htf_bias: Optional[str] = N
         sweep_bars = [b for b in bars_1h if _hlc(b)[0] is not None
                       and cfg["anchor"] < _hlc(b)[0] < cfg["continuity"]]
     sweep = detect_sweep(rng["high"], rng["low"], sweep_bars)
-    call = continuity_call(sweep["side"], bias)
-    # target toward the HTF OB (opposite the sweep) — a cheetah scalp by default
+    call = continuity_call(sweep["side"], bias)          # legacy 2-outcome
+    # The FOUR calculated outcomes (sweep/fail × high/low) folded with the Venom AMD
+    # phase + the HTF-OB gate — the complete setup read.
+    outcome = range_outcome(rng["high"], rng["low"], sweep_bars)
+    oc = outcome_call(outcome, htf_bias=bias, venom=venom, ob_interacted=ob_interacted)
     target = ob_target
     return {
         "session": sess, "phase": (phase_for_hour(now_hour) or {}).get("phase"),
         "range": rng, "sweep": sweep, "htf_bias": bias, "asian_bias": ab,
-        "continuity": call, "ob_target": target,
+        "continuity": call, "outcome": oc, "venom_folded": bool(venom),
+        "ob_target": target,
         "scalp": "cheetah (≥250 pips) intra-session toward the HTF OB",
-        "note": (f"{sess.upper()} {rng['low']}–{rng['high']}: "
-                 + (f"swept {sweep['side']} → {call['signal']}"
-                    f"{' ✅HTF' if call['confluence'] else ''}"
-                    if sweep["side"] else "awaiting the sweep")),
+        "note": (f"{sess.upper()} {rng['low']}–{rng['high']}: {outcome} → {oc['signal']}"
+                 + (f" · {oc['conviction']}" if oc.get("conviction", "base") != "base" else "")),
     }
 
 
 def format_bumblebee(scan: dict) -> Optional[str]:
-    """Telegram line when Bumblebee has a confluent continuity call."""
-    call = scan.get("continuity") or {}
-    if call.get("signal") not in ("BUY", "SELL"):
+    """Telegram line when Bumblebee has a fired 4-outcome setup call."""
+    oc = scan.get("outcome") or {}
+    if oc.get("signal") not in ("BUY", "SELL"):
         return None
-    icon = "🟢" if call["signal"] == "BUY" else "🔴"
+    icon = "🟢" if oc["signal"] == "BUY" else "🔴"
     rng = scan.get("range") or {}
-    tag = " ✅HTF" if call.get("confluence") else ""
-    return (f"🐝 *BUMBLEBEE — {scan['session'].upper()}*  {icon} {call['signal']}{tag}\n"
-            f"   range {rng.get('low')}–{rng.get('high')}  ·  swept {scan['sweep']['side']}\n"
-            f"   {call['note']}"
+    conv = oc.get("conviction", "base")
+    tag = " ✅HTF" if oc.get("htf_confluence") else ""
+    star = "  ⭐" if conv.startswith("HIGH") else ""
+    return (f"🐝 *BUMBLEBEE — {scan['session'].upper()}*  {icon} {oc['signal']}{tag}{star}\n"
+            f"   range {rng.get('low')}–{rng.get('high')}  ·  {oc['outcome']} ({oc.get('kind')})\n"
+            f"   {oc['why']}"
+            + (f"  ·  {conv}" if conv != "base" else "")
             + (f"  → OB {scan['ob_target']}" if scan.get("ob_target") else ""))
