@@ -336,6 +336,69 @@ def sell_limit_ladder(price: float, box=None, floor: Optional[float] = None) -> 
                         else "price below all premium retests — ride the trend"))}
 
 
+# H4 sell-anticipation STAIRCASE (2026-07-24 operator chart) — the alternating
+# retrace(lower-high) / impulse(lower-low) path down to TP. Operator-updatable.
+PATH_SELLS = [4256.19, 4217.93, 4164.03, 4128.61, 4081.68, 4063.23]   # sell OBs (LHs)
+PATH_FLOORS = [3997.54, 3896.57, 3865.59, 3761.71, 3654.81]           # demand (LLs)
+PATH_TP = 3634.04
+
+
+def set_sell_path(sells=None, floors=None, tp=None) -> dict:
+    """Operator update of the H4 sell-anticipation staircase."""
+    global PATH_SELLS, PATH_FLOORS, PATH_TP
+    if sells is not None:
+        PATH_SELLS = sorted((float(x) for x in sells), reverse=True)
+    if floors is not None:
+        PATH_FLOORS = sorted((float(x) for x in floors), reverse=True)
+    if tp is not None:
+        PATH_TP = float(tp)
+    return {"sells": PATH_SELLS, "floors": PATH_FLOORS, "tp": PATH_TP}
+
+
+def _leg(n: int, kind: str, frm: float, to: float, action: str) -> dict:
+    pips = _pips(frm, to)
+    tier = tier_for_pips(pips)
+    return {"leg": n, "type": kind, "from": round(frm, 2), "to": round(to, 2),
+            "pips": pips, "tier": (tier or {}).get("name"), "action": action}
+
+
+def sell_path(price: float, tp: Optional[float] = None) -> dict:
+    """Project the sequenced sell staircase — alternating retrace-up (into a lower-high
+    sell OB) and impulse-down (to the next demand) — down to TP. Turns the zone ladder
+    into the roadmap you drew: each impulse leg is a big trade, each retrace a re-sell."""
+    tp = tp if tp is not None else PATH_TP
+    lhs_above = sorted((l for l in PATH_SELLS if l >= price * 0.999))
+    floors = sorted({f for f in PATH_FLOORS if f < price and f > tp} | {tp}, reverse=True)
+    legs, cur, n = [], float(price), 1
+    prev_lh = cur
+    # initial retrace into the nearest sell OB (the lower-high the bounce sells from)
+    if lhs_above:
+        lh = lhs_above[0]
+        legs.append(_leg(n, "retrace_up", cur, lh, "buy the bounce into the sell OB")); n += 1
+        cur, prev_lh = lh, lh
+    for fl in floors:
+        legs.append(_leg(n, "impulse_down", cur, fl, f"SELL to demand {fl:.0f}")); n += 1
+        cur = fl
+        if fl <= tp:
+            break
+        # bounce to a LOWER high — the nearest level between this floor and the last LH
+        cands = [l for l in (PATH_SELLS + PATH_FLOORS) if fl < l < prev_lh]
+        blh = max(cands) if cands else round(fl + (prev_lh - fl) * 0.5, 2)
+        blh = min(blh, prev_lh - 1.0)
+        legs.append(_leg(n, "retrace_up", cur, blh, "bounce (lower high) → re-sell")); n += 1
+        cur, prev_lh = blh, blh
+    sell_legs = [l for l in legs if l["type"] == "impulse_down"]
+    return {
+        "price": round(price, 2), "tp": tp, "structure": "lower-highs / lower-lows staircase",
+        "legs": legs, "sell_legs": len(sell_legs),
+        "retraces": len([l for l in legs if l["type"] == "retrace_up"]),
+        "total_pips": _pips(price, tp),
+        "note": (f"{len(sell_legs)} sell legs to TP {tp:.0f} — each impulse is a big "
+                 "trade, each retrace a 50/150-usd re-sell (the staircase feeds the "
+                 "campaign trade-count)"),
+    }
+
+
 def bounce_plan(price: float, box=None, n: int = 3) -> dict:
     """Counter-trend BOUNCE map — when price retraces UP toward premium OBs, those OBs
     are the buy TARGETS *and* where the primary-trend SELL re-arms. Buy the bounce into
