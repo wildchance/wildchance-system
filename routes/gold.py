@@ -311,6 +311,48 @@ async def optimus(interval: str = Query("4h"), bars: int = Query(60, ge=8, le=30
     return scan
 
 
+@router.get("/optimus/sell-limits")
+async def optimus_sell_limits(price: float = Query(None), window: str = Query("prelondon")):
+    """Pinpoint the SELL-LIMIT ladder (break-retest structure) — each premium level as
+    a sell-limit with entry/stop/target, tagged with pre-London CBDR confluence."""
+    from gold import optimus as gop
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            raise HTTPException(status_code=502, detail="no price")
+    box = None
+    try:
+        from services.recon_service import _live_box
+        box = await _live_box(window)
+    except Exception:
+        pass
+    return gop.sell_limit_ladder(float(price), box)
+
+
+@router.get("/optimus/campaign")
+async def optimus_campaign(price: float = Query(None)):
+    """The real-time journaling campaign — expected trades per $-tier to 3130 + progress."""
+    from gold import optimus as gop
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            price = None
+    return gop.campaign_projection(float(price) if price else None)
+
+
+@router.post("/optimus/fib")
+async def optimus_fib(bullish_mean: float = Query(None), central_limit: float = Query(None),
+                      bearish_mean: float = Query(None), buy_sell_limit_1: float = Query(None),
+                      buy_sell_limit_15: float = Query(None), equilibrium: float = Query(None)):
+    """Feed today's HTF fib/structure levels (means, limits) into Optimus."""
+    from gold import optimus as gop
+    return gop.set_fib_map(bullish_mean=bullish_mean, central_limit=central_limit,
+                           bearish_mean=bearish_mean, buy_sell_limit_1=buy_sell_limit_1,
+                           buy_sell_limit_15=buy_sell_limit_15, equilibrium=equilibrium)
+
+
 @router.post("/optimus/zones")
 async def optimus_zones(sell: str = Query(None, description="JSON list of sell zones [{name,lo,hi,note}]"),
                         buy: str = Query(None, description="JSON list of buy zones"),
