@@ -21,10 +21,13 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence
 
-# Session phases in UTC-4: (range-anchor hour, sweep hour, continuity hour).
+# Session phases in UTC-4: (range-anchor, sweep, continuity) — anchored to the START
+# of each Venom AMD window. Sweep the anchor-hour 1H high/low by the next candle, then
+# the 3rd candle runs the distribution/continuity toward the HTF OB.
 SESSIONS = {
-    "london":  {"anchor": 0, "sweep": 1, "continuity": 2},
-    "newyork": {"anchor": 7, "sweep": 8, "continuity": 9},
+    "asian":   {"anchor": 14, "sweep": 15, "continuity": 16},   # ACCUMULATION window start
+    "london":  {"anchor": 22, "sweep": 23, "continuity": 0},     # MANIPULATION window start
+    "newyork": {"anchor": 6,  "sweep": 7,  "continuity": 8},     # DISTRIBUTION window start
 }
 ASIAN_CBDR = (14, 20)          # the Asian CBDR box window (= system "cbdr" window)
 CRT_START = 21                 # 1-5-9 CRT trend begins (UTC-4) = 01:00 UTC anchor
