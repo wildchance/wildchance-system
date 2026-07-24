@@ -21,14 +21,24 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence
 
-# Session phases in UTC-4: (range-anchor, sweep, continuity) — anchored to the START
-# of each Venom AMD window. Sweep the anchor-hour 1H high/low by the next candle, then
-# the 3rd candle runs the distribution/continuity toward the HTF OB.
+# Session phases in UTC-4: (range-anchor, sweep, continuity). TWO complementary sets
+# — both run the same engine (anchor 1H high/low → next candle sweeps → 3rd runs the
+# continuity to the HTF OB), catching different setups:
+#   • AMD-aligned (anchored to the Venom window starts) — the HIGHER-TIMEFRAME setups.
+#   • classic session-open sweeps (the original model) — the intraday scalps.
+# On overlapping hours phase_for_hour prefers the AMD set (listed first).
 SESSIONS = {
-    "asian":   {"anchor": 14, "sweep": 15, "continuity": 16},   # ACCUMULATION window start
-    "london":  {"anchor": 22, "sweep": 23, "continuity": 0},     # MANIPULATION window start
-    "newyork": {"anchor": 6,  "sweep": 7,  "continuity": 8},     # DISTRIBUTION window start
+    # AMD-window-aligned → better HTF trade setups
+    "asian":   {"anchor": 14, "sweep": 15, "continuity": 16},   # ACCUMULATION start
+    "london":  {"anchor": 22, "sweep": 23, "continuity": 0},     # MANIPULATION start
+    "newyork": {"anchor": 6,  "sweep": 7,  "continuity": 8},     # DISTRIBUTION start
+    # classic session-open sweeps → intraday scalps
+    "london_open": {"anchor": 0, "sweep": 1, "continuity": 2},
+    "ny_open":     {"anchor": 7, "sweep": 8, "continuity": 9},
 }
+# The two groups, for callers that want to scan one family.
+AMD_SESSIONS = ("asian", "london", "newyork")
+OPEN_SESSIONS = ("london_open", "ny_open")
 ASIAN_CBDR = (14, 20)          # the Asian CBDR box window (= system "cbdr" window)
 CRT_START = 21                 # 1-5-9 CRT trend begins (UTC-4) = 01:00 UTC anchor
 PRELONDON_TRIGGER = (2, 5)     # pre-London limits triggered → daily high/low set
