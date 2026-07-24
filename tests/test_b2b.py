@@ -97,3 +97,19 @@ def test_format_b2b_line():
          "invalidation": 3960.0, "target_ref": 4030.0}
     txt = format_b2b(r)
     assert "B2B BOMBER" in txt and "LONG" in txt
+
+
+def test_b2b_returns_swing_card():
+    """The 4H b2b fires an actionable ~8h swing card (entry/stop/target/RR)."""
+    from gold.b2b import b2b_bomber
+    bars = [
+        ("2026-07-23T20:00:00Z", 4080, 4090, 4070, 4085),
+        ("2026-07-24T04:00:00Z", 4085, 4088, 4050, 4082),   # sweep low (Asian 00:00 UTC-4)
+        ("2026-07-24T08:00:00Z", 4082, 4110, 4080, 4105),
+        ("2026-07-24T12:00:00Z", 4105, 4130, 4100, 4125),
+    ]
+    r = b2b_bomber(bars)
+    assert r["signal"] == "LONG"
+    assert r["entry"] and r["stop"] < r["entry"] < r["target"]
+    assert r["rr"] > 0 and r["horizon_hours"] == 8 and r["trade_type"] == "swing"
+    assert r["anchor_session"] == "asia_00"      # 04:00 UTC = 00:00 UTC-4
