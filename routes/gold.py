@@ -698,6 +698,30 @@ async def b2b(bars: int = Query(30, ge=4, le=200, description="how many 4H candl
     return b2b_armed(ohlc) if mode == "armed" else b2b_bomber(ohlc)
 
 
+@router.get("/gap")
+async def gap(prev_close: float = Query(..., description="prior session/Friday close"),
+              open_price: float = Query(..., description="the new session/Monday open"),
+              window: str = Query("prelondon", description="CBDR window for OB context")):
+    """Gap navigator — classify a weekend/session gap and map the two paths:
+    continuation vs gap-fill→OB-retest→continue. Feeds the Monday-shock scenario."""
+    from gold import gap_navigator as ggap
+    from gold import optimus as gop
+    # use the Optimus live zones as the OB map for retest context
+    obs = [{"name": z["name"], "zone": [z["lo"], z["hi"]], "type": "demand"}
+           for z in gop.LIVE_ZONES.get("buy", [])]
+    obs += [{"name": z["name"], "zone": [z["lo"], z["hi"]], "type": "supply"}
+            for z in gop.LIVE_ZONES.get("sell", [])]
+    htf_bias = None
+    try:
+        from gold import radar as grd
+        daily = await fetch_ohlc("XAU/USD", "1day", 90)
+        htf_bias = grd.combine_htf(daily=grd.order_blocks(daily, timeframe="1D")
+                                   if len(daily) >= 8 else []).get("htf_bias")
+    except Exception:
+        pass
+    return ggap.gap_read(prev_close, open_price, obs, htf_bias)
+
+
 @router.get("/venom")
 async def venom(now_utc4: str = Query(None, description="override, ISO 'YYYY-MM-DD HH:MM' UTC-4")):
     """Venom — the fractal AMD clock (Accumulation/Manipulation/Distribution) across
