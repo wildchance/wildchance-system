@@ -83,3 +83,37 @@ def test_b2b_armed_short():
             ("2026-07-24T04:00:00Z", 4085, 4110, 4083, 4088)]   # swept high, closed back below
     r = gb.b2b_armed(bars)
     assert r["signal"] == "SHORT" and r["stop"] > r["entry"] > r["target"]
+
+
+# --- Venom quarterly-month layer + sweep expectation --------------------------
+
+def test_quarterly_month_phase():
+    assert gv.month_in_quarter(2) == 2 and gv.quarterly_phase(2) == "manipulation"
+    assert gv.month_in_quarter(3) == 3 and gv.quarterly_phase(3) == "distribution_aggressive"
+    assert gv.month_in_quarter(5) == 2 and gv.quarterly_phase(5) == "manipulation"  # May
+    assert gv.quarterly_phase(6) == "distribution_aggressive"                       # June
+
+
+def test_venom_htf_manipulation_window():
+    # August = month 2 of Q3 → quarterly manipulation; week-2 also manipulation
+    r = gv.venom_read(_dt.datetime(2026, 8, 11, 2, 0))   # 2026-08-11 Tue, week 2
+    assert r["quarterly"]["phase"] == "manipulation"
+    assert r["confluence"]["htf_manipulation_window"] is True
+    assert "FAILED sweep" in (r["sweep_expectation"] or "")
+
+
+# --- gap navigator ------------------------------------------------------------
+
+def test_gap_navigator_down_gap_scenarios():
+    from gold import gap_navigator as gg
+    obs = [{"name": "ob_3987", "zone": [3980, 3994], "type": "demand"}]
+    r = gg.gap_read(4059.0, 3990.0, obs, htf_bias="short")   # gapped down ~690 pips
+    assert r["significant"] and r["direction"] == "down"
+    names = [s["name"] for s in r["scenarios"]]
+    assert "continuation" in names and "gap_fill_retest" in names
+
+
+def test_gap_navigator_negligible():
+    from gold import gap_navigator as gg
+    r = gg.gap_read(4059.0, 4061.0)      # 20-pip gap → not significant
+    assert r["significant"] is False
