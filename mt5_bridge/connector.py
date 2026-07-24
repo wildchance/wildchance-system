@@ -6,15 +6,23 @@ Loop:
   2. place each order via MetaTrader5.order_send (market or OTE limit, with SL/TP)
   3. POST {APP_BASE_URL}/execution/ack   with the ticket / fill / rejection
 
-Setup (Windows):
+Setup (Windows) — ONE connector per account:
   py -m pip install MetaTrader5 requests
   set APP_BASE_URL=https://wildchance-system.onrender.com
   set EXECUTION_TOKEN=<same token as the app env>
+  set MT5_ACCOUNT=acc1           # fleet id — pulls ONLY this account's sized orders
   set MT5_LOGIN=12345678
   set MT5_PASSWORD=****
   set MT5_SERVER=FundingPips-Server
   set GOLD_SYMBOL=XAUUSD          # or XAUUSD.r / GOLD depending on the broker
+  set MAX_VOLUME=0.10             # hard lot cap for THIS account
   py connector.py
+
+5-account fleet: run 5 copies (5 terminals, 5 windows), each with its own
+MT5_ACCOUNT=acc1..acc5 + its own MT5_LOGIN. Turn on FLEET_ENABLED=true in the app
+so one signal fans out to per-account sized orders; each connector's ?account=
+filter pulls only its own, so acc1 gets cent lots and acc5 the layering lots — no
+duplicate fills. Leave MT5_ACCOUNT unset for a single-account setup (all orders).
 
 Safety: it only places orders the app already sized + prop-gated. Start on a
 DEMO / practice account first. Set MAX_VOLUME to hard-cap lot size.
@@ -35,6 +43,9 @@ LOGIN = int(os.environ["MT5_LOGIN"])
 PASSWORD = os.environ["MT5_PASSWORD"]
 SERVER = os.environ["MT5_SERVER"]
 SYMBOL = os.environ.get("GOLD_SYMBOL", "XAUUSD")
+# Fleet account this terminal serves (acc1..acc5). Set it so this connector pulls
+# ONLY its own sized orders; leave unset for a single-account setup (all orders).
+ACCOUNT = os.environ.get("MT5_ACCOUNT")
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "20"))
 MAX_VOLUME = float(os.environ.get("MAX_VOLUME", "1.0"))
 DEVIATION = int(os.environ.get("DEVIATION", "20"))
@@ -94,7 +105,10 @@ def ack(order_id, status, ticket=None, fill_price=None):
 def loop():
     while True:
         try:
-            r = requests.get(f"{APP}/execution/pending", params={"token": TOKEN}, timeout=15)
+            params = {"token": TOKEN}
+            if ACCOUNT:
+                params["account"] = ACCOUNT      # pull only this account's orders
+            r = requests.get(f"{APP}/execution/pending", params=params, timeout=15)
             orders = r.json().get("orders", []) if r.ok else []
             for o in orders:
                 if o.get("symbol", SYMBOL).upper().startswith("XAU"):
