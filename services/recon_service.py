@@ -154,11 +154,32 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
     except Exception:
         pass
 
+    # Bumblebee — the intra-session sweep-continuity call (London/NY sweep → HTF OB).
+    bumblebee = None
+    try:
+        import datetime as _dt
+        from services.ohlc_service import fetch_hourly_raw
+        from gold import bumblebee as gbb, radar as grd
+        _h = await fetch_hourly_raw("XAU/USD", timezone="America/New_York", outputsize=60)
+        if _h:
+            _hb = [{"hour": int(str(x.get("datetime", ""))[11:13] or -1),
+                    "open": float(x["open"]), "high": float(x["high"]),
+                    "low": float(x["low"]), "close": float(x["close"])}
+                   for x in _h if x.get("datetime")]
+            _nh = int(_dt.datetime.utcnow().hour - 4) % 24
+            _d = await fetch_ohlc("XAU/USD", "1day", 90)
+            _hbias = grd.combine_htf(daily=grd.order_blocks(_d, timeframe="1D")
+                                     if len(_d) >= 8 else []).get("htf_bias")
+            bumblebee = gbb.bumblebee_scan(_hb, _nh, htf_bias=_hbias)
+    except Exception:
+        pass
+
     sig = _signature(sweep)
     last = _read_last()
     changed = sig != last
     _optimus_armed = bool(optimus and optimus.get("armed"))
-    should = force or ((sweep["armed"] or _optimus_armed or not armed_only) and changed)
+    _bee_call = bool(bumblebee and (bumblebee.get("continuity") or {}).get("signal") in ("BUY", "SELL"))
+    should = force or ((sweep["armed"] or _optimus_armed or _bee_call or not armed_only) and changed)
     sent = False
     if notify and should:
         text = gr.format_recon(sweep)
@@ -167,6 +188,9 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
         if _optimus_armed:
             from gold import optimus as gop
             text += "\n\n" + (gop.format_optimus(optimus) or "")
+        if _bee_call:
+            from gold import bumblebee as gbb
+            text += "\n\n" + (gbb.format_bumblebee(bumblebee) or "")
         sent = await gold_scan._tg(text)
     _write_last(sig)
     from services import retracement_service as rsvc
@@ -174,4 +198,7 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
             "had_box": box is not None, "rbusbis_dir": rbusbis, "sweep": sweep,
             "retracement": rsvc.summary(retracement) if retracement else None,
             "optimus": ({"armed": optimus.get("armed"), "next_zone": optimus.get("next_zone"),
-                         "note": optimus.get("note")} if optimus else None)}
+                         "note": optimus.get("note")} if optimus else None),
+            "bumblebee": ({"session": bumblebee.get("session"),
+                           "continuity": bumblebee.get("continuity"),
+                           "note": bumblebee.get("note")} if bumblebee else None)}
