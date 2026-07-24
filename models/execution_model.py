@@ -26,6 +26,7 @@ class ExecutionOrder(Base):
     magic = Column(Integer)
     comment = Column(String)
     source = Column(String)                          # gold_intraday | gold_scan | manual
+    account = Column(String, index=True)             # acc1..acc5 (fleet fan-out); None = single
     status = Column(String, default="pending", index=True)  # pending|sent|filled|rejected|cancelled
     ticket = Column(Integer)                          # MT5 ticket, filled by the bridge
     fill_price = Column(Float)
