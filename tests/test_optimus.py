@@ -108,6 +108,25 @@ def test_campaign_projection_journaling():
     assert cp["progress_pct"] is not None and cp["progress_pct"] > 0
 
 
+def test_bounce_plan_ob_targets():
+    # price bouncing up from 4060 → targets the 4074 daily OB then 4133/4135 4H OB
+    bp = gop.bounce_plan(4060.0)
+    levels = [t["level"] for t in bp["buy_targets"]]
+    assert 4074.86 in levels
+    daily = next(t for t in bp["buy_targets"] if t["level"] == 4074.86)
+    assert "Daily order block" in (daily["ob"] or "")
+    # each buy target carries the sell re-arm (buy the bounce, sell the OB)
+    assert daily["sell_rearm"]["target"] < daily["level"]
+    assert "counter-trend bounce" in bp["bias"]
+
+
+def test_sell_limit_ladder_tags_ob_timeframe():
+    lad = gop.sell_limit_ladder(4029.0)
+    tagged = {r["sell_limit"]: r["ob_timeframe"] for r in lad["sell_limits"]}
+    assert "Daily order block" in (tagged.get(4074.86) or "")
+    assert "4H order block" in (tagged.get(4133.90) or "")
+
+
 def test_set_fib_map_updates():
     out = gop.set_fib_map(bullish_mean=4200.0)
     assert out["bullish_mean"] == 4200.0
