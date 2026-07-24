@@ -123,3 +123,42 @@ def test_classic_ny_open_scan_still_works():
          _b(9, 4072, 4074, 4030, 4035)], now_hour=9, htf_bias="short", session="ny_open")
     assert scan["session"] == "ny_open" and scan["sweep"]["side"] == "high"
     assert scan["continuity"]["signal"] == "SELL"
+
+
+# --- the 4 calculated outcomes + Venom fold + OB gate -------------------------
+
+def test_four_outcomes_classify():
+    # swept high
+    assert gbb.range_outcome(4075, 4050, [_b(1, 4070, 4090, 4068, 4072)]) == "sweep_high"
+    # swept low
+    assert gbb.range_outcome(4075, 4050, [_b(1, 4055, 4058, 4030, 4035)]) == "sweep_low"
+    # failed to take the high (came within tol, no break)
+    assert gbb.range_outcome(4075, 4050, [_b(1, 4060, 4073, 4058, 4062)]) == "failed_high"
+    # failed to take the low
+    assert gbb.range_outcome(4075, 4050, [_b(1, 4065, 4068, 4052, 4066)]) == "failed_low"
+
+
+def test_outcome_setups_two_buys_two_sells():
+    assert gbb.OUTCOME_SETUP["sweep_high"][0] == "SELL"
+    assert gbb.OUTCOME_SETUP["failed_high"][0] == "SELL"
+    assert gbb.OUTCOME_SETUP["sweep_low"][0] == "BUY"
+    assert gbb.OUTCOME_SETUP["failed_low"][0] == "BUY"
+
+
+def test_outcome_call_ob_gate_blocks():
+    # sweep_high → SELL, but no HTF OB interaction → gated to WAIT
+    oc = gbb.outcome_call("sweep_high", htf_bias="short", ob_interacted=False)
+    assert oc["signal"] == "WAIT" and "OB" in oc["note"]
+
+
+def test_outcome_call_high_conviction_in_manipulation_x3():
+    import datetime as _dt
+    from gold import venom as gv
+    v = gv.venom_read(_dt.datetime(2026, 7, 14, 2, 0))   # Tue wk2 02:00 → ×manip
+    oc = gbb.outcome_call("sweep_high", htf_bias="short", venom=v, ob_interacted=True)
+    assert oc["signal"] == "SELL" and oc["conviction"].startswith("HIGH")
+
+
+def test_outcome_call_failed_low_buys():
+    oc = gbb.outcome_call("failed_low", htf_bias="long", ob_interacted=True)
+    assert oc["signal"] == "BUY" and oc["kind"] == "continuation"
