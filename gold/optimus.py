@@ -72,6 +72,24 @@ FIB_MAP = {
 # → resistance). Ordered high→low; each is a sell-limit on the retest.
 SELL_RETEST_LEVELS = [4190.60, 4179.79, 4163.07, 4152.40, 4133.90, 4074.86, 4002.31]
 
+# Which timeframe order-block each retest level is (precision labelling). 4074 =
+# Daily OB, 4135 = 4H OB per the operator's 2026-07-24 read.
+OB_TIMEFRAME = {
+    4190.60: "weekly supply", 4179.79: "HTF supply",
+    4163.07: "4H supply — sell-off origin", 4152.40: "4H supply",
+    4133.90: "4H order block (bullish mean)", 4074.86: "Daily order block",
+    4002.31: "0.236 shelf / break-retest",
+}
+
+
+def _ob_tf(level: float, tol: float = 4.0) -> Optional[str]:
+    best = None
+    for lv, tf in OB_TIMEFRAME.items():
+        d = abs(level - lv)
+        if d <= tol and (best is None or d < best[1]):
+            best = (tf, d)
+    return best[0] if best else None
+
 # Real-time journaling — the expected trade pool over the campaign to 3130, by $-tier.
 CAMPAIGN = {
     "from": 4163.07, "target": 3131.46,
@@ -307,6 +325,7 @@ def sell_limit_ladder(price: float, box=None, floor: Optional[float] = None) -> 
             "tier": (tier or {}).get("name"),
             "rr": round(abs(lvl - target) / dist, 2),
             "status": ("live retest" if lvl <= price + 5 else "armed above"),
+            "ob_timeframe": _ob_tf(lvl),
             "cbdr": _cbdr_confluence(lvl, box),
         })
     live = [r for r in ladder if r["status"] == "live retest"]
@@ -315,6 +334,31 @@ def sell_limit_ladder(price: float, box=None, floor: Optional[float] = None) -> 
             "note": (f"{len(ladder)} sell-limits mapped to {fl:.0f}; "
                      + (f"nearest live retest {live[0]['sell_limit']}" if live
                         else "price below all premium retests — ride the trend"))}
+
+
+def bounce_plan(price: float, box=None, n: int = 3) -> dict:
+    """Counter-trend BOUNCE map — when price retraces UP toward premium OBs, those OBs
+    are the buy TARGETS *and* where the primary-trend SELL re-arms. Buy the bounce into
+    the OB, then sell the OB. Feeds the daily 4074 / 4H 4135 read directly."""
+    above = sorted((l for l in SELL_RETEST_LEVELS if l > price))[:n]
+    targets = []
+    for lvl in above:
+        low_after = [l for l in SELL_RETEST_LEVELS if l < lvl] + [FIB_MAP["central_limit"]]
+        sell_target = max([l for l in low_after if l < lvl], default=FIB_MAP["central_limit"])
+        targets.append({
+            "level": round(lvl, 2), "ob": _ob_tf(lvl),
+            "pips_up": _pips(price, lvl),
+            "sell_rearm": {"entry": round(lvl, 2), "target": round(sell_target, 2),
+                           "capture_pips": _pips(lvl, sell_target),
+                           "tier": (tier_for_pips(_pips(lvl, sell_target)) or {}).get("name")},
+            "cbdr": _cbdr_confluence(lvl, box),
+        })
+    return {"price": round(price, 2), "bias": "counter-trend bounce (buy → sell the OB)",
+            "buy_targets": targets,
+            "note": ("buy the bounce into the OB, then SELL it — primary trend down. "
+                     + (f"nearest: {targets[0]['ob'] or 'level'} @ {targets[0]['level']} "
+                        f"(+{targets[0]['pips_up']:.0f} pips)" if targets
+                        else "no premium OB above — price at a premium extreme"))}
 
 
 def campaign_projection(price: Optional[float] = None) -> dict:
