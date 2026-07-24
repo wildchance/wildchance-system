@@ -35,6 +35,9 @@ WEEKLY = {0: "accumulation", 1: "manipulation", 2: "distribution",
           3: "distribution", 4: "reversal", 5: "weekend", 6: "weekend"}   # Mon=0
 MONTHLY = {1: "accumulation", 2: "manipulation", 3: "distribution",
            4: "continuation_reversal", 5: "continuation_reversal"}
+# Month within the financial quarter: M1 accumulates, M2 MANIPULATES, M3 DISTRIBUTES
+# aggressively (operator's HTF edge). Quarters: Jan-Mar, Apr-Jun, Jul-Sep, Oct-Dec.
+QUARTER_MONTH = {1: "accumulation", 2: "manipulation", 3: "distribution_aggressive"}
 
 PLAYBOOK = {
     "accumulation": "range builds — load the extremes (buy discount / sell premium), no chase",
@@ -67,31 +70,60 @@ def monthly_phase(week_no: int) -> str:
     return MONTHLY.get(week_no, "continuation_reversal")
 
 
+def month_in_quarter(month: int) -> int:
+    """1, 2 or 3 — position of the month within its financial quarter."""
+    return ((month - 1) % 3) + 1
+
+
+def quarterly_phase(month: int) -> str:
+    """The AMD phase of the month within its quarter (M2 manip, M3 aggressive dist)."""
+    return QUARTER_MONTH[month_in_quarter(month)]
+
+
+def sweep_expectation(phase: str) -> Optional[str]:
+    """What the phase implies for the range extreme — the manipulation phase is where
+    a FAILED SWEEP of the high (→ short) or low (→ long) sets the reversal."""
+    if phase in ("manipulation",):
+        return ("expect a FAILED sweep of the range extreme — swept high + reject = SHORT, "
+                "swept low + reject = LONG (the reversal, in line with the OB)")
+    if phase in ("distribution", "distribution_aggressive"):
+        return "trend expansion — ride it; no counter-trend fade"
+    if phase == "accumulation":
+        return "range — load the extremes, wait for the manipulation sweep"
+    return None
+
+
 def venom_read(now: Optional[_dt.datetime] = None) -> dict:
     """The three-timeframe AMD read + confluence for ``now`` (UTC-4)."""
     now = now or (_dt.datetime.utcnow() - _dt.timedelta(hours=4))
     intr = intraday_phase(now.hour)
     wk = weekly_phase(now.weekday())
-    mo = monthly_phase(week_of_month(now.date()))
-    phases = [intr["phase"], wk, mo]
-    # confluence: how many timeframes share a phase
+    wom = week_of_month(now.date())
+    mo = monthly_phase(wom)
+    qm = quarterly_phase(now.month)
+    # normalise the aggressive-distribution label for confluence counting
+    phases = [intr["phase"], wk, mo, ("distribution" if qm == "distribution_aggressive" else qm)]
     counts = {p: phases.count(p) for p in set(phases)}
     dominant = max(counts, key=counts.get)
     aligned = counts[dominant]
     conviction = "high" if aligned >= 3 else "medium" if aligned == 2 else "low"
-    # the actionable phase = the intraday phase, weighted up when HTFs agree
+    # week-2 + quarter-month-2 both manipulate → the operator's HTF manipulation edge
+    htf_manip = (wom == 2 or month_in_quarter(now.month) == 2)
     return {
         "as_of_utc4": now.strftime("%Y-%m-%d %H:%M"),
         "intraday": {"phase": intr["phase"], "session": intr["session"]},
         "weekly": {"weekday": now.strftime("%a"), "phase": wk},
-        "monthly": {"week_of_month": week_of_month(now.date()), "phase": mo},
+        "monthly": {"week_of_month": wom, "phase": mo},
+        "quarterly": {"month_in_quarter": month_in_quarter(now.month), "phase": qm},
         "confluence": {"dominant_phase": dominant, "timeframes_aligned": aligned,
-                       "conviction": conviction},
+                       "conviction": conviction, "htf_manipulation_window": htf_manip},
         "playbook": PLAYBOOK.get(intr["phase"], ""),
+        "sweep_expectation": sweep_expectation(intr["phase"]),
         "note": (f"{intr['session'].upper()} {intr['phase'].upper()} · "
-                 f"{now.strftime('%a')} {wk} · W{week_of_month(now.date())} {mo} — "
+                 f"{now.strftime('%a')} {wk} · W{wom} {mo} · Qm{month_in_quarter(now.month)} {qm} — "
                  f"{conviction} confluence"
-                 + (f" (×{aligned} {dominant})" if aligned >= 2 else "")),
+                 + (f" (×{aligned} {dominant})" if aligned >= 2 else "")
+                 + ("  ⚠️ HTF manipulation window" if htf_manip else "")),
     }
 
 
