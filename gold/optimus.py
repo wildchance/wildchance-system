@@ -52,6 +52,50 @@ LIVE_ZONES = {
 # fast, so the efficient target is the far side, not an imaginary level inside it.
 VOID_MIN_PIPS = 2000.0        # 2000 pips = 200 usd of air
 
+# The HTF fib / structure map (Daily+4H, 2026-07-24) — the macro→micro frame that
+# locks the trend to 2027. Operator-updatable via set_fib_map().
+FIB_MAP = {
+    "equilibrium": 4877.98,          # 2.0
+    "buy_sell_limit_upper": 4629.35,  # 1.5
+    "premium_1": 4381.94,            # 1.0
+    "fib_0786": 4275.60,
+    "fib_0618": 4192.13,
+    "bullish_mean": 4133.90,         # 0.5 — broke & retested
+    "fib_0382": 4074.86,             # next break-retest sell
+    "fib_0236": 4002.31,             # break-retest continue selling
+    "central_limit": 3885.04,        # 0.0 — last floor before the void
+    "bearish_mean": 3635.49,         # -0.5
+    "buy_sell_limit_1": 3389.34,     # -1.0  (3506/3390 bullish OB)
+    "buy_sell_limit_15": 3131.46,    # -1.5  (3291/3130 bullish OB)
+}
+# Premium levels that act as SELL-on-retest in the bearish structure (broken support
+# → resistance). Ordered high→low; each is a sell-limit on the retest.
+SELL_RETEST_LEVELS = [4190.60, 4179.79, 4163.07, 4152.40, 4133.90, 4074.86, 4002.31]
+
+# Real-time journaling — the expected trade pool over the campaign to 3130, by $-tier.
+CAMPAIGN = {
+    "from": 4163.07, "target": 3131.46,
+    "macro_legs_250usd": 4,               # 4 × 250-usd structural legs to 3130
+    "micro_tiers": {
+        "50usd":        {"min": 60, "max": 120},
+        "125usd":       {"min": 7,  "max": 8},
+        "150usd":       {"min": 24, "max": 48},
+        "mixed_50_150": {"min": 36, "max": 72},   # prop-account leverage pool
+    },
+    "note": "counts set by real-time opportunity; prop accs leverage the mixed pool",
+}
+
+
+def set_fib_map(**levels) -> dict:
+    """Operator update of the HTF fib/structure map (feed today's levels)."""
+    for k, v in levels.items():
+        if v is not None:
+            try:
+                FIB_MAP[k] = float(v)
+            except (TypeError, ValueError):
+                pass
+    return dict(FIB_MAP)
+
 
 def set_live_zones(sell: Sequence[dict] = None, buy: Sequence[dict] = None,
                    pivots: dict = None) -> dict:
@@ -225,6 +269,72 @@ def optimus_scan(bars: Sequence, price: float) -> dict:
                  + (f"anticipating {direction} into {(nxt or {}).get('name')}"
                     if nxt else "at a range extreme")
                  + ("; " + ladder["note"] if ladder.get("ladder") else "")),
+    }
+
+
+def _cbdr_confluence(level: float, box, tol: float = 6.0) -> Optional[str]:
+    """Does a level line up with a pre-London CBDR ±SD projection? (highest precision)."""
+    if box is None:
+        return None
+    best = None
+    for name, lv in (getattr(box, "levels", {}) or {}).items():
+        if lv is not None and abs(level - lv) <= tol:
+            d = abs(level - lv)
+            if best is None or d < best[1]:
+                best = (name, d)
+    return best[0] if best else None
+
+
+def sell_limit_ladder(price: float, box=None, floor: Optional[float] = None) -> dict:
+    """Pinpoint the SELL-LIMIT levels — the break-retest structure. Each premium level
+    above the floor becomes a sell-limit on the retest: entry at the level, stop above
+    the next-higher level, target the next level down (finally the central-limit floor).
+    Tags CBDR confluence when a pre-London ±SD projection lines up (highest precision)."""
+    fl = floor if floor is not None else FIB_MAP["central_limit"]
+    levels = sorted((l for l in SELL_RETEST_LEVELS if l > fl), reverse=True)
+    ladder = []
+    for i, lvl in enumerate(levels):
+        higher = levels[i - 1] if i > 0 else None
+        stop = round((higher + _STOP_BUFFER) if higher else lvl * 1.004, 2)
+        lower = [l for l in levels if l < lvl]
+        target = round(lower[0] if lower else fl, 2)
+        dist = abs(lvl - stop) or 1e-9
+        cap = _pips(lvl, target)
+        tier = tier_for_pips(cap)
+        ladder.append({
+            "sell_limit": round(lvl, 2), "stop": stop, "target": target,
+            "risk_pips": _pips(lvl, stop), "capture_pips": cap,
+            "tier": (tier or {}).get("name"),
+            "rr": round(abs(lvl - target) / dist, 2),
+            "status": ("live retest" if lvl <= price + 5 else "armed above"),
+            "cbdr": _cbdr_confluence(lvl, box),
+        })
+    live = [r for r in ladder if r["status"] == "live retest"]
+    return {"price": round(price, 2), "floor": fl, "sell_limits": ladder,
+            "nearest_live": live[0] if live else None,
+            "note": (f"{len(ladder)} sell-limits mapped to {fl:.0f}; "
+                     + (f"nearest live retest {live[0]['sell_limit']}" if live
+                        else "price below all premium retests — ride the trend"))}
+
+
+def campaign_projection(price: Optional[float] = None) -> dict:
+    """The real-time journaling structure — expected trades per $-tier over the
+    campaign to 3130, plus progress from the current price."""
+    total_usd = round(CAMPAIGN["from"] - CAMPAIGN["target"], 2)
+    done = round(CAMPAIGN["from"] - price, 2) if price else None
+    pct = round(done / total_usd * 100, 1) if (done and total_usd) else None
+    tiers = {}
+    for name, band in CAMPAIGN["micro_tiers"].items():
+        tiers[name] = {**band, "midpoint": (band["min"] + band["max"]) // 2}
+    return {
+        "campaign": f"{CAMPAIGN['from']:.0f} → {CAMPAIGN['target']:.0f}",
+        "total_move_usd": total_usd, "total_move_pips": _pips(CAMPAIGN["from"], CAMPAIGN["target"]),
+        "macro_legs_250usd": CAMPAIGN["macro_legs_250usd"],
+        "micro_tiers": tiers, "progress_usd": done, "progress_pct": pct,
+        "note": (f"{CAMPAIGN['macro_legs_250usd']}×250-usd macro legs to "
+                 f"{CAMPAIGN['target']:.0f}"
+                 + (f"; {pct}% travelled" if pct is not None else "")
+                 + f" — {CAMPAIGN['note']}"),
     }
 
 
