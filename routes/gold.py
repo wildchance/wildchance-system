@@ -685,15 +685,32 @@ async def zones_digest(balance: float = Query(5000, gt=0),
 
 
 @router.get("/b2b")
-async def b2b(bars: int = Query(30, ge=4, le=200, description="how many 4H candles")):
+async def b2b(bars: int = Query(30, ge=4, le=200, description="how many 4H candles"),
+              mode: str = Query("confirmed", description="confirmed (after 8h) | armed (at sweep)")):
     """4H b2b bomber — 1-5-9 liquidity sweep + 8h back-to-back continuation, the
-    swing-trade confluence anchored to the 00:00 / 14:00 (UTC-4) session opens."""
+    swing-trade confluence anchored to the 00:00 / 14:00 (UTC-4) session opens.
+    ``mode=armed`` fires the swing the moment candle 1 sweeps (enter early, ride 5&9)."""
     from services.ohlc_service import fetch_ohlc_raw
-    from gold.b2b import b2b_bomber
+    from gold.b2b import b2b_bomber, b2b_armed
     ohlc = await fetch_ohlc_raw("XAU/USD", interval="4h", outputsize=bars)
     if len(ohlc) < 4:
         raise HTTPException(status_code=502, detail="not enough XAU/USD 4H bars")
-    return b2b_bomber(ohlc)
+    return b2b_armed(ohlc) if mode == "armed" else b2b_bomber(ohlc)
+
+
+@router.get("/venom")
+async def venom(now_utc4: str = Query(None, description="override, ISO 'YYYY-MM-DD HH:MM' UTC-4")):
+    """Venom — the fractal AMD clock (Accumulation/Manipulation/Distribution) across
+    intraday sessions / weekday / week-of-month, with the confluence conviction."""
+    import datetime as _dt
+    from gold import venom as gv
+    now = None
+    if now_utc4:
+        try:
+            now = _dt.datetime.fromisoformat(now_utc4)
+        except Exception:
+            now = None
+    return gv.venom_read(now)
 
 
 @router.post("/confirm")
