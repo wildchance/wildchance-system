@@ -80,28 +80,27 @@ def test_session_timeline_present():
 # --- full scan ----------------------------------------------------------------
 
 def test_bumblebee_scan_newyork_sell():
-    bars = [_b(7, 4060, 4075, 4055, 4070),      # NY anchor range
-            _b(8, 4070, 4090, 4068, 4072),      # 08:00 sweeps the high, reclaims
-            _b(9, 4072, 4074, 4030, 4035)]      # 09:00 continuity down
-    scan = gbb.bumblebee_scan(bars, now_hour=9, htf_bias="short", session="newyork")
+    bars = [_b(6, 4060, 4075, 4055, 4070),      # NY anchor range (06:00)
+            _b(7, 4070, 4090, 4068, 4072),      # 07:00 sweeps the high, reclaims
+            _b(8, 4072, 4074, 4030, 4035)]      # 08:00 continuity down
+    scan = gbb.bumblebee_scan(bars, now_hour=8, htf_bias="short", session="newyork")
     assert scan["session"] == "newyork"
     assert scan["sweep"]["side"] == "high"
     assert scan["continuity"]["signal"] == "SELL" and scan["continuity"]["confluence"]
 
 
 def test_phase_for_hour():
-    assert gbb.phase_for_hour(0)["session"] == "london"
-    assert gbb.phase_for_hour(8)["phase"] == "sweep"
-    assert gbb.phase_for_hour(9)["phase"] == "continuity"
-    assert gbb.phase_for_hour(16)["session"] == "asian_cbdr"    # 14-20 box
-    assert gbb.phase_for_hour(21)["session"] == "crt"           # 1-5-9 trend
+    assert gbb.phase_for_hour(22)["session"] == "london"        # 22 anchor
+    assert gbb.phase_for_hour(7)["phase"] == "sweep"            # NY 07 sweep
+    assert gbb.phase_for_hour(8)["phase"] == "continuity"       # NY 08 continuity
+    assert gbb.phase_for_hour(15)["session"] == "asian"         # 15 asian sweep
     assert gbb.phase_for_hour(4)["session"] == "prelondon"      # 2-5 trigger
     assert gbb.phase_for_hour(11) is None
 
 
 def test_format_bumblebee_line():
     scan = gbb.bumblebee_scan(
-        [_b(7, 4060, 4075, 4055, 4070), _b(8, 4070, 4090, 4068, 4072),
-         _b(9, 4072, 4074, 4030, 4035)], now_hour=9, htf_bias="short", session="newyork")
+        [_b(6, 4060, 4075, 4055, 4070), _b(7, 4070, 4090, 4068, 4072),
+         _b(8, 4072, 4074, 4030, 4035)], now_hour=8, htf_bias="short", session="newyork")
     line = gbb.format_bumblebee(scan)
     assert line and "BUMBLEBEE" in line and "SELL" in line
