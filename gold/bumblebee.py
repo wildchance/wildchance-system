@@ -1,18 +1,20 @@
 """Bumblebee — intra-session sweep-and-continuity scalper (pure).
 
-The operator's session model, codified for cheetah (250-pip) intraday scalps. All
-hours are UTC-4 (broker time):
+The operator's DAILY anticipation chain, codified. All hours are UTC-4 (broker):
 
-  • ASIAN 02:00–05:00 — the day's high/low forms here → the DAILY directional bias.
-  • LONDON 00:00 → the 1H open candle sets the RANGE; 01:00 SWEEPS one side (grabs
-    liquidity); then price runs toward the HTF order block. 02:00 confirms continuity.
-  • NEW YORK 07:00 → the 1H open candle sets the range; 08:00 SWEEPS a side; 09:00 the
-    trend commits IN CONFLUENCE with the HTF order block.
+  • ASIAN CBDR 14:00–20:00 — the 6h box forms here (the system's "cbdr" window). Its
+    ±SD projections are the pre-London BUY LIMIT (−SD) and SELL LIMIT (+SD).
+  • CRT 1-5-9 from 21:00 — the trend begins off how the box formed (= the 01:00 UTC
+    CRT anchor), running toward the pre-London limits.
+  • PRE-LONDON TRIGGER 02:00–05:00 — one limit gets triggered/swept → the day's
+    high/low is SET → the DAILY bias is confirmed (sell-limit hit = short day; buy-
+    limit hit = long day). This is the HTF→session bridge.
+  • LONDON 00/01/02 and NEW YORK 07/08/09 — each runs RANGE (anchor 1H high/low) →
+    SWEEP (one side taken) → CONTINUITY (trade toward the HTF OB, in confluence with
+    the daily bias). Cheetah (250-pip) intra-session scalps.
 
-The engine: RANGE (anchor 1H high/low) → SWEEP (which side got taken + close-back) →
-CONTINUITY (trade toward the HTF OB in the confirmed direction). A sweep of the HIGH
-in a bearish HTF context = sell toward the OB below; a sweep of the LOW in a bullish
-context = buy toward the OB above. No sweep, or a sweep against the HTF OB = WAIT.
+Sweep the HIGH in a bearish context → sell toward the OB below; sweep the LOW in a
+bullish context → buy toward the OB above. No sweep, or a sweep against bias = WAIT.
 """
 
 from __future__ import annotations
@@ -24,7 +26,10 @@ SESSIONS = {
     "london":  {"anchor": 0, "sweep": 1, "continuity": 2},
     "newyork": {"anchor": 7, "sweep": 8, "continuity": 9},
 }
-ASIAN_RANGE = (2, 5)      # UTC-4 window whose high/low sets the daily bias
+ASIAN_CBDR = (14, 20)          # the Asian CBDR box window (= system "cbdr" window)
+CRT_START = 21                 # 1-5-9 CRT trend begins (UTC-4) = 01:00 UTC anchor
+PRELONDON_TRIGGER = (2, 5)     # pre-London limits triggered → daily high/low set
+ASIAN_RANGE = ASIAN_CBDR       # back-compat alias
 
 
 def _hlc(bar):
@@ -97,19 +102,66 @@ def continuity_call(sweep_side: Optional[str], htf_bias: Optional[str]) -> dict:
     return {"signal": "WAIT", "confluence": False, "note": "no sweep yet — await the grab"}
 
 
-def asian_bias(bars: Sequence) -> dict:
-    """The daily directional bias from the Asian 02:00-05:00 range: whichever extreme
-    prints LAST (high after low = up-day bias; low after high = down-day bias)."""
-    lo_h, hi_h = ASIAN_RANGE
-    win = [(_hlc(b)) for b in bars if _hlc(b)[0] is not None and lo_h <= _hlc(b)[0] <= hi_h]
+def cbdr_range(bars: Sequence) -> Optional[dict]:
+    """The Asian CBDR box (14:00-20:00 UTC-4) high/low — the range whose ±SD are the
+    pre-London buy limit (−SD) and sell limit (+SD)."""
+    lo_h, hi_h = ASIAN_CBDR
+    win = [_hlc(b) for b in bars if _hlc(b)[0] is not None and lo_h <= _hlc(b)[0] <= hi_h]
     if not win:
-        return {"bias": "neutral", "note": "no Asian-window bars"}
-    hi = max(win, key=lambda r: r[2])
-    lo = min(win, key=lambda r: r[3])
-    hi_i, lo_i = win.index(hi), win.index(lo)
-    bias = "long" if hi_i > lo_i else "short" if lo_i > hi_i else "neutral"
-    return {"bias": bias, "asian_high": round(hi[2], 2), "asian_low": round(lo[3], 2),
-            "note": f"Asian range {round(lo[3],2)}–{round(hi[2],2)} → daily bias {bias.upper()}"}
+        return None
+    hi = max(r[2] for r in win)
+    lo = min(r[3] for r in win)
+    return {"high": round(hi, 2), "low": round(lo, 2), "range": round(hi - lo, 2)}
+
+
+def prelondon_daily_bias(cbdr: Optional[dict], trigger_bars: Sequence,
+                         sd: float = 1.0) -> dict:
+    """The DAILY bias — set by which pre-London limit (±SD of the CBDR box) gets
+    triggered in the 02:00-05:00 window. Sell-limit (+SD) hit = short day; buy-limit
+    (−SD) hit = long day. This is the HTF→session bridge."""
+    if not cbdr:
+        return {"bias": "neutral", "note": "no Asian CBDR box (14-20)"}
+    rng = cbdr["high"] - cbdr["low"]
+    sell_limit = round(cbdr["high"] + sd * rng, 2)      # +SD
+    buy_limit = round(cbdr["low"] - sd * rng, 2)        # −SD
+    lo_h, hi_h = PRELONDON_TRIGGER
+    win = [_hlc(b) for b in trigger_bars
+           if _hlc(b)[0] is not None and lo_h <= _hlc(b)[0] <= hi_h]
+    hit_sell = any(r[2] >= sell_limit for r in win)
+    hit_buy = any(r[3] <= buy_limit for r in win)
+    if hit_sell and not hit_buy:
+        bias, trig = "short", "sell-limit (+SD) hit"
+    elif hit_buy and not hit_sell:
+        bias, trig = "long", "buy-limit (−SD) hit"
+    elif hit_sell and hit_buy:
+        bias, trig = "neutral", "both limits swept — wait"
+    else:
+        bias, trig = "neutral", "no limit triggered yet"
+    return {"bias": bias, "triggered": trig, "sell_limit": sell_limit,
+            "buy_limit": buy_limit,
+            "note": f"pre-London {trig} → daily bias {bias.upper()}"}
+
+
+def asian_bias(bars: Sequence) -> dict:
+    """Daily bias off the Asian CBDR box (14-20) + the pre-London (2-5) trigger."""
+    cr = cbdr_range(bars)
+    if not cr:
+        return {"bias": "neutral", "note": "no Asian CBDR (14-20) bars"}
+    db = prelondon_daily_bias(cr, bars)
+    return {"bias": db["bias"], "asian_high": cr["high"], "asian_low": cr["low"],
+            "cbdr_range": cr, "prelondon": db, "note": db["note"]}
+
+
+def session_timeline() -> dict:
+    """The daily anticipation chain — HTF box → CRT trend → pre-London trigger → sessions."""
+    return {
+        "asian_cbdr": "14:00-20:00 UTC-4 — box forms; ±SD = pre-London buy/sell limits",
+        "crt_1_5_9": "21:00 UTC-4 (01:00 UTC anchor) — 1-5-9 trend begins toward the limits",
+        "prelondon_trigger": "02:00-05:00 UTC-4 — a limit triggers → daily high/low set → daily bias",
+        "london": "00/01/02 UTC-4 — range / sweep / continuity",
+        "newyork": "07/08/09 UTC-4 — range / sweep / continuity",
+        "note": "box → CRT trend → pre-London trigger sets the daily bias → session sweeps run to the HTF OB",
+    }
 
 
 def phase_for_hour(hour: int) -> Optional[dict]:
@@ -121,8 +173,12 @@ def phase_for_hour(hour: int) -> Optional[dict]:
             return {"session": name, "phase": "sweep"}
         if hour == s["continuity"]:
             return {"session": name, "phase": "continuity"}
-    if ASIAN_RANGE[0] <= hour <= ASIAN_RANGE[1]:
-        return {"session": "asian", "phase": "range"}
+    if ASIAN_CBDR[0] <= hour <= ASIAN_CBDR[1]:
+        return {"session": "asian_cbdr", "phase": "box_forming"}
+    if hour >= CRT_START or hour < PRELONDON_TRIGGER[0]:
+        return {"session": "crt", "phase": "trend_forming"}
+    if PRELONDON_TRIGGER[0] <= hour <= PRELONDON_TRIGGER[1]:
+        return {"session": "prelondon", "phase": "trigger"}
     return None
 
 
@@ -136,10 +192,13 @@ def bumblebee_scan(bars_1h: Sequence, now_hour: int, htf_bias: Optional[str] = N
         sess = (ph or {}).get("session")
     ab = asian_bias(bars_1h)
     bias = htf_bias or (ab["bias"] if ab["bias"] != "neutral" else None)
-    if sess in (None, "asian"):
+    if sess not in SESSIONS:
+        ph = phase_for_hour(now_hour) or {}
         return {"session": sess or "none", "asian_bias": ab, "htf_bias": htf_bias,
-                "phase": "range" if sess == "asian" else "off-session",
-                "note": "Asian range sets the daily bias; wait for London/NY anchor"}
+                "daily_bias": bias, "phase": ph.get("phase", "off-session"),
+                "timeline": session_timeline(),
+                "note": ("Asian CBDR box (14-20) → CRT (21) → pre-London trigger (2-5) "
+                         "sets the daily bias; wait for the London/NY anchor")}
     cfg = SESSIONS[sess]
     rng = anchor_range(bars_1h, cfg["anchor"])
     if not rng:
