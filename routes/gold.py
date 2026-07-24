@@ -330,6 +330,25 @@ async def optimus_sell_limits(price: float = Query(None), window: str = Query("p
     return gop.sell_limit_ladder(float(price), box)
 
 
+@router.get("/optimus/bounce")
+async def optimus_bounce(price: float = Query(None), window: str = Query("prelondon")):
+    """Counter-trend bounce map — the premium OBs above price (buy targets) that are
+    also where the primary SELL re-arms (daily 4074 / 4H 4135), with CBDR confluence."""
+    from gold import optimus as gop
+    if price is None:
+        try:
+            price = await get_forex_price("XAU/USD")
+        except Exception:
+            raise HTTPException(status_code=502, detail="no price")
+    box = None
+    try:
+        from services.recon_service import _live_box
+        box = await _live_box(window)
+    except Exception:
+        pass
+    return gop.bounce_plan(float(price), box)
+
+
 @router.get("/optimus/campaign")
 async def optimus_campaign(price: float = Query(None)):
     """The real-time journaling campaign — expected trades per $-tier to 3130 + progress."""
