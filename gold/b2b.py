@@ -115,6 +115,51 @@ def b2b_bomber(bars: Sequence, anchor_hours: Sequence[int] = ANCHOR_HOURS) -> di
     }
 
 
+def b2b_armed(bars: Sequence, anchor_hours: Sequence[int] = ANCHOR_HOURS) -> dict:
+    """FORWARD 'armed at sweep' mode — fire the swing the MOMENT candle 1 sweeps the
+    prior 4H liquidity and closes back inside (reject), BEFORE the 8h continuation
+    confirms. Enter now, ride candles 5 & 9. Lower confirmation, earlier entry — the
+    complement to b2b_bomber (which confirms after the 8h completes).
+
+    Because it evaluates the LATEST closed 4H candle each run, it also catches the
+    case where candle 9 (not 5) is the one that returns to sweep candle 1's level —
+    that later sweep simply arms a fresh setup on the bar it prints.
+    """
+    if len(bars) < 2:
+        return {"signal": "NONE", "reason": "need >=2 4H candles"}
+    o0, h0, l0, c0, _t0 = _ohlc(bars[-2])          # prior candle (liquidity)
+    o1, h1, l1, c1, t1 = _ohlc(bars[-1])           # candle 1 — just closed (the sweep)
+    swept_low = l1 < l0 and c1 > l0                 # swept low + reclaimed → bullish
+    swept_high = h1 > h0 and c1 < h0                # swept high + reclaimed → bearish
+    if not (swept_low or swept_high):
+        return {"signal": "NONE", "mode": "armed",
+                "reason": "candle 1 has not swept + reclaimed the prior 4H liquidity yet"}
+    _buf = 1.5
+    if swept_low:
+        signal, swept = "LONG", "low"
+        entry, stop = round(c1, 2), round(l1 - _buf, 2)
+        target = round(h0 + (h0 - l1), 2)          # measured-move projection up
+    else:
+        signal, swept = "SHORT", "high"
+        entry, stop = round(c1, 2), round(h1 + _buf, 2)
+        target = round(l0 - (h1 - l0), 2)          # measured-move projection down
+    hour = _hour_utc_minus4(t1)
+    session = ("asia_00" if hour == 0 else "ny_14" if hour == 14 else None)
+    risk = abs(entry - stop) or 1e-9
+    return {
+        "signal": signal, "pattern": "b2b_armed", "mode": "armed", "swept": swept,
+        "sweep_candle_hour_utc4": hour, "anchored": hour in tuple(anchor_hours)
+        if hour is not None else None, "anchor_session": session,
+        "entry": entry, "stop": stop, "target": target,
+        "rr": round(abs(target - entry) / risk, 2),
+        "risk_pips": round(risk / 0.1, 1), "horizon_hours": 8, "trade_type": "swing",
+        "note": (f"4H b2b ARMED {signal}: candle 1 swept the {swept} + reclaimed — enter "
+                 f"now, ride the next two 4H closes (5 & 9)"
+                 + (f" (anchored {session})" if session else "")
+                 + "; confirm-mode fires after the 8h completes"),
+    }
+
+
 def format_b2b(read: dict) -> Optional[str]:
     """Telegram line for a fired b2b bomber, else None."""
     if not read or read.get("signal") not in ("LONG", "SHORT"):
