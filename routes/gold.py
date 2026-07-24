@@ -291,6 +291,59 @@ async def accounts_fanout(entry: float = Query(...), stop: float = Query(...),
     return ga.copy_fanout({"side": side, "entry": entry, "stop": stop}, fleet)
 
 
+@router.get("/network")
+async def network():
+    """Copy-trade network structure — the ×10 upscale ladder + the structured
+    daily/weekly/monthly %-return bands per account size."""
+    from gold import account_network as gan
+    return gan.network_structure()
+
+
+@router.get("/network/report")
+async def network_report(base: float = Query(100.0, gt=0),
+                         prop_firm: str = Query("fundingpips"),
+                         prop_size: float = Query(5000.0, gt=0)):
+    """Full network report — upscale ladder + D/W/M targets + prop plan + currency tiers."""
+    from gold import account_network as gan
+    return gan.network_report(base, prop_firm, prop_size)
+
+
+@router.get("/network/upscale")
+async def network_upscale(base: float = Query(100.0, gt=0),
+                          min_copies: int = Query(10, ge=1),
+                          denom: str = Query("USD")):
+    """The ×10 upscale ladder — each rung needs N cleared copy trades to graduate."""
+    from gold import account_network as gan
+    return gan.upscale_ladder(base, min_copies, denom)
+
+
+@router.get("/network/prop")
+async def network_prop(firm: str = Query(None, description="fundingpips | ftmo | the5ers | myfundedfx"),
+                       size: float = Query(5000.0, gt=0),
+                       risk_pct: float = Query(1.0, gt=0)):
+    """Prop copy-trader plan — per-firm phase targets / drawdown / split. Omit firm to list firms."""
+    from gold import account_network as gan
+    if not firm:
+        return gan.prop_firms()
+    return gan.prop_plan(firm, size, risk_pct)
+
+
+@router.get("/network/currencies")
+async def network_currencies(target_usd: float = Query(5000.0, gt=0),
+                             currencies: str = Query(None, description="comma list e.g. USD,KES,KWD,NGN")):
+    """Cross-border deposit tiers — a USD size threshold in global deposit currencies."""
+    from gold import account_network as gan
+    ccys = [c.strip() for c in currencies.split(",")] if currencies else None
+    return gan.currency_deposits(target_usd, ccys)
+
+
+@router.get("/network/targets")
+async def network_targets(size: float = Query(..., gt=0)):
+    """The structured daily/weekly/monthly %-and-$ targets for one account size."""
+    from gold import account_network as gan
+    return gan.structured_targets(size)
+
+
 @router.get("/budget")
 async def budget(db: AsyncSession = Depends(get_db)):
     """Weekly trade budget board — this week's per-tier counts vs the cadence caps
