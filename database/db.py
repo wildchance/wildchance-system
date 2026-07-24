@@ -81,6 +81,9 @@ _GOLD_POSITION_MIGRATIONS = [
     "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS tp4 DOUBLE PRECISION",
     "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS limit_price DOUBLE PRECISION",
     "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
+    # Per-account copy-trade fan-out: each execution order carries which fleet
+    # account (acc1..acc5) it belongs to, so each VPS connector pulls only its own.
+    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS account VARCHAR",
 ]
 
 
