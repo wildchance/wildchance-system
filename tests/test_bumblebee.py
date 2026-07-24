@@ -104,3 +104,22 @@ def test_format_bumblebee_line():
          _b(8, 4072, 4074, 4030, 4035)], now_hour=8, htf_bias="short", session="newyork")
     line = gbb.format_bumblebee(scan)
     assert line and "BUMBLEBEE" in line and "SELL" in line
+
+
+def test_both_session_families_present():
+    # AMD-aligned + classic session-open sweeps both live
+    assert set(gbb.AMD_SESSIONS) <= set(gbb.SESSIONS)
+    assert set(gbb.OPEN_SESSIONS) <= set(gbb.SESSIONS)
+    # classic hours still resolve
+    assert gbb.phase_for_hour(1)["session"] == "london_open"    # 01 classic sweep
+    assert gbb.phase_for_hour(9)["session"] == "ny_open"        # 09 classic continuity
+    # AMD wins on overlap (07 = newyork sweep, not ny_open anchor)
+    assert gbb.phase_for_hour(7)["session"] == "newyork"
+
+
+def test_classic_ny_open_scan_still_works():
+    scan = gbb.bumblebee_scan(
+        [_b(7, 4060, 4075, 4055, 4070), _b(8, 4070, 4090, 4068, 4072),
+         _b(9, 4072, 4074, 4030, 4035)], now_hour=9, htf_bias="short", session="ny_open")
+    assert scan["session"] == "ny_open" and scan["sweep"]["side"] == "high"
+    assert scan["continuity"]["signal"] == "SELL"
