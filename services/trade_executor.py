@@ -21,6 +21,61 @@ MAGIC = 770001                          # identifies this system's trades in MT5
 # env ONLY once the MT5 VPS bridge is up — then every tracked position also
 # enqueues a broker order for the connector to place. No code change to go live.
 EXECUTION_ENABLED = config("EXECUTION_ENABLED", default=False, cast=bool)
+# When on, one signal fans out to the 5-account fleet (each order sized per account
+# + tagged account=accN); each VPS connector pulls only its own via ?account=.
+FLEET_ENABLED = config("FLEET_ENABLED", default=False, cast=bool)
+
+
+def fleet_accounts() -> list:
+    """The linked accounts to fan out to. Override via FLEET_ACCOUNTS env (JSON list
+    of {id, balance, denom, risk_pct}); else built from the fleet registry defaults."""
+    import json
+    raw = config("FLEET_ACCOUNTS", default=None)
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, list) and data:
+                return data
+        except Exception:
+            pass
+    from gold.accounts import FLEET
+    return [{"id": aid, "balance": m["default_deposit"], "denom": "USD", "risk_pct": 1.0}
+            for aid, m in FLEET.items()]
+
+
+def build_fleet_orders(sig: dict, source: str = "gold") -> list:
+    """Fan one signal into per-account MT5 orders via copy_fanout (each sized to its
+    account's balance × risk, tagged account=accN)."""
+    if sig.get("signal") not in ("LONG", "SHORT", "BUY", "SELL"):
+        return []
+    if not sig.get("gate", {}).get("allow", True):
+        return []
+    if sig.get("entry") is None or sig.get("stop") is None:
+        return []
+    from gold.accounts import copy_fanout
+    side = "long" if sig["signal"] in ("LONG", "BUY") else "short"
+    fan = copy_fanout({"signal": sig["signal"], "side": side, "entry": sig["entry"],
+                       "stop": sig["stop"], "targets": sig.get("targets", [])},
+                      fleet_accounts())
+    if not fan.get("ok"):
+        return []
+    otype = "limit" if (sig.get("entry_mode") == "structure"
+                        or sig.get("kind") == "limit") else "market"
+    tps = [t.get("price") for t in sig.get("targets", []) if t.get("price") is not None]
+    mt5_side = "buy" if side == "long" else "sell"
+    orders = []
+    for i, leg in enumerate(fan["fanout"], start=1):
+        orders.append({
+            "symbol": "XAUUSD", "side": mt5_side, "order_type": otype,
+            "volume": float(leg["lot"]),
+            "price": float(sig["entry"]) if otype == "limit" else None,
+            "sl": float(sig["stop"]) if sig.get("stop") is not None else None,
+            "tp": float(tps[0]) if tps else None, "tp_levels": tps,
+            "magic": MAGIC + i, "account": leg["account"],
+            "comment": (f"{leg['account']}:{sig.get('profile') or source}")[:31],
+            "source": source,
+        })
+    return orders
 
 
 def build_order(sig: dict, symbol: str = "XAUUSD", source: str = "gold") -> Optional[dict]:
@@ -63,6 +118,10 @@ async def maybe_enqueue(db: AsyncSession, sig: dict, source: str = "gold") -> Op
     if not EXECUTION_ENABLED:
         return None
     try:
+        if FLEET_ENABLED:
+            orders = build_fleet_orders(sig, source)
+            out = [await enqueue(db, o) for o in orders]
+            return {"fleet": out, "accounts": len(out)} if out else None
         order = build_order(sig, source=source)
         if not order:
             return None
@@ -77,7 +136,8 @@ async def enqueue(db: AsyncSession, order: dict) -> dict:
         symbol=order["symbol"], side=order["side"], order_type=order["order_type"],
         volume=order["volume"], price=order.get("price"), sl=order.get("sl"),
         tp=order.get("tp"), magic=order.get("magic", MAGIC),
-        comment=order.get("comment"), source=order.get("source"), status="pending",
+        comment=order.get("comment"), source=order.get("source"),
+        account=order.get("account"), status="pending",
     )
     db.add(row)
     await db.commit()
@@ -85,10 +145,15 @@ async def enqueue(db: AsyncSession, order: dict) -> dict:
     return {"id": row.id, "status": row.status, **order}
 
 
-async def pending(db: AsyncSession, limit: int = 20) -> List[dict]:
-    res = await db.execute(
-        select(ExecutionOrder).where(ExecutionOrder.status == "pending")
-        .order_by(ExecutionOrder.created_at.asc()).limit(limit))
+async def pending(db: AsyncSession, limit: int = 20,
+                  account: str = None) -> List[dict]:
+    """Pending orders for the bridge. ``account`` filters to one fleet account
+    (acc1..acc5) so each VPS connector only pulls — and acks — its own orders."""
+    q = select(ExecutionOrder).where(ExecutionOrder.status == "pending")
+    if account:
+        q = q.where(ExecutionOrder.account == account)
+    q = q.order_by(ExecutionOrder.created_at.asc()).limit(limit)
+    res = await db.execute(q)
     return [_to_dict(r) for r in res.scalars().all()]
 
 
@@ -118,6 +183,7 @@ def _to_dict(r: ExecutionOrder) -> dict:
         "id": r.id, "symbol": r.symbol, "side": r.side, "order_type": r.order_type,
         "volume": r.volume, "price": r.price, "sl": r.sl, "tp": r.tp,
         "magic": r.magic, "comment": r.comment, "source": r.source,
+        "account": getattr(r, "account", None),
         "status": r.status, "ticket": r.ticket, "fill_price": r.fill_price,
         "created_at": str(r.created_at) if r.created_at else None,
     }
