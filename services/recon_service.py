@@ -142,18 +142,36 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
     except Exception:
         pass
 
+    # Optimus Prime precision zones — locate the up/down-close OBs, arm on the reject
+    # (the fix for the 4152/4163 miss). Armed zones join the board so they alert.
+    optimus = None
+    try:
+        from services.ohlc_service import fetch_ohlc
+        from gold import optimus as gop
+        _obars = await fetch_ohlc("XAU/USD", "4h", 60)
+        if len(_obars) >= 8:
+            optimus = gop.optimus_scan(_obars, gold_price)
+    except Exception:
+        pass
+
     sig = _signature(sweep)
     last = _read_last()
     changed = sig != last
-    should = force or ((sweep["armed"] or not armed_only) and changed)
+    _optimus_armed = bool(optimus and optimus.get("armed"))
+    should = force or ((sweep["armed"] or _optimus_armed or not armed_only) and changed)
     sent = False
     if notify and should:
         text = gr.format_recon(sweep)
         if retracement and retracement.get("actionable"):
             text += "\n\n" + retracement["display"]
+        if _optimus_armed:
+            from gold import optimus as gop
+            text += "\n\n" + (gop.format_optimus(optimus) or "")
         sent = await gold_scan._tg(text)
     _write_last(sig)
     from services import retracement_service as rsvc
     return {"sent": sent, "armed": sweep["armed"], "changed": changed,
             "had_box": box is not None, "rbusbis_dir": rbusbis, "sweep": sweep,
-            "retracement": rsvc.summary(retracement) if retracement else None}
+            "retracement": rsvc.summary(retracement) if retracement else None,
+            "optimus": ({"armed": optimus.get("armed"), "next_zone": optimus.get("next_zone"),
+                         "note": optimus.get("note")} if optimus else None)}
