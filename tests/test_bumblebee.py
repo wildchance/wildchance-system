@@ -50,12 +50,31 @@ def test_continuity_sweep_low_bullish_buys():
 
 # --- asian bias ---------------------------------------------------------------
 
-def test_asian_bias_down_day():
-    # in the 2-5 window the LOW prints after the HIGH → down-day bias
-    bars = [_b(2, 4100, 4120, 4098, 4115), _b(3, 4115, 4118, 4090, 4095),
-            _b(4, 4095, 4096, 4070, 4075), _b(5, 4075, 4080, 4060, 4065)]
+def test_cbdr_range_and_prelondon_trigger_bias():
+    # Asian CBDR box (14-20) range 4100-4120 → +SD sell-limit 4140, -SD buy-limit 4080.
+    # In the 2-5 trigger window price hits the SELL limit → short day.
+    bars = [_b(14, 4105, 4120, 4100, 4110), _b(17, 4110, 4118, 4102, 4112),
+            _b(20, 4112, 4119, 4101, 4108),
+            _b(3, 4130, 4145, 4128, 4132)]        # 4145 >= 4140 sell-limit → short
+    cr = gbb.cbdr_range(bars)
+    assert cr["high"] == 4120 and cr["low"] == 4100
+    db = gbb.prelondon_daily_bias(cr, bars)
+    assert db["bias"] == "short" and "sell-limit" in db["triggered"]
     ab = gbb.asian_bias(bars)
     assert ab["bias"] == "short"
+
+
+def test_prelondon_buy_limit_triggers_long():
+    bars = [_b(14, 4105, 4120, 4100, 4110), _b(20, 4112, 4119, 4101, 4108),
+            _b(4, 4082, 4084, 4078, 4083)]        # 4078 <= 4080 buy-limit → long
+    ab = gbb.asian_bias(bars)
+    assert ab["bias"] == "long"
+
+
+def test_session_timeline_present():
+    tl = gbb.session_timeline()
+    assert "14:00-20:00" in tl["asian_cbdr"] and "21:00" in tl["crt_1_5_9"]
+    assert "02:00-05:00" in tl["prelondon_trigger"]
 
 
 # --- full scan ----------------------------------------------------------------
@@ -74,8 +93,10 @@ def test_phase_for_hour():
     assert gbb.phase_for_hour(0)["session"] == "london"
     assert gbb.phase_for_hour(8)["phase"] == "sweep"
     assert gbb.phase_for_hour(9)["phase"] == "continuity"
-    assert gbb.phase_for_hour(3)["session"] == "asian"
-    assert gbb.phase_for_hour(12) is None
+    assert gbb.phase_for_hour(16)["session"] == "asian_cbdr"    # 14-20 box
+    assert gbb.phase_for_hour(21)["session"] == "crt"           # 1-5-9 trend
+    assert gbb.phase_for_hour(4)["session"] == "prelondon"      # 2-5 trigger
+    assert gbb.phase_for_hour(11) is None
 
 
 def test_format_bumblebee_line():
