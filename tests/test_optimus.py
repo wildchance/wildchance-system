@@ -82,6 +82,38 @@ def test_scan_includes_target_ladder():
     assert "target_ladder" in scan and scan["last_floor"]["zone"] == "central_limit_3885"
 
 
+def test_sell_limit_ladder_pinpoints_retests():
+    lad = gop.sell_limit_ladder(4029.0)
+    levels = [r["sell_limit"] for r in lad["sell_limits"]]
+    # the break-retest premium levels are all mapped as sell-limits
+    assert 4163.07 in levels and 4074.86 in levels and 4002.31 in levels
+    # each has a stop above and a target below (proper sell-limit geometry)
+    for r in lad["sell_limits"]:
+        assert r["stop"] > r["sell_limit"] >= r["target"]
+        assert r["rr"] > 0
+
+
+def test_sell_limit_cbdr_confluence():
+    from cbdr.engine import build_cbdr
+    box = build_cbdr(4165.0, 4145.0)          # +1SD ~4185, tags a premium level
+    lad = gop.sell_limit_ladder(4150.0, box)
+    assert any(r.get("cbdr") for r in lad["sell_limits"])   # at least one aligns
+
+
+def test_campaign_projection_journaling():
+    cp = gop.campaign_projection(4029.0)
+    assert cp["macro_legs_250usd"] == 4
+    assert cp["micro_tiers"]["50usd"]["min"] == 60
+    assert cp["micro_tiers"]["150usd"]["max"] == 48
+    assert cp["progress_pct"] is not None and cp["progress_pct"] > 0
+
+
+def test_set_fib_map_updates():
+    out = gop.set_fib_map(bullish_mean=4200.0)
+    assert out["bullish_mean"] == 4200.0
+    gop.set_fib_map(bullish_mean=4133.90)     # restore
+
+
 def test_set_live_zones_updates_map():
     out = gop.set_live_zones(
         sell=[{"name": "x", "lo": 4200, "hi": 4210}],
