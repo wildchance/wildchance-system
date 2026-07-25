@@ -77,6 +77,7 @@ from routes.edgefinder import router as edgefinder_router
 from routes.backtest import router as backtest_router
 from routes.gold import router as gold_router
 from routes.execution import router as execution_router
+from routes.saas import router as saas_router
 
 # Real-time streaming
 from services.polygon_stream import polygon_stream
@@ -130,6 +131,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# SaaS tier-gating — OPT-IN (SAAS_GATING_ENABLED=false by default). No-op unless
+# turned on, so the current system + crons run unchanged.
+try:
+    from saas.gating import TierGatingMiddleware
+    app.add_middleware(TierGatingMiddleware)
+except Exception as _saas_err:
+    import logging as _lg
+    _lg.getLogger("uvicorn.error").warning("SaaS gating not loaded: %s", _saas_err)
 
 @app.get("/")
 async def home():
@@ -213,6 +223,7 @@ app.include_router(edgefinder_router)
 app.include_router(backtest_router)
 app.include_router(gold_router)
 app.include_router(execution_router)
+app.include_router(saas_router)
 app.include_router(correlation_router)
 
 # Serve the static dashboards (EdgeFinder board at /static/dashboard/edgefinder.html).
