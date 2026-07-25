@@ -96,6 +96,7 @@ async def init_db():
     import models.edge_snapshot_model
     import models.execution_model
     import models.gold_position_model
+    import models.user_model                 # SaaS users (auth + tier)
     async with engine.begin() as conn:
         # create_all only — never drop. The forward test accumulates months of
         # data; dropping on startup would silently wipe it. create_all is
