@@ -95,7 +95,9 @@ def sweep_expectation(phase: str) -> Optional[str]:
 
 def venom_read(now: Optional[_dt.datetime] = None) -> dict:
     """The three-timeframe AMD read + confluence for ``now`` (UTC-4)."""
-    now = now or (_dt.datetime.utcnow() - _dt.timedelta(hours=4))
+    if now is None:
+        from gold.session_tz import now_session
+        now = now_session()
     intr = intraday_phase(now.hour)
     wk = weekly_phase(now.weekday())
     wom = week_of_month(now.date())
