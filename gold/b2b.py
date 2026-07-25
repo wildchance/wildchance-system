@@ -22,7 +22,14 @@ from typing import Optional, Sequence
 
 # Session anchors (UTC-4): Asian close / start-of-day and the NY new-CBDR open.
 ANCHOR_HOURS = (0, 14)
-ANCHOR_TZ_OFFSET = -4        # OANDA feed on the user's chart
+
+
+def _anchor_tz_offset() -> int:
+    from gold.session_tz import tz_offset
+    return tz_offset()
+
+
+ANCHOR_TZ_OFFSET = -4        # kept for back-compat; live reads use _anchor_tz_offset()
 
 
 def _ohlc(bar):
@@ -43,7 +50,7 @@ def _hour_utc_minus4(ts) -> Optional[int]:
         dt = _dt.datetime.fromisoformat(s)
         if dt.tzinfo is None:                     # assume the feed is already UTC
             dt = dt.replace(tzinfo=_dt.timezone.utc)
-        dt = dt.astimezone(_dt.timezone(_dt.timedelta(hours=ANCHOR_TZ_OFFSET)))
+        dt = dt.astimezone(_dt.timezone(_dt.timedelta(hours=_anchor_tz_offset())))
         return dt.hour
     except Exception:
         return None
