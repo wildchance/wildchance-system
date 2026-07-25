@@ -166,7 +166,7 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
                     "open": float(x["open"]), "high": float(x["high"]),
                     "low": float(x["low"]), "close": float(x["close"])}
                    for x in _h if x.get("datetime")]
-            _nh = int(_dt.datetime.utcnow().hour - 4) % 24
+            from gold.session_tz import session_hour as _sh; _nh = _sh()
             _d = await fetch_ohlc("XAU/USD", "1day", 90)
             _hbias = grd.combine_htf(daily=grd.order_blocks(_d, timeframe="1D")
                                      if len(_d) >= 8 else []).get("htf_bias")
