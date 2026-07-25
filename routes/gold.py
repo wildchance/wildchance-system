@@ -321,7 +321,8 @@ async def bumblebee(session: str = Query(None, description="london | newyork (el
                     for x in hraw if x.get("datetime")]
     except Exception:
         pass
-    nh = now_hour if now_hour is not None else int(_dt.datetime.utcnow().hour - 4) % 24
+    from gold.session_tz import session_hour
+    nh = now_hour if now_hour is not None else session_hour()
     # HTF OB bias + nearest OB target from Optimus/radar
     htf_bias = ob_target = None
     try:
