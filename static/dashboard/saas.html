@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Wildchance — Gold Intelligence</title>
+<style>
+  :root{--bg:#0b0e14;--card:#141922;--fg:#e6edf3;--mut:#8b98a5;--acc:#f5b301;--grn:#3fb950;--red:#f85149}
+  *{box-sizing:border-box}body{margin:0;font:15px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
+  header{padding:18px 22px;border-bottom:1px solid #222c38;display:flex;align-items:center;gap:10px}
+  header b{font-size:18px}.tag{color:var(--acc)}
+  main{max-width:960px;margin:0 auto;padding:22px}
+  .card{background:var(--card);border:1px solid #222c38;border-radius:12px;padding:18px;margin:14px 0}
+  input,button{font:inherit;padding:9px 12px;border-radius:8px;border:1px solid #2a3542;background:#0f141c;color:var(--fg)}
+  button{background:var(--acc);color:#111;border:0;font-weight:600;cursor:pointer}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .tier{border:1px solid #2a3542;border-radius:10px;padding:14px}
+  .tier h3{margin:0 0 4px}.price{font-size:22px;font-weight:700;color:var(--acc)}
+  .mut{color:var(--mut)}.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  pre{background:#0f141c;padding:12px;border-radius:8px;overflow:auto;color:var(--grn)}
+  code{color:var(--acc)}
+</style>
+</head>
+<body>
+<header><b>🟡 Wildchance</b> <span class="tag">Gold Intelligence Network</span></header>
+<main>
+  <div class="card">
+    <h2>Sign in</h2>
+    <p class="mut">Paste your API key, or sign up free (Scout).</p>
+    <div class="row">
+      <input id="key" placeholder="wc_..." size="34"/>
+      <button onclick="loadMe()">Load account</button>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <input id="email" placeholder="email for free signup" size="24"/>
+      <button onclick="signup()">Sign up (Scout · free)</button>
+    </div>
+    <div id="me"></div>
+  </div>
+
+  <div class="card">
+    <h2>Plans <span class="mut">— retail capped at $499/mo</span></h2>
+    <div id="tiers" class="grid"></div>
+  </div>
+
+  <div class="card">
+    <h2>Live read</h2>
+    <p class="mut">Once signed in, your tier unlocks these. Example calls:</p>
+    <pre>GET /gold/venom            (Fleet)   — AMD phase clock
+GET /gold/optimus          (Fleet)   — zone precision + sell-limit ladder
+GET /gold/bumblebee        (Fleet)   — session sweep→continuity
+GET /gold/kingdom-report   (Pro)     — 14-branch report
+GET /gold/scan             (Trader)  — live signal</pre>
+    <div class="row"><button onclick="run('/gold/venom')">Run /gold/venom</button>
+      <button onclick="run('/gold/health')">Health</button></div>
+    <pre id="out">—</pre>
+  </div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const key=()=>$('key').value.trim();
+async function j(p,opt={}){const h=opt.headers||{};if(key())h['X-API-Key']=key();
+  const r=await fetch(p,{...opt,headers:h});return r.json().catch(()=>({status:r.status}))}
+async function tiers(){const d=await j('/saas/tiers');$('tiers').innerHTML=d.tiers.map(t=>
+  `<div class="tier"><h3>${t.name}</h3><div class="price">${t.price_usd===null?'Custom':'$'+t.price_usd}</div>
+   <div class="mut">${t.blurb}</div></div>`).join('')}
+async function signup(){const e=$('email').value.trim();if(!e)return;
+  const d=await j('/saas/signup?email='+encodeURIComponent(e),{method:'POST'});
+  if(d.api_key){$('key').value=d.api_key;loadMe()}}
+async function loadMe(){const d=await j('/saas/me');
+  $('me').innerHTML='<pre>'+JSON.stringify(d,null,2)+'</pre>'}
+async function run(p){$('out').textContent='…';const d=await j(p);
+  $('out').textContent=JSON.stringify(d,null,2)}
+tiers();
+</script>
+</body>
+</html>
