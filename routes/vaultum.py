@@ -178,3 +178,68 @@ async def portfolio_risk_endpoint(equity: float = Query(..., description="accoun
     returns = await _daily_returns()
     return pr.risk_gate(positions, equity=equity, returns=returns,
                         limit_pct=limit_pct, conf=conf)
+
+
+@router.get("/feeds")
+async def feeds():
+    """Diagnostic — which VIX/SPX symbols resolve on this TwelveData tier, so you can
+    verify the market_stress + risk_appetite scores are live (vs. degrading to neutral)."""
+    from services.risk_feeds import feeds_diagnostic
+    return await feeds_diagnostic()
+
+
+@router.get("/allocate")
+async def allocate(entry: float = Query(..., description="signal entry price"),
+                   stop: float = Query(..., description="signal stop price"),
+                   conviction: float = Query(None, description="0-100; live VAULTUM bias if omitted"),
+                   budget_pct: float = Query(3.0, description="aggregate fleet risk budget %"),
+                   max_risk_pct: float = Query(2.0)):
+    """Phase 11 — conviction-scaled, risk-budgeted allocation across the fleet accounts.
+    Uses the live VAULTUM conviction unless one is passed."""
+    from gold import portfolio_opt as po
+    from services import trade_executor as te
+    conv = conviction
+    if conv is None:
+        try:
+            sc, _ = await _gather_scores()
+            conv = vs.gold_bias_board(sc)["conviction_pct"]
+        except Exception:
+            conv = 60.0
+    accounts = te.fleet_accounts()
+    out = po.optimise(accounts, entry=entry, stop=stop, conviction_pct=conv,
+                      budget_pct=budget_pct, max_risk_pct=max_risk_pct)
+    out["conviction_source"] = "live VAULTUM board" if conviction is None else "override"
+    return out
+
+
+@router.get("/readiness")
+async def readiness(db: AsyncSession = Depends(get_db)):
+    """Go-live preflight — execution mode, fleet config, VaR-gate status, feed status,
+    and pending-order count. The checklist before flipping EXECUTION_ENABLED."""
+    from services import trade_executor as te
+    checks = {}
+    checks["execution_enabled"] = te.EXECUTION_ENABLED
+    checks["fleet_enabled"] = te.FLEET_ENABLED
+    checks["fleet_accounts"] = len(te.fleet_accounts())
+    checks["var_gate_enabled"] = te.PORTFOLIO_VAR_GATE_ENABLED
+    checks["var_gate_equity_set"] = te.PORTFOLIO_EQUITY_USD > 0
+    checks["var_limit_pct"] = te.PORTFOLIO_VAR_LIMIT_PCT
+    try:
+        from services.risk_feeds import feeds_diagnostic
+        fd = await feeds_diagnostic()
+        checks["market_stress_feed_live"] = fd["market_stress_live"]
+        checks["risk_appetite_feed_live"] = fd["risk_appetite_live"]
+    except Exception:
+        checks["market_stress_feed_live"] = checks["risk_appetite_feed_live"] = None
+    try:
+        pending = await te.pending(db, limit=100)
+        checks["pending_orders"] = len(pending)
+    except Exception:
+        checks["pending_orders"] = None
+    mode = "LIVE" if te.EXECUTION_ENABLED else "PAPER"
+    gate = ("armed" if (te.PORTFOLIO_VAR_GATE_ENABLED and te.PORTFOLIO_EQUITY_USD > 0)
+            else "dormant")
+    return {"mode": mode, "var_gate": gate, "checks": checks,
+            "ready_to_go_live": bool(te.FLEET_ENABLED and checks["fleet_accounts"] > 0),
+            "note": (f"{mode} mode; VaR gate {gate}. Flip EXECUTION_ENABLED + FLEET_ENABLED "
+                     "(and arm the VaR gate) once the MT5 VPS bridge is up.")}
