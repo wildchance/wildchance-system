@@ -24,6 +24,8 @@ from typing import List, Optional, Set
 from decouple import config
 
 NEWS_WINDOW_DAYS = config("USDJPY_NEWS_WINDOW_DAYS", default=1, cast=int)
+# Master kill-switch for the news warnings (set false to silence them entirely).
+NEWS_WARNINGS_ENABLED = config("NEWS_WARNINGS_ENABLED", default=True, cast=bool)
 
 # Tier-1 event substrings (currency-agnostic). Central-bank rate decisions, CPI,
 # employment, GDP, and the Fed's own set.
@@ -102,6 +104,21 @@ def _is_high_impact(ev: dict) -> bool:
     return "high" in impact or any(k in name for k in _HIGH_IMPACT)
 
 
+def _dedupe_events(names) -> List[str]:
+    """Collapse frequency variants of the same release (m/m, y/y, q/q) into one entry,
+    preserving first-seen order — so 'Core CPI m/m' + 'Core CPI y/y' → one 'Core CPI'."""
+    import re
+    seen, out = set(), []
+    for name in names or []:
+        cleaned = re.sub(r"\s+(m/m|y/y|q/q)\b", "", str(name), flags=re.I)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+        key = cleaned.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(cleaned)
+    return out
+
+
 def filter_high_impact(events, currencies: Optional[Set[str]] = None) -> List[dict]:
     """Normalize + keep only tier-1 events, optionally limited to ``currencies``.
 
@@ -145,14 +162,22 @@ async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
     ``win`` days (default USDJPY_NEWS_WINDOW_DAYS), else None. Callers decide
     whether to flag or block — pass win=0 to test same-day only.
     """
+    if not NEWS_WARNINGS_ENABLED:
+        return None
     win = max(0, NEWS_WINDOW_DAYS if win is None else win)
     ccys = symbol_currencies(symbol)
     hits: List[str] = []
 
+    # FORWARD-LOOKING only: flag an event that is TODAY or UPCOMING within `win` days.
+    # Once it has printed (in the past) the outcome is known — no longer a fade risk —
+    # so we don't keep re-alerting news we already have.
+    def _ahead(ev_date) -> bool:
+        return 0 <= (ev_date - for_date).days <= win
+
     # 1) Deterministic NFP clock (only if the pair carries USD).
     if "USD" in ccys:
         for nfp in _nearby_nfp(for_date):
-            if abs((nfp - for_date).days) <= win:
+            if _ahead(nfp):
                 hits.append(f"USD NFP {nfp.isoformat()}")
 
     # 2) Live calendar feed, matched to the pair's currencies (best-effort).
@@ -162,8 +187,7 @@ async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
         for ev in events or []:
             d = _parse_date(ev.get("date"))
             ccy = _event_ccy(ev)
-            if (d and ccy in ccys and _is_high_impact(ev)
-                    and abs((d - for_date).days) <= win):
+            if d and ccy in ccys and _is_high_impact(ev) and _ahead(d):
                 nm = ev.get("event") or ev.get("title") or "high-impact"
                 hits.append(f"{ccy} {nm}")
     except Exception:
@@ -174,6 +198,6 @@ async def news_flag(for_date: dt.date, symbol: str = "USD/JPY",
     uniq = list(dict.fromkeys(hits))[:4]
     return (
         f"⚠️ High-impact news within {win}d for {'/'.join(sorted(ccys))} "
-        f"({'; '.join(uniq)}) — scheduled prints often INVERT a fade. "
+        f"({'; '.join(uniq)}) — scheduled prints whip price and widen spreads. "
         "Trade at your discretion / reduce size."
     )
