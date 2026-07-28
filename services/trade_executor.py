@@ -113,6 +113,66 @@ def build_fleet_orders(sig: dict, source: str = "gold") -> list:
     return orders
 
 
+def plan_scale_out(total: float, tps: list, min_lot: float = 0.01,
+                   step: float = 0.01) -> List[dict]:
+    """Split a position into front-loaded partial legs across a TP ladder.
+
+    The nearest TP gets the most volume (weights n, n-1, … 1). Every leg is >= min_lot
+    and a whole number of `step`; the legs sum EXACTLY to `total`. If `total` can only
+    afford k legs at min_lot, only the nearest k TPs are used (never sub-min legs)."""
+    total = round(float(total or 0), 2)
+    tps = list(tps or [])
+    if not tps:
+        return []
+    min_steps = max(1, int(round(min_lot / step)))
+    total_steps = int(round(total / step))
+    if total_steps < min_steps:
+        return []
+    max_legs = min(len(tps), total_steps // min_steps)
+    if max_legs < 1:
+        return []
+    weights = [max_legs - i for i in range(max_legs)]     # front-loaded: n, n-1, …, 1
+    wsum = sum(weights)
+    alloc = [min_steps] * max_legs
+    rem = total_steps - min_steps * max_legs
+    prop = [rem * w // wsum for w in weights]
+    for i in range(max_legs):
+        alloc[i] += prop[i]
+    leftover = rem - sum(prop)
+    i = 0
+    while leftover > 0:                                    # remainder to the front legs
+        alloc[i % max_legs] += 1
+        leftover -= 1
+        i += 1
+    return [{"volume": round(alloc[i] * step, 2), "tp": tps[i]} for i in range(max_legs)]
+
+
+def build_orders(sig: dict, symbol: str = "XAUUSD", source: str = "gold",
+                 scale_out: bool = True) -> List[dict]:
+    """Build MT5 order(s) for a signal, scaling the lot across the trend-TP ladder when
+    one is present (trend_targets). Falls back to a single base order otherwise."""
+    base = build_order(sig, symbol, source)
+    if not base:
+        return []
+    ladder = ((sig.get("trend_targets") or {}).get("targets")) or []
+    tps = [t.get("price") for t in ladder if t.get("price") is not None]
+    lot = float(sig.get("lot") or 0.0)
+    if scale_out and len(tps) >= 2:
+        legs = plan_scale_out(lot, tps)
+        if len(legs) >= 2:
+            n = len(legs)
+            orders = []
+            for i, leg in enumerate(legs, start=1):
+                o = dict(base)
+                o["volume"] = leg["volume"]
+                o["tp"] = leg["tp"]
+                o["scale_leg"] = f"{i}/{n}"
+                o["comment"] = (f"{sig.get('profile') or source} {i}/{n}")[:31]
+                orders.append(o)
+            return orders
+    return [base]
+
+
 def build_order(sig: dict, symbol: str = "XAUUSD", source: str = "gold") -> Optional[dict]:
     """Normalize a gold signal into an MT5-ready order, or None if not tradeable.
 
