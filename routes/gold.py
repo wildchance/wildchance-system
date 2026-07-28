@@ -440,6 +440,25 @@ async def optimus_campaign(price: float = Query(None)):
     return gop.campaign_projection(float(price) if price else None)
 
 
+@router.get("/cbdr-confluence")
+async def cbdr_confluence(balance: float = Query(5000.0), risk_usd: float = Query(20.0),
+                          min_score: int = Query(65, ge=0, le=100)):
+    """Cross-session CBDR confluence — scored Asian-premium→London-discount LIMIT orders,
+    EV-gated (the premium-sell only arms in a confirmed downtrend). Complements Optimus/
+    Bumblebee with a pre-armed, backtested limit edge."""
+    from services import gold_cbdr_confluence as gcc
+    return await gcc.scan(balance=balance, risk_usd=risk_usd, min_score=min_score)
+
+
+@router.get("/session-breakout")
+async def session_breakout(session: str = Query(None, description="asia|london|ny (auto if omitted)"),
+                           balance: float = Query(5000.0), risk_usd: float = Query(20.0)):
+    """Session Opening-Range breakout — OR → break → retest entry, TPO-confirmed, tiered
+    by session (Asia intrasession / London-NY intraday / composite swing)."""
+    from services import gold_session_breakout as gsb
+    return await gsb.scan(balance=balance, risk_usd=risk_usd, session=session)
+
+
 @router.post("/optimus/campaign")
 async def optimus_campaign_set(from_: float = Query(None, alias="from"),
                                buy_bounce_to: float = Query(None),
