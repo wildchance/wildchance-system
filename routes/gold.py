@@ -37,6 +37,27 @@ from services import gold_intraday
 router = APIRouter(prefix="/gold", tags=["gold"])
 
 
+async def _resolve_price(price=None):
+    """Resolve a live XAU/USD price robustly. get_forex_price can RETURN None (feed
+    rate-limit / empty), which then makes float(None) raise → a 500. Guard that: try
+    the feed, fall back to the last 1H close, and only 502 if truly nothing is available."""
+    if price is not None:
+        return float(price)
+    try:
+        p = await get_forex_price("XAU/USD")
+        if p is not None:
+            return float(p)
+    except Exception:
+        pass
+    try:
+        ohlc = await fetch_ohlc("XAU/USD", "1h", 2)
+        if ohlc:
+            return float(ohlc[-1][4])
+    except Exception:
+        pass
+    raise HTTPException(status_code=502, detail="no live XAU/USD price available")
+
+
 def _ny_close() -> _dt.datetime:
     """Today's 21:00 UTC (≈ NY close) — the pre-London/CRT limit expiry."""
     now = _dt.datetime.now(_dt.timezone.utc)
@@ -348,6 +369,8 @@ async def optimus(interval: str = Query("4h"), bars: int = Query(60, ge=8, le=30
         try:
             price = await get_forex_price("XAU/USD")
         except Exception:
+            price = None
+        if price is None:                 # feed can RETURN None (not raise) → fall back
             price = ohlc[-1][4]
     scan = gop.optimus_scan(ohlc, float(price))
     scan["display"] = gop.format_optimus(scan)
@@ -359,11 +382,7 @@ async def optimus_sell_limits(price: float = Query(None), window: str = Query("p
     """Pinpoint the SELL-LIMIT ladder (break-retest structure) — each premium level as
     a sell-limit with entry/stop/target, tagged with pre-London CBDR confluence."""
     from gold import optimus as gop
-    if price is None:
-        try:
-            price = await get_forex_price("XAU/USD")
-        except Exception:
-            raise HTTPException(status_code=502, detail="no price")
+    price = await _resolve_price(price)
     box = None
     try:
         from services.recon_service import _live_box
@@ -378,11 +397,7 @@ async def optimus_path(price: float = Query(None), tp: float = Query(None)):
     """Sell-anticipation PATH — the sequenced lower-high/lower-low staircase (retrace
     → impulse → retrace) projected down to TP. The roadmap, not just the levels."""
     from gold import optimus as gop
-    if price is None:
-        try:
-            price = await get_forex_price("XAU/USD")
-        except Exception:
-            raise HTTPException(status_code=502, detail="no price")
+    price = await _resolve_price(price)
     return gop.sell_path(float(price), tp)
 
 
@@ -403,11 +418,7 @@ async def optimus_bounce(price: float = Query(None), window: str = Query("prelon
     """Counter-trend bounce map — the premium OBs above price (buy targets) that are
     also where the primary SELL re-arms (daily 4074 / 4H 4135), with CBDR confluence."""
     from gold import optimus as gop
-    if price is None:
-        try:
-            price = await get_forex_price("XAU/USD")
-        except Exception:
-            raise HTTPException(status_code=502, detail="no price")
+    price = await _resolve_price(price)
     box = None
     try:
         from services.recon_service import _live_box
