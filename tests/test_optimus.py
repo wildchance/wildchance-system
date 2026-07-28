@@ -128,13 +128,14 @@ def test_sell_limit_ladder_tags_ob_timeframe():
 
 
 def test_sell_path_staircase():
-    # from 4060: retrace up into a sell OB, then impulse/retrace staircase to TP 3634
+    # from 4060: retrace up into the 4074 sell OB, then impulse/retrace staircase to
+    # the central-limit TP 3885 (last floor before the void).
     p = gop.sell_path(4060.0)
     kinds = [l["type"] for l in p["legs"]]
     assert "retrace_up" in kinds and "impulse_down" in kinds
-    # legs alternate and end at/near the TP
-    assert p["legs"][-1]["to"] <= 3640 and p["legs"][-1]["type"] == "impulse_down"
-    assert p["sell_legs"] >= 3          # multiple sell legs down the staircase
+    # legs alternate and end at/near the TP (central limit 3885)
+    assert p["legs"][-1]["to"] <= 3890 and p["legs"][-1]["type"] == "impulse_down"
+    assert p["sell_legs"] >= 2          # multiple sell legs down the staircase
     # every impulse leg is a lower low than the prior retrace high
     imp = [l for l in p["legs"] if l["type"] == "impulse_down"]
     assert imp[0]["to"] > imp[-1]["to"]  # stepping down
