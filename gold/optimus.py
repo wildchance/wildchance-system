@@ -11,10 +11,12 @@ move onto the 250-usd / 2500-pip capture grid and anticipates the next zone.
      No reject = WAIT. This is the discipline that stops the early-entry 250-usd SL.
   3. CAPTURE — entry at the zone, stop just beyond the wick (small), target the next
      opposing zone; graded on the Big-5 250-pip floor → the full 2500-pip / 250-usd bag.
-  4. ANTICIPATE — the next zone in the trade direction (sell 4163 → 3987 4H OB → 3885).
+  4. ANTICIPATE — the next zone in the trade direction. 2026-07-28 live read: price
+     bounced to ~4049 and BUYS the retrace into the 4074 Daily OB; there the primary-
+     trend SELL re-arms down to 3885 (central limit), then the W1 void to ~3506.
 
-The live reaction map is operator-fed (set_live_zones) and defaults to the
-2026-07-24 4H chart. Reuses gold.rejection (reject trigger) + gold.big5 (capture grade).
+The live reaction map is operator-fed (set_live_zones / set_sell_path / set_campaign)
+and defaults to the 2026-07-28 read. Reuses gold.rejection + gold.big5 (capture grade).
 """
 
 from __future__ import annotations
@@ -29,9 +31,11 @@ _STOP_BUFFER = 1.5      # stop beyond the OB wick, in price
 # Live reaction map — 2026-07-24 4H chart. Operator-updatable via set_live_zones().
 LIVE_ZONES = {
     "sell": [
-        {"name": "supply_4179_4190", "lo": 4179.79, "hi": 4190.60, "note": "higher supply"},
-        {"name": "supply_4152_4163", "lo": 4152.40, "hi": 4163.07,
-         "note": "up/down-close supply — sell-off origin"},
+        {"name": "supply_4152_4163", "lo": 4152.40, "hi": 4163.07, "note": "up/down-close supply"},
+        {"name": "supply_4108_4110", "lo": 4108.00, "hi": 4110.05,
+         "note": "recent sell origin (2026-07-28)"},
+        {"name": "ob_4075_4094", "lo": 4074.86, "hi": 4094.03,
+         "note": "Daily OB + 4H supply — the bounce buy-target AND where the SELL re-arms"},
     ],
     "buy": [
         {"name": "ob_4001", "lo": 3995.0, "hi": 4001.60, "note": "shelf"},
@@ -45,7 +49,8 @@ LIVE_ZONES = {
         {"name": "macro_buy_3291", "lo": 3285.0, "hi": 3298.0,
          "note": "macro accumulation floor"},
     ],
-    "pivots": {"bullish_mean": 4133.90},
+    "pivots": {"bullish_mean": 4133.90, "active_sell_ob": 4074.86, "sell_target": 3885.04,
+               "bounce_from": 4049.0},
 }
 
 # A gap larger than this (in pips) with no zone = a no-floor VOID: price travels it
@@ -70,14 +75,17 @@ FIB_MAP = {
 }
 # Premium levels that act as SELL-on-retest in the bearish structure (broken support
 # → resistance). Ordered high→low; each is a sell-limit on the retest.
-SELL_RETEST_LEVELS = [4190.60, 4179.79, 4163.07, 4152.40, 4133.90, 4074.86, 4002.31]
+SELL_RETEST_LEVELS = [4190.60, 4179.79, 4163.07, 4152.40, 4133.90, 4110.05, 4094.03,
+                      4074.86, 4002.31]
 
 # Which timeframe order-block each retest level is (precision labelling). 4074 =
 # Daily OB, 4135 = 4H OB per the operator's 2026-07-24 read.
 OB_TIMEFRAME = {
     4190.60: "weekly supply", 4179.79: "HTF supply",
     4163.07: "4H supply — sell-off origin", 4152.40: "4H supply",
-    4133.90: "4H order block (bullish mean)", 4074.86: "Daily order block",
+    4133.90: "4H order block (bullish mean)",
+    4110.05: "recent sell origin (2026-07-28)", 4094.03: "4H supply",
+    4074.86: "Daily order block — buy-target & sell re-arm",
     4002.31: "0.236 shelf / break-retest",
 }
 
@@ -94,6 +102,13 @@ def _ob_tf(level: float, tol: float = 4.0) -> Optional[str]:
 CAMPAIGN = {
     "from": 4163.07, "target": 3131.46,
     "macro_legs_250usd": 4,               # 4 × 250-usd structural legs to 3130
+    # The leg being worked right now (2026-07-28): buy the 4049→4075 retrace, then the
+    # SELL re-arms at the 4074 Daily OB down to 3885. Operator-updatable via set_campaign().
+    "active_leg": {
+        "from": 4110.05, "buy_bounce_to": 4074.86, "sell_target": 3885.04,
+        "trades_so_far": 5, "retracement_trades": 2,
+        "note": "leg 4110→3885; currently the 2nd retracement — buy 4049→4075, then sell 4075→3885",
+    },
     "micro_tiers": {
         "50usd":        {"min": 60, "max": 120},
         "125usd":       {"min": 7,  "max": 8},
@@ -102,6 +117,18 @@ CAMPAIGN = {
     },
     "note": "counts set by real-time opportunity; prop accs leverage the mixed pool",
 }
+
+
+def set_campaign(from_: float = None, buy_bounce_to: float = None, sell_target: float = None,
+                 trades_so_far: int = None, retracement_trades: int = None) -> dict:
+    """Operator update of the ACTIVE campaign leg (today's buy-bounce / sell-target /
+    trade counters) — so the campaign read tracks the live trades without a redeploy."""
+    leg = CAMPAIGN.setdefault("active_leg", {})
+    for k, v in (("from", from_), ("buy_bounce_to", buy_bounce_to), ("sell_target", sell_target),
+                 ("trades_so_far", trades_so_far), ("retracement_trades", retracement_trades)):
+        if v is not None:
+            leg[k] = v
+    return dict(leg)
 
 
 def set_fib_map(**levels) -> dict:
@@ -338,9 +365,12 @@ def sell_limit_ladder(price: float, box=None, floor: Optional[float] = None) -> 
 
 # H4 sell-anticipation STAIRCASE (2026-07-24 operator chart) — the alternating
 # retrace(lower-high) / impulse(lower-low) path down to TP. Operator-updatable.
-PATH_SELLS = [4256.19, 4217.93, 4164.03, 4128.61, 4081.68, 4063.23]   # sell OBs (LHs)
-PATH_FLOORS = [3997.54, 3896.57, 3865.59, 3761.71, 3654.81]           # demand (LLs)
-PATH_TP = 3634.04
+# 2026-07-28 sell staircase — price bounced to ~4049 and buys the retrace into the
+# 4074 Daily OB, then the primary-trend SELL re-arms down to 3885 (central limit).
+# Below 3885 is the W1 no-floor VOID: nothing real until ~3506 (the next campaign leg).
+PATH_SELLS = [4152.40, 4133.90, 4110.05, 4094.03, 4074.86]   # sell OBs (lower-highs)
+PATH_FLOORS = [4002.31, 3885.04]                             # demand (lower-lows) before the void
+PATH_TP = 3885.04                                            # target; void below → 3506 next leg
 
 
 def set_sell_path(sells=None, floors=None, tp=None) -> dict:
@@ -437,6 +467,7 @@ def campaign_projection(price: Optional[float] = None) -> dict:
         "campaign": f"{CAMPAIGN['from']:.0f} → {CAMPAIGN['target']:.0f}",
         "total_move_usd": total_usd, "total_move_pips": _pips(CAMPAIGN["from"], CAMPAIGN["target"]),
         "macro_legs_250usd": CAMPAIGN["macro_legs_250usd"],
+        "active_leg": CAMPAIGN.get("active_leg"),
         "micro_tiers": tiers, "progress_usd": done, "progress_pct": pct,
         "note": (f"{CAMPAIGN['macro_legs_250usd']}×250-usd macro legs to "
                  f"{CAMPAIGN['target']:.0f}"
