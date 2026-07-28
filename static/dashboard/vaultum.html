@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VAULTUM · Intelligence Board</title>
+<style>
+  :root{--bg:#0b0f17;--panel:#131a26;--panel2:#0f1520;--line:#1f2937;--ink:#e6edf6;
+    --muted:#8b97a8;--accent:#f5b301;--long:#3ecf8e;--short:#f0654a;--neutral:#5b6b80;}
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,#152033 0,var(--bg) 55%);
+    color:var(--ink);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:12px;align-items:center;
+    padding:14px 20px;background:rgba(11,15,23,.85);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .brand{font-weight:800;font-size:18px}.brand span{color:var(--accent)}
+  .spacer{flex:1}.stamp{color:var(--muted);font-size:12px}
+  .tabs{display:flex;gap:8px;padding:12px 20px 0}
+  .tab{cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--muted);
+    border-radius:9px 9px 0 0;padding:8px 16px;font-size:14px;font-weight:600}
+  .tab.on{background:#16233a;border-color:var(--accent);color:#ffe9a8}
+  main{padding:16px 20px 40px;max-width:1100px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .card h3{margin:0 0 10px;font-size:13px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted)}
+  .big{font-size:30px;font-weight:800}.mut{color:var(--muted);font-size:13px}
+  .long{color:var(--long)}.short{color:var(--short)}.neutral{color:var(--neutral)}
+  .meter{height:10px;border-radius:6px;background:#0f1520;overflow:hidden;margin:8px 0}
+  .meter>i{display:block;height:100%;background:linear-gradient(90deg,#f0654a,#f5b301,#3ecf8e)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  td,th{padding:6px 8px;text-align:left;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600}
+  .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:12px;font-weight:600}
+  .ok{background:#123524;color:#4ade80}.warn{background:#3a2a10;color:#f5b301}.bad{background:#3a1620;color:#fb7185}
+  .hide{display:none}button{cursor:pointer;border:1px solid var(--line);background:var(--panel);
+    color:var(--ink);border-radius:8px;padding:7px 12px}button:hover{border-color:var(--accent)}
+  pre{background:var(--panel2);padding:10px;border-radius:8px;overflow:auto;font-size:12px;color:#9fe6c0}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">🏛️ VAULT<span>UM</span></div>
+  <div class="stamp" id="stamp">—</div>
+  <div class="spacer"></div>
+  <button onclick="loadAll()">↻ Refresh</button>
+</header>
+<div class="tabs">
+  <div class="tab on" data-v="trading" onclick="tab('trading')">Trading</div>
+  <div class="tab" data-v="risk" onclick="tab('risk')">Risk</div>
+  <div class="tab" data-v="exec" onclick="tab('exec')">Executive</div>
+</div>
+<main>
+  <!-- TRADING -->
+  <section id="trading">
+    <div class="grid">
+      <div class="card"><h3>Gold Bias</h3>
+        <div class="big" id="biasVal">—</div>
+        <div class="meter"><i id="biasMeter" style="width:50%"></i></div>
+        <div class="mut" id="biasDrivers">—</div></div>
+      <div class="card"><h3>HMM Regime</h3>
+        <div class="big" id="regime">—</div>
+        <div class="mut" id="regimeSub">—</div></div>
+      <div class="card"><h3>Optimus — bounce plan</h3>
+        <div id="optimus" class="mut">—</div></div>
+    </div>
+    <div class="card" style="margin-top:14px"><h3>Component scores</h3>
+      <table id="scoresTbl"><thead><tr><th>Factor</th><th>Score</th><th>Conf</th><th>Driver</th></tr></thead>
+      <tbody></tbody></table></div>
+  </section>
+  <!-- RISK -->
+  <section id="risk" class="hide">
+    <div class="grid">
+      <div class="card"><h3>Portfolio VaR (95%)</h3><div class="big" id="varVal">—</div>
+        <div class="mut" id="varSub">enter equity to compute</div>
+        <div style="margin-top:8px"><input id="equity" placeholder="equity USD" style="width:120px;padding:6px;border-radius:6px;border:1px solid var(--line);background:#0f1520;color:var(--ink)">
+        <button onclick="loadRisk()">Compute</button></div></div>
+      <div class="card"><h3>Expected Shortfall</h3><div class="big" id="esVal">—</div><div class="mut">tail loss beyond VaR</div></div>
+      <div class="card"><h3>Gate verdict</h3><div class="big" id="gateVal">—</div><div class="mut" id="gateSub">—</div></div>
+    </div>
+    <div class="card" style="margin-top:14px"><h3>Fleet allocation (conviction-scaled)</h3>
+      <div class="mut" id="allocNote">—</div>
+      <table id="allocTbl"><thead><tr><th>Account</th><th>Balance</th><th>Risk%</th><th>Risk$</th><th>Lot</th></tr></thead><tbody></tbody></table></div>
+  </section>
+  <!-- EXECUTIVE -->
+  <section id="exec" class="hide">
+    <div class="grid">
+      <div class="card"><h3>Mode</h3><div class="big" id="mode">—</div><div class="mut" id="modeSub">—</div></div>
+      <div class="card"><h3>VaR Gate</h3><div class="big" id="gateState">—</div></div>
+      <div class="card"><h3>Feeds</h3><div id="feeds" class="mut">—</div></div>
+    </div>
+    <div class="card" style="margin-top:14px"><h3>Go-live readiness</h3><pre id="readiness">—</pre></div>
+  </section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const j=async p=>{try{const r=await fetch(p);return await r.json()}catch(e){return{error:String(e)}}};
+const cls=d=>d==='long'?'long':d==='short'?'short':'neutral';
+function tab(v){document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.v===v));
+  ['trading','risk','exec'].forEach(s=>$(s).classList.toggle('hide',s!==v));}
+
+async function loadTrading(){
+  const b=await j('/vaultum/scores');
+  if(b.gold_bias!=null){
+    $('biasVal').innerHTML=`<span class="${cls(b.direction)}">${b.tag||b.direction}</span> ${b.gold_bias}/100`;
+    $('biasMeter').style.width=b.gold_bias+'%';
+    $('biasDrivers').textContent=(b.top_drivers||[]).join(' · ')+`  (conv ${b.conviction_pct}% · conf ${Math.round((b.confidence||0)*100)}%)`;
+    const tb=$('scoresTbl').querySelector('tbody');tb.innerHTML='';
+    Object.entries(b.components||{}).forEach(([k,v])=>{
+      tb.innerHTML+=`<tr><td>${k}</td><td>${v.value}</td><td>${Math.round((v.confidence||0)*100)}%</td><td class="mut">${(v.drivers||[])[0]||''}</td></tr>`;});
+    const h=b.hmm_regime;if(h&&h.available){$('regime').innerHTML=`<span class="${cls(h.gold_bias)}">${h.regime}</span>`;
+      $('regimeSub').textContent=`p=${Math.round(h.confidence*100)}% · persistence ${Math.round(h.persistence*100)}%`;}
+  }
+  const o=await j('/gold/optimus/bounce');
+  if(o.buy_targets){const t=o.buy_targets[0];
+    $('optimus').innerHTML=`price ${o.price} → buy <b>${t.level}</b> (${t.ob||''}) +${Math.round(t.pips_up)}p<br>`+
+    `then SELL ${t.sell_rearm.entry} → <b>${t.sell_rearm.target}</b> (${t.sell_rearm.tier||''})`;}
+}
+async function loadRisk(){
+  const eq=parseFloat($('equity').value)||100000;
+  const r=await j('/vaultum/portfolio-risk?equity='+eq);
+  if(r.var_usd!=null){$('varVal').textContent='$'+r.var_usd+' ('+r.var_pct+'%)';
+    $('varSub').textContent=r.reason||'';$('esVal').textContent='$'+(r.es_usd??'—');
+    $('gateVal').innerHTML=r.approved?'<span class="pill ok">APPROVED</span>':'<span class="pill bad">BLOCK</span>';
+    $('gateSub').textContent=`limit ${r.limit_pct}% · net ${r.net_side||''}`;}
+  else{$('varVal').textContent='—';$('varSub').textContent=r.reason||'no open book';}
+  const a=await j('/vaultum/allocate?entry=4049&stop=4036');
+  if(a.legs){$('allocNote').textContent=a.note+`  · conviction ${a.conviction_pct}% (×${a.conviction_scale})`;
+    const tb=$('allocTbl').querySelector('tbody');tb.innerHTML='';
+    a.legs.forEach(l=>tb.innerHTML+=`<tr><td>${l.account}</td><td>$${l.balance}</td><td>${l.risk_pct}%</td><td>$${l.risk_usd}</td><td>${l.lot}</td></tr>`);}
+}
+async function loadExec(){
+  const r=await j('/vaultum/readiness');
+  $('mode').innerHTML=r.mode==='LIVE'?'<span class="short">LIVE</span>':'<span class="neutral">PAPER</span>';
+  $('modeSub').textContent=r.note||'';
+  $('gateState').innerHTML=r.var_gate==='armed'?'<span class="pill ok">ARMED</span>':'<span class="pill warn">DORMANT</span>';
+  $('readiness').textContent=JSON.stringify(r.checks,null,2);
+  const f=await j('/vaultum/feeds');
+  if(f.vix){$('feeds').innerHTML=`VIX: ${f.market_stress_live?'<span class="long">live '+(f.vix.value||'')+'</span>':'<span class="short">neutral</span>'} `+
+    `(${f.vix.resolved_symbol||'none'})<br>SPX: ${f.risk_appetite_live?'<span class="long">live</span>':'<span class="short">neutral</span>'} (${f.spx.resolved_symbol||'none'})`;}
+}
+async function loadAll(){$('stamp').textContent='loading…';await Promise.all([loadTrading(),loadRisk(),loadExec()]);
+  $('stamp').textContent='updated '+new Date().toLocaleTimeString();}
+loadAll();
+</script>
+</body>
+</html>
