@@ -131,3 +131,39 @@ def seek_destroy_plan(high: float, low: float, htf_bias: str,
         orders = [buy, sell]                     # neutral HTF → both extremes
     return {"orders": orders, "range": round(rng, 2), "extreme_sd": extreme_sd,
             "htf_bias": want, "note": "S&D liquidity-sweep fade in anticipation of the HTF trend"}
+
+
+# Opening-Range session-breakout tier plan (composes indicators.opening_range +
+# indicators.profile). Tier by session: Asia OR = intrasession, London/NY = intraday,
+# composite (multi-session) = swing. Gated by the weekly bias + the TPO confirmation.
+_SESSION_TIER = {"asia": "intrasession", "tokyo": "intrasession",
+                 "london": "intraday", "ny": "intraday", "newyork": "intraday",
+                 "composite": "swing"}
+
+
+def session_breakout_plan(orr: dict, profile: dict, bias: str = "neutral",
+                          session: str = "ny") -> dict:
+    """Compose an Opening-Range breakout into a fired, tiered plan or NO TRADE.
+
+    orr = indicators.opening_range result; profile = TPO confirmation {ok, reason};
+    bias = weekly bias. Blocks when there's no breakout, the profile denies it, or the
+    breakout opposes the weekly bias."""
+    if not orr.get("ok"):
+        return {"signal": "NO TRADE", "reason": orr.get("reason", "no OR breakout")}
+    if not profile.get("ok"):
+        return {"signal": "NO TRADE",
+                "reason": f"profile: {profile.get('reason', 'not confirmed (value area)')}"}
+    side = orr.get("side")
+    b = (bias or "neutral").lower()
+    if b in ("long", "short") and side != b:
+        return {"signal": "NO TRADE",
+                "reason": f"{side} OR breakout opposes weekly {b} bias"}
+    return {
+        "signal": "LONG" if side == "long" else "SHORT",
+        "side": side, "trade_type": _SESSION_TIER.get(session, "intraday"),
+        "entry": orr.get("entry"), "stop": orr.get("stop"),
+        "kind": "limit", "session": session,
+        "or_high": orr.get("or_high"), "or_low": orr.get("or_low"),
+        "reason": (f"{session} OR {side} breakout, TPO-confirmed, "
+                   f"aligns weekly {b}"),
+    }
