@@ -24,6 +24,41 @@ EXECUTION_ENABLED = config("EXECUTION_ENABLED", default=False, cast=bool)
 # When on, one signal fans out to the 5-account fleet (each order sized per account
 # + tagged account=accN); each VPS connector pulls only its own via ?account=.
 FLEET_ENABLED = config("FLEET_ENABLED", default=False, cast=bool)
+# Portfolio VaR gate (Phase 10). OFF by default → fail-open (never blocks). When enabled
+# with a set equity, a new order is BLOCKED if it pushes portfolio VaR over the budget.
+PORTFOLIO_VAR_GATE_ENABLED = config("PORTFOLIO_VAR_GATE_ENABLED", default=False, cast=bool)
+PORTFOLIO_EQUITY_USD = config("PORTFOLIO_EQUITY_USD", default=0.0, cast=float)
+PORTFOLIO_VAR_LIMIT_PCT = config("PORTFOLIO_VAR_LIMIT_PCT", default=5.0, cast=float)
+
+
+async def var_gate(db: AsyncSession, sig: dict, source: str = "gold") -> dict:
+    """Portfolio VaR/ES verdict for adding this signal to the open book. Fail-OPEN:
+    disabled, no equity, or any error → approved, so it never silently breaks execution.
+    Only BLOCKS when explicitly enabled AND the resulting VaR exceeds the budget."""
+    if not PORTFOLIO_VAR_GATE_ENABLED or PORTFOLIO_EQUITY_USD <= 0:
+        return {"approved": True, "reason": "VaR gate disabled"}
+    try:
+        from gold import portfolio_risk as pr
+        from services.gold_positions import list_positions, _to_dict
+        from services.ohlc_service import fetch_ohlc
+        rows = await list_positions(db, status="open")
+        positions = []
+        for r in rows:
+            d = _to_dict(r) if not isinstance(r, dict) else r
+            positions.append({"side": d.get("side", "buy"),
+                              "lot": d.get("lot", d.get("size", 0.01)),
+                              "price": d.get("current_price", d.get("entry", d.get("entry_price")))})
+        # marginal exposure of the new (fleet-summed) order
+        new_lot = sum(float(o["volume"]) for o in build_fleet_orders(sig, source)) or float(sig.get("lot") or 0.01)
+        new_order = {"side": "buy" if sig.get("signal") in ("LONG", "BUY") else "sell",
+                     "lot": new_lot, "price": sig.get("entry")}
+        bars = await fetch_ohlc("XAU/USD", "1day", 40)
+        closes = [float(b[4]) for b in bars] if bars else []
+        returns = [(b - a) / a for a, b in zip(closes, closes[1:]) if a]
+        return pr.risk_gate(positions, PORTFOLIO_EQUITY_USD, returns,
+                            PORTFOLIO_VAR_LIMIT_PCT, new_order=new_order)
+    except Exception:
+        return {"approved": True, "reason": "VaR gate error — fail-open"}
 
 
 def fleet_accounts() -> list:
@@ -117,6 +152,9 @@ async def maybe_enqueue(db: AsyncSession, sig: dict, source: str = "gold") -> Op
     no-op. Never raises: a broker-queue failure must not block the tracked open."""
     if not EXECUTION_ENABLED:
         return None
+    gate = await var_gate(db, sig, source)
+    if not gate.get("approved", True):
+        return {"blocked": True, "risk_gate": gate}       # portfolio VaR over budget
     try:
         if FLEET_ENABLED:
             orders = build_fleet_orders(sig, source)
