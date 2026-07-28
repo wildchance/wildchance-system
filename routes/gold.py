@@ -429,6 +429,18 @@ async def optimus_campaign(price: float = Query(None)):
     return gop.campaign_projection(float(price) if price else None)
 
 
+@router.post("/optimus/campaign")
+async def optimus_campaign_set(from_: float = Query(None, alias="from"),
+                               buy_bounce_to: float = Query(None),
+                               sell_target: float = Query(None),
+                               trades_so_far: int = Query(None),
+                               retracement_trades: int = Query(None)):
+    """Update the ACTIVE campaign leg (today's buy-bounce / sell-target / trade counts)."""
+    from gold import optimus as gop
+    return gop.set_campaign(from_=from_, buy_bounce_to=buy_bounce_to, sell_target=sell_target,
+                            trades_so_far=trades_so_far, retracement_trades=retracement_trades)
+
+
 @router.post("/optimus/fib")
 async def optimus_fib(bullish_mean: float = Query(None), central_limit: float = Query(None),
                       bearish_mean: float = Query(None), buy_sell_limit_1: float = Query(None),
