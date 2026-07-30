@@ -33,6 +33,10 @@ def _neutral(reason: str) -> dict:
     return _envelope(50.0, 0.1, [], f"no live input — neutral ({reason})")
 
 
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+
 # --- individual institutional scores (each bullish-for-gold on 0-100) --------------
 
 def dollar_strength_score(regime: Optional[str] = None,
@@ -183,16 +187,66 @@ def venom_phase_score(venom: Optional[dict] = None) -> dict:
                      "AMD phase overlays timing + conviction on the directional scores")
 
 
+def jpy_liquidity_score(jpy_usd_roc_30d: Optional[float] = None) -> dict:
+    """JPY carry / global-liquidity signal (WorldMonitor-style). USD/JPY 30-day ROC:
+    yen STRENGTHENING (USDJPY falling, ROC < 0) = carry unwind = risk-off = BULLISH gold;
+    yen weakening (ROC > 0) = carry-on risk appetite = mild pressure on gold."""
+    if jpy_usd_roc_30d is None:
+        return _neutral("JPY carry")
+    r = float(jpy_usd_roc_30d)
+    # ROC -4% → ~72 (unwind, gold bid); +4% → ~34; clamp
+    base = _clamp(50.0 - r * 5.0, 0.0, 100.0)
+    drivers = [f"USD/JPY 30d {r:+.1f}%"]
+    if r <= -2:
+        drivers.append("yen carry UNWIND → risk-off, gold bid")
+    elif r >= 2:
+        drivers.append("yen weak / carry-on → risk-on")
+    return _envelope(base, 0.6, drivers,
+                     "yen-carry unwind lifts gold; carry-on competes with it")
+
+
+def geopolitical_score(risk_0_100: Optional[float] = None) -> dict:
+    """Geopolitical-risk → safe-haven bid. Higher global conflict tone = more support
+    for gold. Scored above 50 as risk rises (a haven tailwind, not a directional macro)."""
+    if risk_0_100 is None:
+        return _neutral("geopolitical")
+    g = _clamp(float(risk_0_100), 0.0, 100.0)
+    base = _clamp(50.0 + (g - 50.0) * 0.4, 0.0, 100.0)   # damped haven tilt
+    drivers = [f"geopolitical risk {g:.0f}/100"]
+    if g >= 65:
+        drivers.append("elevated conflict tone → safe-haven bid")
+    return _envelope(base, 0.5, drivers, "geopolitical stress is a gold haven catalyst")
+
+
+def cb_divergence_score(fed_minus_peers: Optional[float] = None) -> dict:
+    """Central-bank policy divergence (BIS-style). Fed policy rate vs the G10 peer average
+    (percentage points): Fed TIGHTER than peers = strong dollar = BEARISH gold; Fed easier
+    = weak dollar = BULLISH gold."""
+    if fed_minus_peers is None:
+        return _neutral("CB divergence")
+    d = float(fed_minus_peers)
+    base = _clamp(50.0 - d * 6.5, 0.0, 100.0)     # +2pp Fed premium → ~37; -2pp → ~63
+    drivers = [f"Fed − peer avg {d:+.2f}pp"]
+    if d >= 1.0:
+        drivers.append("Fed hawkish vs peers → dollar bid, gold headwind")
+    elif d <= -1.0:
+        drivers.append("Fed dovish vs peers → dollar soft, gold tailwind")
+    return _envelope(base, 0.55, drivers, "policy-rate divergence drives the dollar vs gold")
+
+
 # --- the composite board ----------------------------------------------------------
 
 # Directional scores carry the bias; regime/phase scores carry conviction only.
 _DIRECTIONAL = {
-    "dollar_strength": 0.28,
-    "macro_cycle": 0.24,
-    "inflation_pressure": 0.20,
-    "market_stress": 0.14,
-    "risk_appetite": 0.08,
-    "liquidity": 0.06,
+    "dollar_strength": 0.22,
+    "macro_cycle": 0.20,
+    "inflation_pressure": 0.16,
+    "cb_divergence": 0.10,
+    "market_stress": 0.10,
+    "geopolitical": 0.08,
+    "jpy_liquidity": 0.06,
+    "risk_appetite": 0.05,
+    "liquidity": 0.03,
 }
 _CONVICTION_ONLY = ("vol_regime", "venom_phase")
 
