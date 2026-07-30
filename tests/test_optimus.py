@@ -109,22 +109,22 @@ def test_campaign_projection_journaling():
 
 
 def test_bounce_plan_ob_targets():
-    # price bouncing up from 4060 → targets the 4074 daily OB then 4133/4135 4H OB
+    # price bouncing up from 4060 → the premium OBs above are the buy targets
     bp = gop.bounce_plan(4060.0)
     levels = [t["level"] for t in bp["buy_targets"]]
     assert 4074.86 in levels
-    daily = next(t for t in bp["buy_targets"] if t["level"] == 4074.86)
-    assert "Daily order block" in (daily["ob"] or "")
+    ob = next(t for t in bp["buy_targets"] if t["level"] == 4074.86)
+    assert ob["ob"]                              # carries an OB timeframe label
     # each buy target carries the sell re-arm (buy the bounce, sell the OB)
-    assert daily["sell_rearm"]["target"] < daily["level"]
+    assert ob["sell_rearm"]["target"] < ob["level"]
     assert "counter-trend bounce" in bp["bias"]
 
 
 def test_sell_limit_ladder_tags_ob_timeframe():
     lad = gop.sell_limit_ladder(4029.0)
     tagged = {r["sell_limit"]: r["ob_timeframe"] for r in lad["sell_limits"]}
-    assert "Daily order block" in (tagged.get(4074.86) or "")
-    assert "4H order block" in (tagged.get(4133.90) or "")
+    assert "Daily sell OB" in (tagged.get(4200.00) or "")        # July high / daily OB
+    assert "failed-sweep" in (tagged.get(4135.00) or "")         # the sweep trigger
 
 
 def test_sell_path_staircase():
