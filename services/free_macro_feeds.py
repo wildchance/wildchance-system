@@ -80,28 +80,37 @@ async def fear_greed() -> Optional[int]:
         return None
 
 
+# GDELT's tonechart is slow (5-20s) and occasionally rate-limits — give it its own,
+# longer timeout so it doesn't get cut off (the 8s default was too tight → null).
+_GDELT_TIMEOUT = httpx.Timeout(20.0)
+
+
 async def geopolitical_risk() -> Optional[float]:
     """A 0-100 geopolitical-risk score from GDELT's conflict-tone chart (free). Higher =
     more negative global tone around conflict → a safe-haven tailwind for gold."""
     hit = _cached("geo")
     if hit is not None:
         return hit
-    try:
-        params = {"query": "(war OR conflict OR sanctions OR strike OR military)",
-                  "mode": "tonechart", "format": "json", "timespan": "3d"}
-        async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_UA) as c:
-            r = await c.get("https://api.gdeltproject.org/api/v2/doc/doc", params=params)
-            j = r.json()
-        bins = j.get("tonechart") or []
-        if not bins:
-            return None
-        total = sum(b.get("count", 0) for b in bins) or 1
-        # weighted average tone; more negative = higher risk. Map [-10..+2] → [100..0].
-        avg_tone = sum(b.get("bin", 0) * b.get("count", 0) for b in bins) / total
-        score = max(0.0, min(100.0, (2.0 - avg_tone) / 12.0 * 100.0))
-        return _put("geo", round(score, 1))
-    except Exception:
-        return None
+    # simpler query (no parens) + a fallback, 1-week window for a stable tonechart
+    queries = ["war OR conflict OR sanctions OR military OR strike", "geopolitical risk"]
+    for q in queries:
+        try:
+            params = {"query": q, "mode": "tonechart", "format": "json", "timespan": "1w"}
+            async with httpx.AsyncClient(timeout=_GDELT_TIMEOUT, headers=_UA) as c:
+                r = await c.get("https://api.gdeltproject.org/api/v2/doc/doc", params=params)
+            if "json" not in (r.headers.get("content-type") or "") and not r.text.strip().startswith("{"):
+                continue                                   # GDELT returned an HTML error page
+            bins = (r.json() or {}).get("tonechart") or []
+            if not bins:
+                continue
+            total = sum(b.get("count", 0) for b in bins) or 1
+            # weighted average tone; more negative = higher risk. Map [-10..+2] → [100..0].
+            avg_tone = sum(b.get("bin", 0) * b.get("count", 0) for b in bins) / total
+            score = max(0.0, min(100.0, (2.0 - avg_tone) / 12.0 * 100.0))
+            return _put("geo", round(score, 1))
+        except Exception:
+            continue
+    return None
 
 
 # Current G10 policy rates (%, approx — operator-updatable via set_policy_rates()).
