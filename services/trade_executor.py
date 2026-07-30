@@ -17,18 +17,43 @@ from models.execution_model import ExecutionOrder
 
 MAGIC = 770001                          # identifies this system's trades in MT5
 
+
+def _env_num(key: str, default: float) -> float:
+    """Read a numeric env var WITHOUT crashing boot on a malformed value. A typo like
+    'my equity 111450' would make decouple's float-cast raise a ValueError at import
+    time and take the whole API down — so parse defensively and fall back to default."""
+    raw = config(key, default=None)
+    if raw is None or raw == "":
+        return float(default)
+    try:
+        return float(str(raw).strip())
+    except (TypeError, ValueError):
+        import logging
+        logging.getLogger("uvicorn.error").warning(
+            "env %s is not a number (%r) — using default %s", key, raw, default)
+        return float(default)
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    """Boolean env var that never raises: true/1/yes/on → True; anything else → default."""
+    raw = config(key, default=None)
+    if raw is None or raw == "":
+        return bool(default)
+    return str(raw).strip().lower() in ("true", "1", "yes", "on", "y", "t")
+
+
 # The single live-execution switch. Default OFF (paper). Flip to true in the app
 # env ONLY once the MT5 VPS bridge is up — then every tracked position also
 # enqueues a broker order for the connector to place. No code change to go live.
-EXECUTION_ENABLED = config("EXECUTION_ENABLED", default=False, cast=bool)
+EXECUTION_ENABLED = _env_bool("EXECUTION_ENABLED", False)
 # When on, one signal fans out to the 5-account fleet (each order sized per account
 # + tagged account=accN); each VPS connector pulls only its own via ?account=.
-FLEET_ENABLED = config("FLEET_ENABLED", default=False, cast=bool)
+FLEET_ENABLED = _env_bool("FLEET_ENABLED", False)
 # Portfolio VaR gate (Phase 10). OFF by default → fail-open (never blocks). When enabled
 # with a set equity, a new order is BLOCKED if it pushes portfolio VaR over the budget.
-PORTFOLIO_VAR_GATE_ENABLED = config("PORTFOLIO_VAR_GATE_ENABLED", default=False, cast=bool)
-PORTFOLIO_EQUITY_USD = config("PORTFOLIO_EQUITY_USD", default=0.0, cast=float)
-PORTFOLIO_VAR_LIMIT_PCT = config("PORTFOLIO_VAR_LIMIT_PCT", default=5.0, cast=float)
+PORTFOLIO_VAR_GATE_ENABLED = _env_bool("PORTFOLIO_VAR_GATE_ENABLED", False)
+PORTFOLIO_EQUITY_USD = _env_num("PORTFOLIO_EQUITY_USD", 0.0)
+PORTFOLIO_VAR_LIMIT_PCT = _env_num("PORTFOLIO_VAR_LIMIT_PCT", 5.0)
 
 
 async def var_gate(db: AsyncSession, sig: dict, source: str = "gold") -> dict:
