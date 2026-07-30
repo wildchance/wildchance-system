@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WILDCHANCE · Signal Card</title>
+<style>
+  :root{--gold:#e8b23a;--gold2:#f5c451;--ink:#f4f6f8;--mut:#9aa3ad;
+    --grn:#37c26b;--red:#e8543f;--bg:#0a0a0b;--panel:#111114;--line:#221f18}
+  *{box-sizing:border-box;margin:0}
+  body{background:#000;color:var(--ink);font:16px/1.35 "Segoe UI",system-ui,sans-serif;
+    display:flex;justify-content:center;padding:16px}
+  .card{position:relative;width:100%;max-width:520px;aspect-ratio:1024/1280;
+    background:radial-gradient(120% 80% at 100% 30%, #2a1e07 0%, #100d08 40%, #050505 100%);
+    border:1px solid var(--line);border-radius:18px;overflow:hidden;padding:34px 30px}
+  .rings{position:absolute;right:-30%;top:-8%;width:95%;height:95%;border-radius:50%;
+    background:conic-gradient(from 210deg,transparent,rgba(232,178,58,.18),transparent 60%);
+    filter:blur(1px);opacity:.7}
+  .brand{display:flex;align-items:center;gap:12px;position:relative}
+  .brand .bars{font-size:30px;color:var(--gold)}
+  .brand b{font-size:22px;letter-spacing:1px}.brand b span{color:var(--gold)}
+  .brand .sub{font-size:10px;letter-spacing:3px;color:var(--mut);margin-top:2px}
+  .sym{display:flex;align-items:center;gap:14px;margin-top:26px;position:relative}
+  .sym h1{font-size:46px;letter-spacing:1px}
+  .badge{border:1.5px solid var(--gold);color:var(--gold);border-radius:8px;
+    padding:6px 16px;font-weight:800;font-size:20px}
+  .badge.sell{border-color:var(--red);color:var(--red)}
+  .instr{color:var(--mut);font-size:15px;margin-top:4px}
+  .pp{display:flex;align-items:baseline;gap:8px;margin-top:22px;position:relative}
+  .pp .plus{color:var(--grn);font-size:44px;font-weight:800}
+  .pp .num{font-size:74px;font-weight:800;line-height:.9}
+  .pp .pct{font-size:34px;font-weight:700}
+  .pp .lbl{color:var(--grn);font-weight:700;letter-spacing:2px;font-size:15px;margin-top:6px}
+  .rows{margin-top:26px;position:relative}
+  .row{display:flex;align-items:center;gap:16px;padding:14px 0;border-top:1px solid var(--line)}
+  .row .ic{width:34px;height:34px;border:2px solid var(--gold);border-radius:8px;
+    display:flex;align-items:center;justify-content:center;color:var(--gold);font-size:16px}
+  .row .k{color:var(--mut);font-size:13px;letter-spacing:1px}
+  .row .v{font-size:26px;font-weight:700}
+  .v.grn{color:var(--grn)}.v.red{color:var(--red)}.v.gold{color:var(--gold2)}
+  .rr{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:20px;
+    border:1px solid var(--line);border-radius:12px;padding:16px;position:relative}
+  .rr .cell{text-align:center}
+  .rr .cap{color:var(--mut);font-size:12px;letter-spacing:1px}
+  .rr .big{font-size:24px;font-weight:800;margin:4px 0}
+  .rr .sm{color:var(--mut);font-size:11px}
+  .foot{display:flex;align-items:center;gap:12px;margin-top:22px;position:relative}
+  .foot .who b{font-size:15px}.foot .who .dt{color:var(--mut);font-size:12px}
+  .warn{color:var(--red);font-size:12px;margin-top:8px;position:relative}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="rings"></div>
+  <div class="brand"><span class="bars">≣</span>
+    <div><b>WILDCHANCE <span>CONGLOMERATE</span></b><div class="sub">STRATEGY · INSIGHT · IMPACT</div></div></div>
+
+  <div class="sym"><h1 id="sym">XAUUSD</h1><div class="badge" id="badge">BUY</div></div>
+  <div class="instr" id="instr">Gold Spot / U.S. Dollar</div>
+
+  <div class="pp"><div class="plus" id="ppsign">+</div>
+    <div class="num" id="pp">0.00</div><div class="pct">%</div></div>
+  <div class="pp"><div class="lbl">POTENTIAL PROFIT</div></div>
+
+  <div class="rows">
+    <div class="row"><div class="ic">◎</div><div><div class="k">TAKE PROFIT</div>
+      <div class="v grn" id="tp">—</div></div></div>
+    <div class="row"><div class="ic">▤</div><div><div class="k">ENTRY PRICE</div>
+      <div class="v gold" id="entry">—</div></div></div>
+    <div class="row"><div class="ic">⛨</div><div><div class="k">STOP LOSS</div>
+      <div class="v red" id="sl">—</div></div></div>
+  </div>
+
+  <div class="rr">
+    <div class="cell"><div class="cap">RISK</div><div class="big red" id="riskp">—</div>
+      <div class="sm" id="riskpts">—</div></div>
+    <div class="cell"><div class="cap">REWARD</div><div class="big grn" id="rewp">—</div>
+      <div class="sm" id="rewpts">—</div></div>
+    <div class="cell"><div class="cap">RISK : REWARD</div><div class="big gold" id="rr">—</div>
+      <div class="sm" id="prob">—</div></div>
+  </div>
+  <div class="warn" id="warn"></div>
+
+  <div class="foot"><div style="width:40px;height:40px;border-radius:50%;background:#222;border:2px solid var(--gold)"></div>
+    <div class="who"><b id="author">Wildchance_Conglomerate</b>
+      <div class="dt" id="dt">—</div></div></div>
+</div>
+<script>
+const q=new URLSearchParams(location.search);
+const n=v=>parseFloat(v);
+const sym=(q.get('symbol')||'XAUUSD').toUpperCase();
+let entry=n(q.get('entry')), stop=n(q.get('stop')), tp=n(q.get('tp'));
+let side=(q.get('side')||'').toUpperCase();
+if(!side) side = (tp>=entry)?'BUY':'SELL';
+const riskPts=Math.abs(entry-stop), rewPts=Math.abs(tp-entry);
+const riskPct=entry?riskPts/entry*100:0, rewPct=entry?rewPts/entry*100:0;
+const rr=riskPts?rewPts/riskPts:0;
+const prob = rr>=3?'HIGH PROBABILITY SETUP':rr>=2?'GOOD SETUP':rr>=1?'MODERATE SETUP':'LOW R:R';
+const valid = side==='BUY' ? (stop<entry&&entry<tp) : (tp<entry&&entry<stop);
+const $=id=>document.getElementById(id);
+$('sym').textContent=sym;
+$('badge').textContent=side; if(side==='SELL')$('badge').classList.add('sell');
+$('pp').textContent=rewPct.toFixed(2);
+$('tp').textContent=tp.toFixed(2); $('entry').textContent=entry.toFixed(2); $('sl').textContent=stop.toFixed(2);
+$('riskp').textContent=riskPct.toFixed(2)+'%'; $('riskpts').textContent=riskPts.toFixed(2)+' POINTS';
+$('rewp').textContent=rewPct.toFixed(2)+'%'; $('rewpts').textContent=rewPts.toFixed(2)+' POINTS';
+$('rr').textContent='1 : '+rr.toFixed(2); $('prob').textContent=prob;
+if(q.get('author'))$('author').textContent=q.get('author');
+$('dt').textContent=new Date().toLocaleString('en-US',{month:'long',day:'numeric',year:'numeric',hour:'2-digit',minute:'2-digit'});
+if(!valid)$('warn').textContent='⚠️ geometry off for a '+side+' — check entry/stop/TP order';
+</script>
+</body>
+</html>
