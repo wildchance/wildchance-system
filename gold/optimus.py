@@ -49,8 +49,9 @@ LIVE_ZONES = {
         {"name": "macro_buy_3291", "lo": 3285.0, "hi": 3298.0,
          "note": "macro accumulation floor"},
     ],
-    "pivots": {"bullish_mean": 4133.90, "active_sell_ob": 4074.86, "sell_target": 3885.04,
-               "bounce_from": 4049.0},
+    "pivots": {"bullish_mean": 4133.90, "daily_sell_ob": 4200.0, "sweep_level": 4135.0,
+               "buy_ob_4h": 4033.0, "sell_target": 3885.04, "july_high": 4200.0,
+               "active_sell_ob": 4200.0, "bounce_from": 4033.0},
 }
 
 # A gap larger than this (in pips) with no zone = a no-floor VOID: price travels it
@@ -75,17 +76,19 @@ FIB_MAP = {
 }
 # Premium levels that act as SELL-on-retest in the bearish structure (broken support
 # → resistance). Ordered high→low; each is a sell-limit on the retest.
-SELL_RETEST_LEVELS = [4190.60, 4179.79, 4163.07, 4152.40, 4133.90, 4110.05, 4094.03,
+# Aug/Sep monthly frame: 4200 = July high / Daily sell OB (Aug sweeps it → Sep
+# distributes). 4135 = the high-sweep / failed-sweep trigger for the sells to 3885.
+SELL_RETEST_LEVELS = [4200.00, 4163.07, 4152.40, 4135.00, 4110.05, 4094.03,
                       4074.86, 4002.31]
 
 # Which timeframe order-block each retest level is (precision labelling). 4074 =
 # Daily OB, 4135 = 4H OB per the operator's 2026-07-24 read.
 OB_TIMEFRAME = {
-    4190.60: "weekly supply", 4179.79: "HTF supply",
+    4200.00: "Daily sell OB — July high (Aug sweep → Sep distribution)",
     4163.07: "4H supply — sell-off origin", 4152.40: "4H supply",
-    4133.90: "4H order block (bullish mean)",
-    4110.05: "recent sell origin (2026-07-28)", 4094.03: "4H supply",
-    4074.86: "Daily order block — buy-target & sell re-arm",
+    4135.00: "high-sweep / failed-sweep trigger → sells to 3885",
+    4110.05: "recent sell origin", 4094.03: "4H supply",
+    4074.86: "4H supply", 4033.00: "4H order block — the BUY (limit)",
     4002.31: "0.236 shelf / break-retest",
 }
 
@@ -368,7 +371,9 @@ def sell_limit_ladder(price: float, box=None, floor: Optional[float] = None) -> 
 # 2026-07-28 sell staircase — price bounced to ~4049 and buys the retrace into the
 # 4074 Daily OB, then the primary-trend SELL re-arms down to 3885 (central limit).
 # Below 3885 is the W1 no-floor VOID: nothing real until ~3506 (the next campaign leg).
-PATH_SELLS = [4152.40, 4133.90, 4110.05, 4094.03, 4074.86]   # sell OBs (lower-highs)
+# Aug/Sep sell staircase: buy the 4033 4H OB up into the 4200 Daily sell OB (July
+# high), then the SELL re-arms — 4200 → 4135 sweep → down to 3885 = the 2500-pip leg.
+PATH_SELLS = [4200.00, 4163.07, 4135.00, 4110.05, 4074.86]   # sell OBs (lower-highs)
 PATH_FLOORS = [4002.31, 3885.04]                             # demand (lower-lows) before the void
 PATH_TP = 3885.04                                            # target; void below → 3506 next leg
 
