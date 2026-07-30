@@ -100,17 +100,34 @@ async def _gather_scores() -> dict:
     except Exception:
         scores["venom_phase"] = vs.venom_phase_score()
 
-    # --- LIVE market stress (VIX) + risk appetite (SPX) ---
-    vix = spx = risk_state = None
+    # --- FREE macro feeds (Yahoo + alternative.me + GDELT) — no TwelveData quota ---
+    # market stress (VIX), risk appetite (SPX + QQQ/XLP regime + Fear&Greed),
+    # JPY-carry liquidity, geopolitical haven, and central-bank divergence.
+    fm = {}
     try:
-        from services.risk_feeds import risk_feeds
-        rf = await risk_feeds()
-        vix, spx, risk_state = rf.get("vix"), rf.get("spx_change_pct"), rf.get("risk_state")
+        from services.free_macro_feeds import free_macro
+        fm = await free_macro()
     except Exception:
-        pass
+        fm = {}
+    # fall back to the TwelveData risk_feeds only if the free VIX/SPX came back empty
+    if fm.get("vix") is None or fm.get("spx_change_pct") is None:
+        try:
+            from services.risk_feeds import risk_feeds
+            rf = await risk_feeds()
+            fm.setdefault("vix", rf.get("vix"))
+            fm.setdefault("spx_change_pct", rf.get("spx_change_pct"))
+            fm.setdefault("risk_state", rf.get("risk_state"))
+        except Exception:
+            pass
+
     dollar_reg = "strong" if scores.get("dollar_strength", {}).get("value", 50) < 40 else None
-    scores["market_stress"] = vs.market_stress_score(vix=vix, dollar_regime=dollar_reg)
-    scores["risk_appetite"] = vs.risk_appetite_score(state=risk_state, equity_change_pct=spx)
+    scores["market_stress"] = vs.market_stress_score(vix=fm.get("vix"), dollar_regime=dollar_reg)
+    scores["risk_appetite"] = vs.risk_appetite_score(state=fm.get("risk_state"),
+                                                     equity_change_pct=fm.get("spx_change_pct"))
+    scores["jpy_liquidity"] = vs.jpy_liquidity_score(fm.get("jpy_usd_roc_30d"))
+    scores["geopolitical"] = vs.geopolitical_score(fm.get("geopolitical_risk"))
+    scores["cb_divergence"] = vs.cb_divergence_score(
+        (fm.get("cb_divergence") or {}).get("fed_minus_peers"))
     return scores, hmm
 
 
@@ -182,10 +199,20 @@ async def portfolio_risk_endpoint(equity: float = Query(..., description="accoun
 
 @router.get("/feeds")
 async def feeds():
-    """Diagnostic — which VIX/SPX symbols resolve on this TwelveData tier, so you can
-    verify the market_stress + risk_appetite scores are live (vs. degrading to neutral)."""
-    from services.risk_feeds import feeds_diagnostic
-    return await feeds_diagnostic()
+    """Diagnostic — the FREE macro feeds (Yahoo/alternative.me/GDELT, no key/quota) plus
+    the TwelveData fallback probe, so you can verify every risk score is live."""
+    out = {}
+    try:
+        from services.free_macro_feeds import free_feeds_diagnostic
+        out["free"] = await free_feeds_diagnostic()
+    except Exception as e:
+        out["free"] = {"error": str(e)}
+    try:
+        from services.risk_feeds import feeds_diagnostic
+        out["twelvedata_fallback"] = await feeds_diagnostic()
+    except Exception:
+        pass
+    return out
 
 
 @router.get("/allocate")
