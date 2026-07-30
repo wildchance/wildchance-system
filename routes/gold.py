@@ -485,6 +485,21 @@ async def signal_card(entry: float = Query(..., description="entry price"),
     return card
 
 
+@router.get("/backtest/sells")
+async def backtest_sells_endpoint(interval: str = Query("4h", description="4h|1h|1day"),
+                                  bars: int = Query(500, ge=50, le=1500),
+                                  stop_buffer: float = Query(3.0)):
+    """Backtest the Optimus premium-retest SELL logic on fetched XAU/USD history —
+    win-rate, avg win/loss pips, total pips, expectancy, profit factor, worst streak."""
+    from backtest.sell_backtest import backtest_optimus_sells
+    ohlc = await fetch_ohlc("XAU/USD", interval, bars)
+    if not ohlc or len(ohlc) < 50:
+        return {"error": "not enough XAU/USD bars", "have": len(ohlc or [])}
+    result = backtest_optimus_sells(ohlc, stop_buffer=stop_buffer)
+    result["window"] = {"interval": interval, "bars": len(ohlc)}
+    return result
+
+
 @router.get("/signal-card/from-optimus")
 async def signal_card_from_optimus(notify: bool = Query(False)):
     """Auto-build the card from the live Optimus bounce plan (buy the OB, then the
