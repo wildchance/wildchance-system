@@ -32,11 +32,19 @@ def _prob_tag(rr: float) -> str:
 def build_signal_card(entry: float, stop: float, tp: float,
                       symbol: str = "XAUUSD", side: Optional[str] = None,
                       author: str = "Wildchance_Conglomerate",
-                      note: Optional[str] = None) -> dict:
-    """All card fields from entry/stop/TP. Side inferred from geometry if not given."""
+                      note: Optional[str] = None,
+                      order_type: str = "market",
+                      current_price: Optional[float] = None) -> dict:
+    """All card fields from entry/stop/TP. Side inferred from geometry if not given.
+
+    order_type: 'market' or 'limit' (a resting pending order). When 'limit' and the
+    current price is known, the side_label reads BUY LIMIT / SELL LIMIT — matching how
+    it shows in MT5 (e.g. a BUY LIMIT resting at 4033 waiting for price to come down)."""
     entry, stop, tp = float(entry), float(stop), float(tp)
     inferred = "BUY" if tp >= entry else "SELL"
     side = (side or inferred).upper()
+    order_type = (order_type or "market").lower()
+    side_label = f"{side} LIMIT" if order_type == "limit" else side
 
     risk_points = _r2(abs(entry - stop))
     reward_points = _r2(abs(tp - entry))
@@ -56,7 +64,7 @@ def build_signal_card(entry: float, stop: float, tp: float,
     now = _dt.datetime.utcnow()
     return {
         "symbol": symbol.upper(), "instrument": "Gold Spot / U.S. Dollar",
-        "side": side,
+        "side": side, "order_type": order_type, "side_label": side_label,
         "entry": entry, "stop_loss": stop, "take_profit": tp,
         "risk_points": risk_points, "reward_points": reward_points,
         "risk_pct": risk_pct, "reward_pct": reward_pct,
@@ -70,7 +78,7 @@ def build_signal_card(entry: float, stop: float, tp: float,
         "note": note,
         # a ready-to-open render URL (the branded HTML card) with params pre-filled
         "render_url": (f"/static/dashboard/signal_card.html?symbol={symbol.upper()}"
-                       f"&side={side}&entry={entry}&stop={stop}&tp={tp}"),
+                       f"&side={side}&type={order_type}&entry={entry}&stop={stop}&tp={tp}"),
     }
 
 
@@ -79,7 +87,7 @@ def format_card_telegram(card: dict) -> str:
     icon = "🟢" if card["side"] == "BUY" else "🔴"
     warn = ("\n⚠️ " + "; ".join(card["warnings"])) if card.get("warnings") else ""
     return (
-        f"{icon} *{card['symbol']} {card['side']}*  ·  {card['instrument']}\n"
+        f"{icon} *{card['symbol']} {card.get('side_label', card['side'])}*  ·  {card['instrument']}\n"
         f"*+{card['potential_profit_pct']:.2f}%* potential profit\n\n"
         f"🎯 Take Profit : `{card['take_profit']:.2f}`\n"
         f"📈 Entry       : `{card['entry']:.2f}`\n"
