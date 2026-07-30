@@ -459,6 +459,55 @@ async def session_breakout(session: str = Query(None, description="asia|london|n
     return await gsb.scan(balance=balance, risk_usd=risk_usd, session=session)
 
 
+@router.get("/signal-card")
+async def signal_card(entry: float = Query(..., description="entry price"),
+                      stop: float = Query(..., description="stop-loss price"),
+                      tp: float = Query(..., description="take-profit price"),
+                      symbol: str = Query("XAUUSD"),
+                      side: str = Query(None, description="BUY|SELL (inferred if omitted)"),
+                      notify: bool = Query(False, description="broadcast the card to Telegram")):
+    """Build the shareable WILDCHANCE signal card (entry/SL/TP → RR, %, points) + a
+    render URL for the branded graphic. Set notify=true to push it to the channel."""
+    from gold.signal_card import build_signal_card, format_card_telegram
+    card = build_signal_card(entry=entry, stop=stop, tp=tp, symbol=symbol, side=side)
+    card["telegram_text"] = format_card_telegram(card)
+    if notify:
+        try:
+            from services.gold_scan import _tg
+            card["sent"] = await _tg(card["telegram_text"])
+        except Exception as e:
+            card["sent"] = False
+            card["notify_error"] = str(e)
+    return card
+
+
+@router.get("/signal-card/from-optimus")
+async def signal_card_from_optimus(notify: bool = Query(False)):
+    """Auto-build the card from the live Optimus bounce plan (buy the OB, then the
+    sell re-arm) — so a flagged setup becomes a ready-to-send card in one call."""
+    from gold.signal_card import build_signal_card, format_card_telegram
+    from gold import optimus as gop
+    price = await _resolve_price(None)
+    bp = gop.bounce_plan(float(price))
+    if not bp.get("buy_targets"):
+        return {"signal": "NO SETUP", "price": price, "reason": "no premium OB above price"}
+    t = bp["buy_targets"][0]
+    rearm = t["sell_rearm"]
+    # the actionable card: SELL the OB re-arm down to its target (the primary trend)
+    card = build_signal_card(entry=rearm["entry"], stop=round(t["level"] + 15.0, 2),
+                             tp=rearm["target"], symbol="XAUUSD", side="SELL",
+                             note=f"Optimus {t.get('ob') or 'OB'} re-arm")
+    card["telegram_text"] = format_card_telegram(card)
+    card["optimus"] = {"price": price, "ob": t["level"], "target": rearm["target"]}
+    if notify:
+        try:
+            from services.gold_scan import _tg
+            card["sent"] = await _tg(card["telegram_text"])
+        except Exception as e:
+            card["sent"] = False
+    return card
+
+
 @router.post("/optimus/campaign")
 async def optimus_campaign_set(from_: float = Query(None, alias="from"),
                                buy_bounce_to: float = Query(None),
