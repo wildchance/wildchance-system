@@ -465,11 +465,15 @@ async def signal_card(entry: float = Query(..., description="entry price"),
                       tp: float = Query(..., description="take-profit price"),
                       symbol: str = Query("XAUUSD"),
                       side: str = Query(None, description="BUY|SELL (inferred if omitted)"),
+                      order_type: str = Query("market", description="market | limit (pending)"),
+                      note: str = Query(None),
                       notify: bool = Query(False, description="broadcast the card to Telegram")):
     """Build the shareable WILDCHANCE signal card (entry/SL/TP → RR, %, points) + a
-    render URL for the branded graphic. Set notify=true to push it to the channel."""
+    render URL for the branded graphic. order_type=limit renders a BUY/SELL LIMIT card
+    (a resting pending order). Set notify=true to push it to the channel."""
     from gold.signal_card import build_signal_card, format_card_telegram
-    card = build_signal_card(entry=entry, stop=stop, tp=tp, symbol=symbol, side=side)
+    card = build_signal_card(entry=entry, stop=stop, tp=tp, symbol=symbol, side=side,
+                             order_type=order_type, note=note)
     card["telegram_text"] = format_card_telegram(card)
     if notify:
         try:
