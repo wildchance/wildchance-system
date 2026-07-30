@@ -92,6 +92,8 @@ const sym=(q.get('symbol')||'XAUUSD').toUpperCase();
 let entry=n(q.get('entry')), stop=n(q.get('stop')), tp=n(q.get('tp'));
 let side=(q.get('side')||'').toUpperCase();
 if(!side) side = (tp>=entry)?'BUY':'SELL';
+const otype=(q.get('type')||'market').toLowerCase();
+const sideLabel = otype==='limit' ? side+' LIMIT' : side;
 const riskPts=Math.abs(entry-stop), rewPts=Math.abs(tp-entry);
 const riskPct=entry?riskPts/entry*100:0, rewPct=entry?rewPts/entry*100:0;
 const rr=riskPts?rewPts/riskPts:0;
@@ -99,7 +101,7 @@ const prob = rr>=3?'HIGH PROBABILITY SETUP':rr>=2?'GOOD SETUP':rr>=1?'MODERATE S
 const valid = side==='BUY' ? (stop<entry&&entry<tp) : (tp<entry&&entry<stop);
 const $=id=>document.getElementById(id);
 $('sym').textContent=sym;
-$('badge').textContent=side; if(side==='SELL')$('badge').classList.add('sell');
+$('badge').textContent=sideLabel; if(side==='SELL')$('badge').classList.add('sell');
 $('pp').textContent=rewPct.toFixed(2);
 $('tp').textContent=tp.toFixed(2); $('entry').textContent=entry.toFixed(2); $('sl').textContent=stop.toFixed(2);
 $('riskp').textContent=riskPct.toFixed(2)+'%'; $('riskpts').textContent=riskPts.toFixed(2)+' POINTS';
