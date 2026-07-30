@@ -98,10 +98,28 @@ async def lifespan(app: FastAPI):
     """Startup/shutdown via the modern lifespan context (on_event is deprecated and
     will be removed — this keeps DB-init + schedulers working across fastapi bumps)."""
     # --- startup ---
-    await init_db()
-    start_scanner()                    # daily USD/JPY mean-reversion scan
-    start_wildchance_scheduler()       # wildchance 6h/daily/weekly confluence
-    asyncio.create_task(polygon_stream.start())   # real-time Polygon.io + Redis
+    import logging as _log
+    _lg = _log.getLogger("uvicorn.error")
+    # A DOWN/expired database must NOT crash-loop the whole API. The signal engines
+    # (Optimus, VAULTUM, Bumblebee, Venom, …) are stateless compute — they stay live
+    # even with no DB; only tracking/execution/SaaS endpoints need it (they 500 per-call
+    # until DATABASE_URL is reachable). /health reports db_reachable so you see it.
+    try:
+        await init_db()
+    except Exception as e:
+        _lg.error("init_db failed (%s: %s) — API stays UP; DB-backed endpoints will "
+                  "error until the database is reachable. Check DATABASE_URL.",
+                  type(e).__name__, e)
+    for _name, _start in (("usdjpy_scanner", start_scanner),
+                          ("wildchance_scheduler", start_wildchance_scheduler)):
+        try:
+            _start()
+        except Exception as e:
+            _lg.warning("%s not started (%s) — core API unaffected", _name, e)
+    try:
+        asyncio.create_task(polygon_stream.start())   # real-time Polygon.io + Redis
+    except Exception as e:
+        _lg.warning("polygon stream not started (%s) — core API unaffected", e)
     if _TELEGRAM_BOT_OK:
         try:
             await _bot_startup()       # register the Telegram webhook (optional)
