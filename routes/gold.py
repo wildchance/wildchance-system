@@ -514,6 +514,25 @@ async def alerter_scan(notify: bool = Query(False, description="broadcast armed 
                                 require_bias_align=require_bias_align)
 
 
+@router.get("/levels")
+async def levels_preview(interval: str = Query("4h", description="4h|1h|1day"),
+                         bars: int = Query(200, ge=20, le=1000)):
+    """Auto-detect today's OB / swing / target structure from live OHLC (preview only —
+    does NOT modify the live map). See what the level finder is reading right now."""
+    from services.gold_levels import refresh
+    return await refresh(interval=interval, bars=bars, apply=False)
+
+
+@router.post("/levels/refresh")
+async def levels_refresh(interval: str = Query("4h", description="4h|1h|1day"),
+                         bars: int = Query(200, ge=20, le=1000)):
+    """Detect today's structure and LOAD it into Optimus (set_live_zones + set_sell_path)
+    — so the reject-gate + alerter always sit on the current levels, no hand-feeding.
+    Schedule this on a cron and Optimus self-maintains."""
+    from services.gold_levels import refresh
+    return await refresh(interval=interval, bars=bars, apply=True)
+
+
 @router.get("/signal-card/from-optimus")
 async def signal_card_from_optimus(notify: bool = Query(False)):
     """Auto-build the card from the live Optimus bounce plan (buy the OB, then the
