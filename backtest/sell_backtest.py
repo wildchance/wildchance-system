@@ -97,3 +97,106 @@ def backtest_optimus_sells(bars: Sequence, stop_buffer: float = 3.0) -> dict:
     from gold import optimus as gop
     floors = list(gop.PATH_FLOORS) + [gop.PATH_TP]
     return backtest_sells(bars, gop.SELL_RETEST_LEVELS, floors, stop_buffer=stop_buffer)
+
+
+# --- partial-exit variant + optimizer ---------------------------------------------
+# Partials in PRICE points (the operator's "usd": 250 usd = 250 price pts = 2500 pips
+# at GOLD_PIP 0.10; 500 usd = 500 pts = 5000 pips). Bank a fraction as price runs in
+# favour, carry the runner to the demand floor.
+DEFAULT_PARTIALS = ((250.0, 0.34), (500.0, 0.33))       # (price_distance, fraction) → runner 0.33
+
+
+def backtest_sells_partial(bars: Sequence, levels: Sequence[float], floors: Sequence[float],
+                           stop_buffer: float = 3.0, approach_tol: float = 1.0,
+                           partials=DEFAULT_PARTIALS) -> dict:
+    """Same reject-gated sell entries, but SCALE OUT: bank each partial (250/500 pts)
+    as price falls in favour, run the remainder to the floor. Reports blended pips."""
+    levels = sorted(set(float(l) for l in levels), reverse=True)
+    floors = sorted(set(float(f) for f in floors), reverse=True)
+    partials = sorted(partials, key=lambda p: p[0])       # nearest partial first
+    trades: List[dict] = []
+    open_t = None
+
+    for bar in bars:
+        o, h, l, c = _ohlc(bar)
+        if open_t is None:
+            for lv in levels:
+                if h >= lv - approach_tol and c < lv:
+                    target = _next_floor_below(lv, floors)
+                    if target is None:
+                        continue
+                    open_t = {"level": lv, "entry": lv, "stop": lv + stop_buffer,
+                              "target": target, "remaining": 1.0, "banked": 0.0, "hit": set()}
+                    break
+        else:
+            # adverse first (conservative): stop closes the remainder as a loss
+            if h >= open_t["stop"]:
+                loss = -(open_t["stop"] - open_t["entry"]) / GOLD_PIP
+                total = open_t["banked"] + open_t["remaining"] * loss
+                trades.append({"level": open_t["level"], "pips": round(total, 1),
+                               "result": "win" if total > 0 else "loss"})
+                open_t = None
+                continue
+            # favourable: bank partials the bar's low reached, then the floor
+            for dist, frac in partials:
+                tp = open_t["entry"] - dist
+                if dist not in open_t["hit"] and l <= tp and open_t["remaining"] > 0:
+                    take = min(frac, open_t["remaining"])
+                    open_t["banked"] += take * (dist / GOLD_PIP)
+                    open_t["remaining"] -= take
+                    open_t["hit"].add(dist)
+            if l <= open_t["target"] and open_t["remaining"] > 0:
+                win = (open_t["entry"] - open_t["target"]) / GOLD_PIP
+                total = open_t["banked"] + open_t["remaining"] * win
+                trades.append({"level": open_t["level"], "pips": round(total, 1), "result": "win"})
+                open_t = None
+
+    wins = [t for t in trades if t["result"] == "win"]
+    n = len(trades)
+    total_pips = round(sum(t["pips"] for t in trades), 1)
+    gross_win = sum(t["pips"] for t in wins)
+    gross_loss = -sum(t["pips"] for t in trades if t["result"] == "loss")
+    return {
+        "trades": n, "wins": len(wins), "losses": n - len(wins),
+        "win_rate": round(len(wins) / n * 100, 1) if n else 0.0,
+        "total_pips": total_pips, "expectancy_pips": round(total_pips / n, 1) if n else 0.0,
+        "profit_factor": round(gross_win / gross_loss, 2) if gross_loss else None,
+        "partials": [{"usd": d, "fraction": f} for d, f in partials],
+        "open_at_end": bool(open_t),
+    }
+
+
+def optimize_sells(bars: Sequence, levels: Sequence[float], floors: Sequence[float],
+                   buffers=(1.0, 3.0, 5.0, 8.0, 12.0), partials=DEFAULT_PARTIALS) -> dict:
+    """Sweep the stop buffer and compare single-exit vs the 250/500 partial-exit variant.
+    Returns each buffer's stats + the best (by partial-exit expectancy)."""
+    rows = []
+    for b in buffers:
+        single = backtest_sells(bars, levels, floors, stop_buffer=b)
+        part = backtest_sells_partial(bars, levels, floors, stop_buffer=b, partials=partials)
+        rows.append({
+            "stop_buffer": b,
+            "single": {"trades": single["trades"], "win_rate": single["win_rate"],
+                       "expectancy_pips": single["expectancy_pips"],
+                       "total_pips": single["total_pips"], "profit_factor": single["profit_factor"]},
+            "partial": {"trades": part["trades"], "win_rate": part["win_rate"],
+                        "expectancy_pips": part["expectancy_pips"],
+                        "total_pips": part["total_pips"], "profit_factor": part["profit_factor"]},
+        })
+    ranked = [r for r in rows if r["partial"]["trades"] > 0]
+    best = max(ranked, key=lambda r: r["partial"]["expectancy_pips"]) if ranked else None
+    return {
+        "results": rows, "best": best,
+        "partials": [{"usd": d, "fraction": f} for d, f in partials],
+        "note": (f"best stop buffer {best['stop_buffer']} → partial expectancy "
+                 f"{best['partial']['expectancy_pips']} pips/trade" if best
+                 else "no sell setups triggered on this window"),
+    }
+
+
+def optimize_optimus_sells(bars: Sequence, buffers=(1.0, 3.0, 5.0, 8.0, 12.0),
+                           partials=DEFAULT_PARTIALS) -> dict:
+    """Optimize using the live Optimus sell map."""
+    from gold import optimus as gop
+    floors = list(gop.PATH_FLOORS) + [gop.PATH_TP]
+    return optimize_sells(bars, gop.SELL_RETEST_LEVELS, floors, buffers=buffers, partials=partials)
