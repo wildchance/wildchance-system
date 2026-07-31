@@ -215,6 +215,29 @@ async def feeds():
     return out
 
 
+@router.get("/policy-rates")
+async def policy_rates(live: bool = Query(False, description="pull the latest rates from BIS")):
+    """Central-bank policy-rate map + the Fed-vs-peers divergence (the cb_divergence score
+    input). Pass live=true to refresh from the free BIS WS_CBPOL feed (degrades to the
+    encoded map on outage)."""
+    from services import free_macro_feeds as fmf
+    out = {}
+    if live:
+        out["bis"] = await fmf.bis_policy_rates(apply=True)
+    out["rates"] = dict(fmf.POLICY_RATES)
+    out["divergence"] = fmf.cb_divergence()
+    return out
+
+
+@router.post("/policy-rates")
+async def set_policy_rates_ep(rates: dict):
+    """Operator override of the policy-rate map — feed today's rates, e.g.
+    {"FED":4.50,"ECB":2.15,"BOJ":0.50}. Returns the updated map + divergence."""
+    from services import free_macro_feeds as fmf
+    updated = fmf.set_policy_rates(**{k: v for k, v in (rates or {}).items()})
+    return {"rates": updated, "divergence": fmf.cb_divergence()}
+
+
 @router.get("/allocate")
 async def allocate(entry: float = Query(..., description="signal entry price"),
                    stop: float = Query(..., description="signal stop price"),
