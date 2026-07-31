@@ -1,6 +1,7 @@
 """Sell-setup backtest — premium-retest reject → next floor."""
 
-from backtest.sell_backtest import backtest_sells
+from backtest.sell_backtest import (backtest_sells, backtest_sells_partial,
+                                    optimize_sells)
 
 
 def _b(o, h, l, c):
@@ -45,3 +46,37 @@ def test_stats_aggregate_and_profit_factor():
     assert r["trades"] == 2 and r["wins"] == 1 and r["losses"] == 1
     assert r["win_rate"] == 50.0 and r["profit_factor"] is not None
     assert r["worst_losing_streak"] == 1
+
+
+def test_partial_scale_out_banks_then_runs():
+    # SELL @ 4200, floor far below (3600) so the 250 & 500 partials both trigger,
+    # then the 0.33 runner reaches the floor.
+    bars = [
+        _b(4180, 4201, 4179, 4190),   # reject 4200 → SELL, target 3600
+        _b(4190, 4192, 3940, 3950),   # low 3940 <= 4200-250=3950 → bank 1st partial
+        _b(3950, 3955, 3690, 3700),   # low 3690 <= 4200-500=3700 → bank 2nd partial
+        _b(3700, 3705, 3595, 3600),   # low 3595 <= 3600 floor → runner WINS
+    ]
+    r = backtest_sells_partial(bars, [4200.0], [3600.0], stop_buffer=3.0)
+    assert r["trades"] == 1 and r["wins"] == 1 and r["total_pips"] > 0
+    assert [p["usd"] for p in r["partials"]] == [250.0, 500.0]
+
+
+def test_partial_stop_before_any_partial_is_a_loss():
+    bars = [
+        _b(4130, 4136, 4129, 4133),   # reject 4135 → SELL, stop 4138
+        _b(4133, 4140, 4132, 4139),   # high 4140 >= 4138 stop, no partial banked → LOSS
+    ]
+    r = backtest_sells_partial(bars, LEVELS, FLOORS, stop_buffer=3.0)
+    assert r["trades"] == 1 and r["losses"] == 1 and r["total_pips"] < 0
+
+
+def test_optimize_sweeps_buffers_and_picks_best():
+    bars = [
+        _b(4180, 4201, 4179, 4190), _b(4190, 4195, 3995, 4010),   # win 4200→4000
+        _b(4130, 4136, 4129, 4133), _b(4133, 4140, 4132, 4139),   # loss 4135
+    ]
+    r = optimize_sells(bars, LEVELS, FLOORS)
+    assert len(r["results"]) == 5 and r["best"] is not None
+    assert r["best"]["partial"]["trades"] > 0
+    assert [p["usd"] for p in r["partials"]] == [250.0, 500.0]
