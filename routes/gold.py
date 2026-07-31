@@ -500,6 +500,22 @@ async def backtest_sells_endpoint(interval: str = Query("4h", description="4h|1h
     return result
 
 
+@router.get("/backtest/sells/optimize")
+async def optimize_sells_endpoint(interval: str = Query("1day", description="4h|1h|1day"),
+                                  bars: int = Query(400, ge=50, le=1500)):
+    """Sweep the stop buffer and compare single-exit vs the 250/500 partial-exit variant
+    (bank 250 price-pts, then 500, run the 0.33 runner to the floor) on fetched XAU/USD
+    history. Returns each buffer's stats + the best by partial-exit expectancy — the honest
+    read on the scale-out plan before you point size at it."""
+    from backtest.sell_backtest import optimize_optimus_sells
+    ohlc = await fetch_ohlc("XAU/USD", interval, bars)
+    if not ohlc or len(ohlc) < 50:
+        return {"error": "not enough XAU/USD bars", "have": len(ohlc or [])}
+    result = optimize_optimus_sells(ohlc)
+    result["window"] = {"interval": interval, "bars": len(ohlc)}
+    return result
+
+
 @router.post("/alerter/scan")
 async def alerter_scan(notify: bool = Query(False, description="broadcast armed cards to Telegram"),
                        min_conviction: float = Query(0.0, description="skip below this VAULTUM conviction %"),
