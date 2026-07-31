@@ -500,6 +500,20 @@ async def backtest_sells_endpoint(interval: str = Query("4h", description="4h|1h
     return result
 
 
+@router.post("/alerter/scan")
+async def alerter_scan(notify: bool = Query(False, description="broadcast armed cards to Telegram"),
+                       min_conviction: float = Query(0.0, description="skip below this VAULTUM conviction %"),
+                       require_bias_align: bool = Query(True,
+                           description="only alert setups aligned with the VAULTUM bias")):
+    """Real-time setup alerter — Optimus reject-gated detection across the live zones,
+    aligned with the VAULTUM bias, broadcasting the branded card when a setup ARMS
+    (deduped). This is what makes the system 'active in real time' — schedule it on a
+    cron with notify=true and it flags + sends the card without you polling."""
+    from services.gold_alerter import scan_and_alert
+    return await scan_and_alert(notify=notify, min_conviction=min_conviction,
+                                require_bias_align=require_bias_align)
+
+
 @router.get("/signal-card/from-optimus")
 async def signal_card_from_optimus(notify: bool = Query(False)):
     """Auto-build the card from the live Optimus bounce plan (buy the OB, then the
