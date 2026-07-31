@@ -140,7 +140,8 @@ jobs:
               post "/gold/recon?armed_only=true"          # drone sweep — alert on armed board
               post "/gold/retracement"                    # 3-state read — ping only on a flip
               post "/gold/confirm?deploy=true"            # take the sweep-and-reject on the M15
-              post "/gold/alerter/scan?notify=true"       # ARMED Optimus setup → VAULTUM-gated card
+              post "/gold/levels/refresh?interval=4h"     # auto-detect today's OB/swing/target structure
+              post "/gold/alerter/scan?notify=true"       # ARMED Optimus setup → VAULTUM-gated card (fresh levels)
               ;;
             "0 22 * * 0")
               # Weekly review + the Sunday/weekly-open gold swing (the edge: buy the
