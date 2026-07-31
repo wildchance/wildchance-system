@@ -130,6 +130,56 @@ def set_policy_rates(**rates) -> dict:
     return dict(POLICY_RATES)
 
 
+# BIS "Central bank policy rates" (WS_CBPOL) — free SDMX, no key. REF_AREA → our label.
+_BIS_AREA = {"US": "FED", "XM": "ECB", "GB": "BOE", "JP": "BOJ",
+             "CA": "BOC", "AU": "RBA", "CH": "SNB", "NZ": "RBNZ"}
+_BIS_TIMEOUT = httpx.Timeout(20.0)
+
+
+async def bis_policy_rates(apply: bool = True) -> dict:
+    """Best-effort LIVE policy rates from the BIS WS_CBPOL_D dataset (free SDMX-JSON, no
+    key). Fetches the latest observation per central bank and, when ``apply``, merges it
+    into POLICY_RATES. Degrades gracefully — any bank that fails keeps its encoded value,
+    and a full outage just returns the encoded map with source='encoded'."""
+    hit = _cached("bis")
+    if hit is not None:
+        merged = {**dict(POLICY_RATES), **{_BIS_AREA[a]: v for a, v in hit.items()}}
+        if apply:
+            for a, v in hit.items():
+                POLICY_RATES[_BIS_AREA[a]] = v
+        return {"rates": merged, "live": hit, "source": "BIS" if hit else "encoded"}
+
+    live: Dict[str, float] = {}
+    for area in _BIS_AREA:
+        url = f"https://stats.bis.org/api/v1/data/WS_CBPOL_D/D.{area}/all"
+        try:
+            async with httpx.AsyncClient(timeout=_BIS_TIMEOUT, headers=_UA) as c:
+                r = await c.get(url, params={"lastNObservations": 1, "format": "jsondata"})
+            if r.status_code != 200 or "json" not in (r.headers.get("content-type") or ""):
+                continue
+            j = r.json()
+            series = (((j.get("dataSets") or [{}])[0]).get("series") or {})
+            for _, s in series.items():
+                obs = (s.get("observations") or {})
+                for _, val in obs.items():
+                    if val and val[0] is not None:
+                        live[area] = round(float(val[0]), 2)
+                        break
+                break
+        except Exception:
+            continue
+
+    _put("bis", live)
+    if apply:
+        for a, v in live.items():
+            POLICY_RATES[_BIS_AREA[a]] = v
+    merged = dict(POLICY_RATES)
+    return {"rates": merged, "live": live,
+            "source": "BIS" if live else "encoded",
+            "note": (f"{len(live)}/{len(_BIS_AREA)} banks live from BIS" if live
+                     else "BIS unreachable — using encoded rates")}
+
+
 def cb_divergence() -> dict:
     """Fed policy rate vs the peer (non-Fed) average — the central-bank divergence."""
     fed = POLICY_RATES.get("FED", 0.0)
