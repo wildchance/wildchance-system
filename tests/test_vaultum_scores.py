@@ -77,3 +77,12 @@ def test_board_empty_is_neutral_not_crash():
 def test_format_board_line():
     line = vs.format_board(vs.gold_bias_board(_bullish_scores()))
     assert "VAULTUM" in line and "bias" in line
+
+
+def test_volume_location_score_directional():
+    bull = vs.volume_location_score("above_value", "above")
+    bear = vs.volume_location_score("below_value", "below")
+    neutral = vs.volume_location_score("in_value", "above")
+    assert bull["value"] > 55 and bear["value"] < 45
+    assert neutral["value"] == 50.0
+    assert vs.volume_location_score()["value"] == 50.0     # no read → neutral
