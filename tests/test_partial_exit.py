@@ -79,6 +79,22 @@ def test_breakeven_holds_until_partial_fills():
     assert te.breakeven_modifications(legs) == []       # p1 not filled → no BE move
 
 
+def test_partials_snap_to_hvn_when_provided():
+    # sell from 4200; HVNs below at 3960 (near the 250-pt raw 3950) and 3700 (=500-pt raw)
+    hvn = [3960.0, 3700.0, 3600.0]
+    legs = te.plan_partial_exit(_sell_sig(0.30), hvn=hvn)
+    p1, p2, runner = legs
+    assert p1["tp"] == 3960.0            # snapped to the HVN nearest the 3950 raw target
+    assert p2["tp"] == 3700.0           # HVN at the 500-pt distance
+    # runner rides to the deepest HVN at/below the card floor (3885 → 3600)
+    assert runner["tp"] == 3600.0 and runner["be_price"] == 4200.0
+
+
+def test_partials_keep_raw_distance_without_hvn():
+    legs = te.plan_partial_exit(_sell_sig(0.30))       # no hvn
+    assert legs[0]["tp"] == 3950.0 and legs[1]["tp"] == 3700.0
+
+
 def test_breakeven_not_reemitted_when_done():
     gid = "g3"
     legs = [
