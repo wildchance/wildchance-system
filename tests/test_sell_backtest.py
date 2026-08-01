@@ -1,7 +1,7 @@
 """Sell-setup backtest — premium-retest reject → next floor."""
 
 from backtest.sell_backtest import (backtest_sells, backtest_sells_partial,
-                                    optimize_sells)
+                                    optimize_sells, walkforward_sells)
 
 
 def _b(o, h, l, c):
@@ -80,3 +80,27 @@ def test_optimize_sweeps_buffers_and_picks_best():
     assert len(r["results"]) == 5 and r["best"] is not None
     assert r["best"]["partial"]["trades"] > 0
     assert [p["usd"] for p in r["partials"]] == [250.0, 500.0]
+
+
+def _reject_pair(level, floor_hit):
+    # a reject at `level` then a bar whose low reaches `floor_hit`
+    return [_b(level - 20, level + 1, level - 21, level - 10),
+            _b(level - 10, level - 8, floor_hit, floor_hit + 5)]
+
+
+def test_walkforward_splits_and_reports_out_of_sample():
+    # enough bars for 4 folds (>=80); seed sell setups so OOS slices trigger trades
+    bars = []
+    for _ in range(50):
+        bars += _reject_pair(4200.0, 3990.0)     # winning 4200→4000 rejects, repeated (100 bars)
+    wf = walkforward_sells(bars, LEVELS, FLOORS, folds=4, train_frac=0.6)
+    assert wf["ok"] is True
+    assert len(wf["folds"]) >= 1
+    assert "out_of_sample_expectancy_pips" in wf
+    for f in wf["folds"]:
+        assert f["chosen_buffer"] in (1.0, 3.0, 5.0, 8.0, 12.0)
+
+
+def test_walkforward_guards_small_windows():
+    wf = walkforward_sells([_b(4200, 4201, 4100, 4150)] * 10, LEVELS, FLOORS, folds=4)
+    assert wf["ok"] is False and "not enough bars" in wf["reason"]
