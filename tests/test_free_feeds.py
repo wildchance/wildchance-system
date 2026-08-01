@@ -53,5 +53,6 @@ def test_board_weights_include_new_signals():
     assert "jpy_liquidity" in vs._DIRECTIONAL
     assert "geopolitical" in vs._DIRECTIONAL
     assert "cb_divergence" in vs._DIRECTIONAL
+    assert "volume_location" in vs._DIRECTIONAL
     # weights still sum sensibly (all positive, <= 1)
     assert 0.9 <= sum(vs._DIRECTIONAL.values()) <= 1.0
