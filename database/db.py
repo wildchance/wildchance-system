@@ -84,6 +84,12 @@ _GOLD_POSITION_MIGRATIONS = [
     # Per-account copy-trade fan-out: each execution order carries which fleet
     # account (acc1..acc5) it belongs to, so each VPS connector pulls only its own.
     "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS account VARCHAR",
+    # Partial scale-out + runner break-even metadata (the 250/500 exit plan).
+    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS group_id VARCHAR",
+    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS scale_role VARCHAR",
+    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS be_price DOUBLE PRECISION",
+    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS be_after VARCHAR",
+    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS be_done INTEGER DEFAULT 0",
 ]
 
 
