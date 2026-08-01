@@ -1129,12 +1129,28 @@ async def kingdom_report_post(price: float = Query(None),
 @router.get("/volume-profile")
 async def volume_profile(interval: str = Query("1day"), bars: int = Query(60, ge=5, le=500),
                          bins: int = Query(30, ge=10, le=100), price: float = Query(None)):
-    """Volume/TPO profile (B2) — POC / VAH / VAL + where price sits vs value."""
+    """Volume/TPO profile (B2) — POC / VAH / VAL, where price sits vs value, the BULLISH/
+    BEARISH anatomy, and the HVN (magnets) / LVN (voids) node structure."""
     from gold import volume_profile as gvp
     ohlc = await fetch_ohlc("XAU/USD", interval, bars)
     if len(ohlc) < 3:
         raise HTTPException(status_code=502, detail="not enough XAU/USD bars")
-    return gvp.profile_read(ohlc, price, bins)
+    return gvp.scenario(ohlc, price, bins)
+
+
+@router.get("/asian-breakout")
+async def asian_breakout(price: float = Query(None, description="live price; last close if omitted"),
+                         interval: str = Query("1h", description="1h so the Asian window has bars"),
+                         bars: int = Query(120, ge=24, le=500),
+                         tz_offset: int = Query(None, description="override session offset (default -4)")):
+    """The volume-profile-anatomy play: profile the Asian session (14:00–20:00 broker),
+    then read the London/NY break of its value area. Above VAH → BUY the VAH retest; below
+    VAL → SELL the VAL retest; target the LVN void then the next HVN magnet. Inside → WAIT."""
+    from gold import volume_profile as gvp
+    ohlc = await fetch_ohlc("XAU/USD", interval, bars)
+    if len(ohlc) < 24:
+        raise HTTPException(status_code=502, detail="not enough XAU/USD bars for the Asian window")
+    return gvp.asian_breakout(ohlc, price=price, tz_offset=tz_offset)
 
 
 @router.get("/scenario")
