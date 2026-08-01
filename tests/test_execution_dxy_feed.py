@@ -55,6 +55,27 @@ def test_maybe_enqueue_routes_when_live(monkeypatch):
     assert captured["order"]["side"] == "sell"        # SHORT → sell order
 
 
+def test_maybe_enqueue_scales_out_when_exit_style_partial(monkeypatch):
+    monkeypatch.setattr(te, "EXECUTION_ENABLED", True)
+    monkeypatch.setattr(te, "FLEET_ENABLED", False)
+    queued = []
+
+    async def fake_enqueue(db, order):
+        queued.append(order)
+        return {"id": len(queued), "status": "pending", **order}
+
+    monkeypatch.setattr(te, "enqueue", fake_enqueue)
+    sig = {"signal": "SHORT", "entry": 4200.0, "stop": 4212.0, "lot": 0.30,
+           "kind": "limit", "gate": {"allow": True},
+           "targets": [{"price": 4100.0}, {"price": 3885.0}], "exit_style": "partial"}
+    out = _run(te.maybe_enqueue(_FakeDB(), sig, "optimus"))
+    assert out and out["legs"] == 3 and out["group_id"]
+    roles = [o["scale_role"] for o in queued]
+    assert roles == ["p1", "p2", "runner"]
+    runner = queued[-1]
+    assert runner["be_price"] == 4200.0 and runner["be_after"] == "p1"
+
+
 def test_maybe_enqueue_swallows_errors(monkeypatch):
     monkeypatch.setattr(te, "EXECUTION_ENABLED", True)
 
