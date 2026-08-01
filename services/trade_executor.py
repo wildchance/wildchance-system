@@ -7,6 +7,7 @@ MT5 — that's the standalone connector on the VPS (mt5_bridge/connector.py).
 
 from __future__ import annotations
 
+import uuid
 from typing import List, Optional
 
 from decouple import config
@@ -14,8 +15,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.execution_model import ExecutionOrder
+from gold.risk_engine import GOLD_PIP
 
 MAGIC = 770001                          # identifies this system's trades in MT5
+
+# The runner scale-out plan — mirrors the validated sell-backtest 250/500 partials
+# (price points: 250 pts = 2500 pips at GOLD_PIP 0.10, 500 pts = 5000 pips). Bank
+# 0.34 at +250, 0.33 at +500, and carry the 0.33 runner to the final target with its
+# stop trailed to BREAK-EVEN the moment the first partial (p1) fills. This is what
+# closes the gap between the optimizer's modelled scale-out and live behaviour.
+DEFAULT_EXIT_PARTIALS = ((250.0, 0.34), (500.0, 0.33))
 
 
 def _env_num(key: str, default: float) -> float:
@@ -175,7 +184,20 @@ def plan_scale_out(total: float, tps: list, min_lot: float = 0.01,
 def build_orders(sig: dict, symbol: str = "XAUUSD", source: str = "gold",
                  scale_out: bool = True) -> List[dict]:
     """Build MT5 order(s) for a signal, scaling the lot across the trend-TP ladder when
-    one is present (trend_targets). Falls back to a single base order otherwise."""
+    one is present (trend_targets). Falls back to a single base order otherwise.
+    ``exit_style='partial'`` routes to the 250/500 runner break-even plan instead."""
+    # Runner break-even scale-out (the validated 250/500 exit) when asked for it.
+    if scale_out and sig.get("exit_style") == "partial":
+        legs = plan_partial_exit(sig, symbol, source)
+        if len(legs) >= 2:
+            return legs
+    return _build_ladder_orders(sig, symbol, source, scale_out)
+
+
+def _build_ladder_orders(sig: dict, symbol: str, source: str,
+                         scale_out: bool) -> List[dict]:
+    """The trend-TP ladder / single-order build (no partial-exit branch — the shared
+    fallback so build_orders and plan_partial_exit never recurse into each other)."""
     base = build_order(sig, symbol, source)
     if not base:
         return []
@@ -196,6 +218,141 @@ def build_orders(sig: dict, symbol: str = "XAUUSD", source: str = "gold",
                 orders.append(o)
             return orders
     return [base]
+
+
+def _lot_fractions(total: float, fracs, min_lot: float = 0.01, step: float = 0.01) -> List[float]:
+    """Split ``total`` lots by ``fracs`` (the runner takes the remainder), every leg a
+    whole ``step`` and >= ``min_lot``, summing EXACTLY to total. Degrades to fewer legs
+    (nearest-first) when total can't afford them all — never emits a sub-min leg."""
+    total_steps = int(round(round(float(total or 0), 2) / step))
+    min_steps = max(1, int(round(min_lot / step)))
+    weights = list(fracs) + [max(0.0, 1.0 - sum(fracs))]        # runner = remainder
+    n = len(weights)
+    affordable = min(n, total_steps // min_steps) if min_steps else 0
+    if affordable < 1:
+        return []
+    weights = weights[:affordable]
+    alloc = [min_steps] * affordable
+    rem = total_steps - min_steps * affordable
+    wsum = sum(weights) or 1.0
+    prop = [int(rem * w // wsum) for w in weights]
+    for i in range(affordable):
+        alloc[i] += prop[i]
+    leftover = rem - sum(prop)
+    i = affordable - 1                                         # remainder to the runner
+    while leftover > 0:
+        alloc[i] += 1
+        leftover -= 1
+        i = (i - 1) if i > 0 else affordable - 1
+    return [round(a * step, 2) for a in alloc]
+
+
+def plan_partial_exit(sig: dict, symbol: str = "XAUUSD", source: str = "gold",
+                      partials=DEFAULT_EXIT_PARTIALS) -> List[dict]:
+    """Build the 250/500 scale-out legs for a sized signal — banking partials in price
+    points as price runs in favour and carrying the runner to the final target with a
+    break-even trail armed on the first partial fill.
+
+    Legs share a ``group_id``; the runner carries ``be_price`` (entry) + ``be_after`` (p1)
+    so ``breakeven_sweep`` moves its stop to BE once p1 fills. Falls back to the plain
+    scale-out / single order when the lot can't afford multiple legs or geometry is off."""
+    base = build_order(sig, symbol, source)
+    if not base:
+        return []
+    entry = base.get("price")
+    if entry is None:
+        entry = float(sig.get("entry")) if sig.get("entry") is not None else None
+    lot = float(sig.get("lot") or base.get("volume") or 0.0)
+    # final target = the deepest TP on the card (the demand floor the runner rides to)
+    tps = base.get("tp_levels") or ([base["tp"]] if base.get("tp") else [])
+    if entry is None or lot <= 0 or not tps:
+        return _build_ladder_orders(sig, symbol, source, True)
+    sign = -1 if base["side"] == "sell" else 1                 # sell banks DOWN, buy banks UP
+    final_tp = min(tps) if base["side"] == "sell" else max(tps)
+
+    fracs = [f for _, f in partials]
+    vols = _lot_fractions(lot, fracs)
+    if len(vols) < 2:                                          # not enough size to scale out
+        return _build_ladder_orders(sig, symbol, source, True)
+
+    gid = uuid.uuid4().hex[:12]
+    legs: List[dict] = []
+    n = len(vols)
+    for i, vol in enumerate(vols):
+        leg = dict(base)
+        leg["volume"] = vol
+        leg["group_id"] = gid
+        if i < n - 1:                                          # a banked partial
+            dist = partials[i][0]
+            leg["scale_role"] = f"p{i + 1}"
+            leg["tp"] = round(entry + sign * dist, 2)
+            leg["comment"] = (f"{sig.get('profile') or source} p{i + 1}")[:31]
+        else:                                                  # the runner
+            leg["scale_role"] = "runner"
+            leg["tp"] = round(final_tp, 2)
+            leg["be_price"] = round(float(entry), 2)           # trail to BREAK-EVEN
+            leg["be_after"] = "p1"                             # armed by the first partial
+            leg["comment"] = (f"{sig.get('profile') or source} run")[:31]
+        legs.append(leg)
+    return legs
+
+
+def breakeven_modifications(legs: List[dict]) -> List[dict]:
+    """Pure — given all legs of ONE group, if the arming partial (be_after) has FILLED,
+    return the SL-to-BE modify order(s) for the still-live runner leg(s) not yet moved.
+
+    A modify is a lightweight order the bridge honours via order_type='modify': it carries
+    the runner's MT5 ``ticket`` and the ``be_price`` to set as the new stop. Emits nothing
+    until the arming partial is filled AND the runner has a ticket (so it's placed)."""
+    filled_roles = {l.get("scale_role") for l in legs if l.get("status") == "filled"}
+    mods: List[dict] = []
+    for l in legs:
+        arm = l.get("be_after")
+        if (arm and l.get("be_price") is not None and not l.get("be_done")
+                and arm in filled_roles and l.get("ticket")
+                and l.get("status") in ("sent", "filled")):
+            mods.append({
+                "symbol": l.get("symbol", "XAUUSD"), "side": l.get("side"),
+                "order_type": "modify", "scale_role": "modify",
+                "volume": l.get("volume") or 0.01, "price": None,
+                "sl": l.get("be_price"), "tp": l.get("tp"),
+                "ticket": l.get("ticket"), "group_id": l.get("group_id"),
+                "magic": l.get("magic", MAGIC), "source": l.get("source"),
+                "account": l.get("account"),
+                "comment": (f"{l.get('source') or 'wildchance'} BE")[:31],
+                "modifies_role": l.get("scale_role"),
+            })
+    return mods
+
+
+async def breakeven_sweep(db: AsyncSession) -> dict:
+    """Scan open scale-out groups and enqueue the runner's SL-to-BE modify once the first
+    partial fills. Idempotent — flags each runner ``be_done`` so a modify is queued once.
+    Safe to run on a schedule (cron) or right after an ack. No-op when execution is off."""
+    if not EXECUTION_ENABLED:
+        return {"execution_enabled": False, "modifies_queued": 0}
+    rows = await recent(db, 400)
+    groups: dict = {}
+    for o in rows:
+        gid = o.get("group_id")
+        if gid:
+            groups.setdefault(gid, []).append(o)
+
+    queued = 0
+    for gid, legs in groups.items():
+        for mod in breakeven_modifications(legs):
+            await enqueue(db, mod)
+            # mark the runner leg be_done so we never double-queue the BE move
+            runner = next((l for l in legs if l.get("scale_role") == mod["modifies_role"]), None)
+            if runner and runner.get("id"):
+                res = await db.execute(
+                    select(ExecutionOrder).where(ExecutionOrder.id == runner["id"]))
+                r = res.scalar_one_or_none()
+                if r is not None:
+                    r.be_done = 1
+                    await db.commit()
+            queued += 1
+    return {"execution_enabled": True, "groups": len(groups), "modifies_queued": queued}
 
 
 def build_order(sig: dict, symbol: str = "XAUUSD", source: str = "gold") -> Optional[dict]:
@@ -245,6 +402,12 @@ async def maybe_enqueue(db: AsyncSession, sig: dict, source: str = "gold") -> Op
             orders = build_fleet_orders(sig, source)
             out = [await enqueue(db, o) for o in orders]
             return {"fleet": out, "accounts": len(out)} if out else None
+        # 250/500 runner break-even scale-out when the signal asks for it
+        if sig.get("exit_style") == "partial":
+            legs = plan_partial_exit(sig, source=source)
+            if len(legs) >= 2:
+                out = [await enqueue(db, leg) for leg in legs]
+                return {"scale_out": out, "legs": len(out), "group_id": legs[0].get("group_id")}
         order = build_order(sig, source=source)
         if not order:
             return None
@@ -261,6 +424,9 @@ async def enqueue(db: AsyncSession, order: dict) -> dict:
         tp=order.get("tp"), magic=order.get("magic", MAGIC),
         comment=order.get("comment"), source=order.get("source"),
         account=order.get("account"), status="pending",
+        group_id=order.get("group_id"), scale_role=order.get("scale_role"),
+        be_price=order.get("be_price"), be_after=order.get("be_after"),
+        ticket=order.get("ticket"),
     )
     db.add(row)
     await db.commit()
@@ -292,7 +458,15 @@ async def ack(db: AsyncSession, order_id: int, status: str,
     if fill_price is not None:
         row.fill_price = fill_price
     await db.commit()
-    return _to_dict(row)
+    out = _to_dict(row)
+    # When a scale-out leg fills, arm the runner's break-even trail (best-effort — a
+    # sweep failure must never fail the ack the bridge is waiting on).
+    if status == "filled" and getattr(row, "group_id", None):
+        try:
+            out["breakeven"] = await breakeven_sweep(db)
+        except Exception:
+            pass
+    return out
 
 
 async def recent(db: AsyncSession, limit: int = 50) -> List[dict]:
@@ -308,6 +482,9 @@ def _to_dict(r: ExecutionOrder) -> dict:
         "magic": r.magic, "comment": r.comment, "source": r.source,
         "account": getattr(r, "account", None),
         "status": r.status, "ticket": r.ticket, "fill_price": r.fill_price,
+        "group_id": getattr(r, "group_id", None), "scale_role": getattr(r, "scale_role", None),
+        "be_price": getattr(r, "be_price", None), "be_after": getattr(r, "be_after", None),
+        "be_done": getattr(r, "be_done", 0),
         "created_at": str(r.created_at) if r.created_at else None,
     }
 
