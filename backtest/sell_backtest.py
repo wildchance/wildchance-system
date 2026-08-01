@@ -200,3 +200,69 @@ def optimize_optimus_sells(bars: Sequence, buffers=(1.0, 3.0, 5.0, 8.0, 12.0),
     from gold import optimus as gop
     floors = list(gop.PATH_FLOORS) + [gop.PATH_TP]
     return optimize_sells(bars, gop.SELL_RETEST_LEVELS, floors, buffers=buffers, partials=partials)
+
+
+# --- walk-forward validation -------------------------------------------------------
+# The honest read on the optimizer: pick the stop buffer on an in-sample TRAIN slice,
+# then measure it on the untouched TEST slice that follows. Rolling folds so the "best
+# buffer" is never scored on the same window it was chosen from (no curve-fit).
+
+def walkforward_sells(bars: Sequence, levels: Sequence[float], floors: Sequence[float],
+                      folds: int = 4, train_frac: float = 0.6,
+                      buffers=(1.0, 3.0, 5.0, 8.0, 12.0), partials=DEFAULT_PARTIALS) -> dict:
+    """Rolling walk-forward: split the bars into ``folds`` equal segments; in each, tune
+    the stop buffer on the first ``train_frac`` (partial-exit expectancy) and score it on
+    the held-out remainder. Reports each fold's chosen buffer + OOS stats and the blended
+    out-of-sample expectancy — the number to trust, not the in-sample optimum."""
+    bars = list(bars)
+    n = len(bars)
+    if n < folds * 20 or not (0.2 <= train_frac <= 0.8):
+        return {"ok": False, "reason": "not enough bars for a walk-forward",
+                "have": n, "need": folds * 20}
+    seg = n // folds
+    fold_rows = []
+    oos_trades = oos_pips = 0.0
+    for k in range(folds):
+        lo = k * seg
+        hi = n if k == folds - 1 else (k + 1) * seg
+        segment = bars[lo:hi]
+        cut = int(len(segment) * train_frac)
+        train, test = segment[:cut], segment[cut:]
+        if len(train) < 5 or len(test) < 5:
+            continue
+        opt = optimize_sells(train, levels, floors, buffers=buffers, partials=partials)
+        best = opt.get("best")
+        chosen = best["stop_buffer"] if best else buffers[len(buffers) // 2]
+        oos = backtest_sells_partial(test, levels, floors, stop_buffer=chosen, partials=partials)
+        oos_trades += oos["trades"]
+        oos_pips += oos["total_pips"]
+        fold_rows.append({
+            "fold": k + 1, "train_bars": len(train), "test_bars": len(test),
+            "chosen_buffer": chosen,
+            "in_sample_expectancy": (best["partial"]["expectancy_pips"] if best else None),
+            "out_of_sample": {"trades": oos["trades"], "win_rate": oos["win_rate"],
+                              "expectancy_pips": oos["expectancy_pips"],
+                              "total_pips": oos["total_pips"],
+                              "profit_factor": oos["profit_factor"]},
+        })
+    oos_exp = round(oos_pips / oos_trades, 1) if oos_trades else 0.0
+    return {
+        "ok": True, "folds": fold_rows,
+        "out_of_sample_trades": int(oos_trades),
+        "out_of_sample_total_pips": round(oos_pips, 1),
+        "out_of_sample_expectancy_pips": oos_exp,
+        "partials": [{"usd": d, "fraction": f} for d, f in partials],
+        "note": (f"{int(oos_trades)} out-of-sample sells, blended expectancy {oos_exp} "
+                 f"pips/trade across {len(fold_rows)} folds — the trustable read"
+                 if oos_trades else "no out-of-sample sell setups triggered"),
+    }
+
+
+def walkforward_optimus_sells(bars: Sequence, folds: int = 4, train_frac: float = 0.6,
+                              buffers=(1.0, 3.0, 5.0, 8.0, 12.0),
+                              partials=DEFAULT_PARTIALS) -> dict:
+    """Walk-forward validation using the live Optimus sell map."""
+    from gold import optimus as gop
+    floors = list(gop.PATH_FLOORS) + [gop.PATH_TP]
+    return walkforward_sells(bars, gop.SELL_RETEST_LEVELS, floors, folds=folds,
+                             train_frac=train_frac, buffers=buffers, partials=partials)
