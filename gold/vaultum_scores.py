@@ -234,17 +234,36 @@ def cb_divergence_score(fed_minus_peers: Optional[float] = None) -> dict:
     return _envelope(base, 0.55, drivers, "policy-rate divergence drives the dollar vs gold")
 
 
+def volume_location_score(location: Optional[str] = None,
+                          vs_poc: Optional[str] = None) -> dict:
+    """Volume-profile anatomy → bias. BULLISH when price is accepted ABOVE the value area
+    with the POC left below (accumulation → markup); BEARISH below value with the POC above
+    (distribution → markdown); NEUTRAL inside value (rotation). ``location`` is
+    above_value|in_value|below_value and ``vs_poc`` is above|below (from profile_read)."""
+    if not location:
+        return _neutral("volume location")
+    if location == "above_value" and vs_poc == "above":
+        return _envelope(66.0, 0.55, ["price accepted above value, POC below"],
+                         "markup posture — value-area breakout up")
+    if location == "below_value" and vs_poc == "below":
+        return _envelope(34.0, 0.55, ["price accepted below value, POC above"],
+                         "markdown posture — value-area breakdown")
+    return _envelope(50.0, 0.35, [f"price {location.replace('_', ' ')}"],
+                     "inside/rotating value — no directional edge")
+
+
 # --- the composite board ----------------------------------------------------------
 
 # Directional scores carry the bias; regime/phase scores carry conviction only.
 _DIRECTIONAL = {
-    "dollar_strength": 0.22,
-    "macro_cycle": 0.20,
-    "inflation_pressure": 0.16,
+    "dollar_strength": 0.20,
+    "macro_cycle": 0.18,
+    "inflation_pressure": 0.15,
     "cb_divergence": 0.10,
-    "market_stress": 0.10,
-    "geopolitical": 0.08,
-    "jpy_liquidity": 0.06,
+    "market_stress": 0.09,
+    "volume_location": 0.08,
+    "geopolitical": 0.07,
+    "jpy_liquidity": 0.05,
     "risk_appetite": 0.05,
     "liquidity": 0.03,
 }
