@@ -293,3 +293,127 @@ async def readiness(db: AsyncSession = Depends(get_db)):
             "ready_to_go_live": bool(te.FLEET_ENABLED and checks["fleet_accounts"] > 0),
             "note": (f"{mode} mode; VaR gate {gate}. Flip EXECUTION_ENABLED + FLEET_ENABLED "
                      "(and arm the VaR gate) once the MT5 VPS bridge is up.")}
+
+
+@router.get("/dashboard.json")
+async def dashboard_json(db: AsyncSession = Depends(get_db)):
+    """One aggregated read for the live status page — bias, free feeds, execution mode +
+    queued orders, and open positions. Every section is best-effort so a single dead feed
+    never blanks the board."""
+    import datetime as _dt
+    from services import trade_executor as te
+    out: dict = {"ts": _dt.datetime.now(_dt.timezone.utc).isoformat()}
+
+    try:
+        sc, hmm = await _gather_scores()
+        b = vs.gold_bias_board(sc)
+        out["bias"] = {"direction": b["direction"], "gold_bias": b["gold_bias"],
+                       "conviction_pct": b["conviction_pct"], "confidence": b["confidence"],
+                       "tag": b["tag"], "top_drivers": b["top_drivers"]}
+    except Exception as e:
+        out["bias"] = {"error": str(e)}
+    try:
+        from services.free_macro_feeds import free_macro
+        out["feeds"] = await free_macro()
+    except Exception as e:
+        out["feeds"] = {"error": str(e)}
+    try:
+        pend = await te.pending(db, limit=100)
+        out["execution"] = {"mode": "LIVE" if te.EXECUTION_ENABLED else "PAPER",
+                            "execution_enabled": te.EXECUTION_ENABLED,
+                            "fleet_enabled": te.FLEET_ENABLED,
+                            "queued_orders": len(pend)}
+        out["orders"] = await te.recent(db, 15)
+    except Exception as e:
+        out["execution"] = {"error": str(e)}
+        out["orders"] = []
+    try:
+        from services import gold_positions as gp
+        out["positions"] = await gp.list_positions(db, status="OPEN", limit=25)
+    except Exception as e:
+        out["positions"] = []
+        out["positions_error"] = str(e)
+    return out
+
+
+@router.get("/dashboard")
+async def dashboard():
+    """Live VAULTUM status page — bias, feeds, queued orders and open positions in one
+    view, polling /vaultum/dashboard.json so you're not hitting five endpoints. Open it
+    in a browser; it refreshes itself."""
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse(_DASHBOARD_HTML)
+
+
+_DASHBOARD_HTML = """<!doctype html><html lang=en><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>VAULTUM — live</title><style>
+:root{color-scheme:dark}body{margin:0;background:#0b0e14;color:#e6edf3;
+font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif}
+header{padding:16px 20px;border-bottom:1px solid #1c2430;display:flex;
+justify-content:space-between;align-items:center}
+h1{font-size:16px;margin:0;letter-spacing:.14em;color:#f5c451}
+#ts{color:#6b7686;font-size:12px}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;padding:16px}
+.card{background:#111722;border:1px solid #1c2430;border-radius:10px;padding:14px}
+.card h2{font-size:12px;letter-spacing:.1em;color:#8b95a5;margin:0 0 10px;text-transform:uppercase}
+.big{font-size:26px;font-weight:700}
+.up{color:#3fb950}.down{color:#f85149}.flat{color:#d29922}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+td,th{text-align:left;padding:4px 6px;border-bottom:1px solid #1c2430}
+th{color:#6b7686;font-weight:600}.muted{color:#6b7686}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}
+.live{background:#12261a;color:#3fb950}.paper{background:#2a2410;color:#d29922}
+.row{display:flex;justify-content:space-between;padding:3px 0}
+</style></head><body>
+<header><h1>VAULTUM · LIVE</h1><span id=ts>loading…</span></header>
+<main>
+<div class=card id=bias><h2>Gold bias</h2><div class=muted>…</div></div>
+<div class=card id=exec><h2>Execution</h2><div class=muted>…</div></div>
+<div class=card id=feeds><h2>Free feeds</h2><div class=muted>…</div></div>
+<div class=card id=orders><h2>Queued orders</h2><div class=muted>…</div></div>
+<div class=card id=positions><h2>Open positions</h2><div class=muted>…</div></div>
+</main>
+<script>
+const dir=v=>v>55?'up':v<45?'down':'flat';
+const cls=x=>x==null?'flat':x>0?'up':x<0?'down':'flat';
+const f=(x,d=2)=>x==null?'—':(+x).toFixed(d);
+async function tick(){
+ let d;try{d=await(await fetch('dashboard.json',{cache:'no-store'})).json()}catch(e){return}
+ document.getElementById('ts').textContent=new Date(d.ts).toLocaleTimeString();
+ const b=d.bias||{};
+ document.getElementById('bias').innerHTML=`<h2>Gold bias</h2>`+(b.error?`<div class=down>${b.error}</div>`:
+  `<div class="big ${dir(b.conviction_pct)}">${b.direction||'—'}</div>
+   <div class=row><span class=muted>conviction</span><b>${f(b.conviction_pct,0)}%</b></div>
+   <div class=row><span class=muted>confidence</span><b>${f(b.confidence,2)}</b></div>
+   <div class=row><span class=muted>tag</span><b>${b.tag||'—'}</b></div>
+   <div class=muted style=margin-top:8px>${(b.top_drivers||[]).slice(0,3).join(' · ')}</div>`);
+ const e=d.execution||{};
+ document.getElementById('exec').innerHTML=`<h2>Execution</h2>`+(e.error?`<div class=down>${e.error}</div>`:
+  `<div class=big><span class="pill ${e.execution_enabled?'live':'paper'}">${e.mode}</span></div>
+   <div class=row><span class=muted>fleet</span><b>${e.fleet_enabled?'on':'off'}</b></div>
+   <div class=row><span class=muted>queued orders</span><b>${e.queued_orders}</b></div>`);
+ const m=d.feeds||{};
+ document.getElementById('feeds').innerHTML=`<h2>Free feeds</h2>`+(m.error?`<div class=down>${m.error}</div>`:
+  `<div class=row><span class=muted>VIX</span><b>${f(m.vix,1)}</b></div>
+   <div class=row><span class=muted>SPX %</span><b class="${cls(m.spx_change_pct)}">${f(m.spx_change_pct,2)}</b></div>
+   <div class=row><span class=muted>risk state</span><b>${m.risk_state||'—'}</b></div>
+   <div class=row><span class=muted>JPY 30d %</span><b>${f(m.jpy_usd_roc_30d,2)}</b></div>
+   <div class=row><span class=muted>Fear&Greed</span><b>${m.fear_greed??'—'}</b></div>
+   <div class=row><span class=muted>geo risk</span><b>${f(m.geopolitical_risk,1)}</b></div>
+   <div class=row><span class=muted>Fed−peers</span><b>${f((m.cb_divergence||{}).fed_minus_peers,2)}</b></div>`);
+ const o=d.orders||[];
+ document.getElementById('orders').innerHTML=`<h2>Queued orders (${o.length})</h2>`+(o.length?
+  `<table><tr><th>side</th><th>role</th><th>vol</th><th>sl</th><th>tp</th><th>status</th></tr>`+
+   o.map(x=>`<tr><td class="${x.side=='sell'?'down':'up'}">${x.side}</td><td>${x.scale_role||'—'}</td>
+   <td>${f(x.volume,2)}</td><td>${f(x.sl,2)}</td><td>${f(x.tp,2)}</td><td class=muted>${x.status}</td></tr>`).join('')+
+   `</table>`:`<div class=muted>none</div>`);
+ const p=d.positions||[];
+ document.getElementById('positions').innerHTML=`<h2>Open positions (${p.length})</h2>`+(p.length?
+  `<table><tr><th>side</th><th>entry</th><th>stop</th><th>lot</th><th>src</th></tr>`+
+   p.map(x=>`<tr><td class="${(x.side||'').toLowerCase().includes('s')?'down':'up'}">${x.side}</td>
+   <td>${f(x.entry,2)}</td><td>${f(x.stop,2)}</td><td>${f(x.lot,2)}</td><td class=muted>${x.source||'—'}</td></tr>`).join('')+
+   `</table>`:`<div class=muted>flat</div>`);
+}
+tick();setInterval(tick,30000);
+</script></body></html>"""
