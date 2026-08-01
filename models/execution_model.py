@@ -31,3 +31,9 @@ class ExecutionOrder(Base):
     ticket = Column(Integer)                          # MT5 ticket, filled by the bridge
     fill_price = Column(Float)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    # --- partial scale-out + runner break-even (the 250/500 exit plan) ---
+    group_id = Column(String, index=True)            # links the legs of one signal
+    scale_role = Column(String)                      # p1 | p2 | runner | single | modify
+    be_price = Column(Float)                          # SL to trail to once be_after fills
+    be_after = Column(String)                         # the scale_role whose fill arms the BE move
+    be_done = Column(Integer, default=0)             # 1 once the BE modify has been emitted
