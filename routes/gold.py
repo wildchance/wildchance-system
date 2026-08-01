@@ -516,6 +516,23 @@ async def optimize_sells_endpoint(interval: str = Query("1day", description="4h|
     return result
 
 
+@router.get("/backtest/sells/walkforward")
+async def walkforward_sells_endpoint(interval: str = Query("1day", description="4h|1h|1day"),
+                                     bars: int = Query(600, ge=100, le=2000),
+                                     folds: int = Query(4, ge=2, le=8),
+                                     train_frac: float = Query(0.6, ge=0.2, le=0.8)):
+    """Walk-forward the sell optimizer — tune the stop buffer in-sample per fold, score it
+    on the held-out out-of-sample slice, and report the BLENDED OOS expectancy. This is the
+    curve-fit check: trust the out-of-sample number, not the in-sample optimum."""
+    from backtest.sell_backtest import walkforward_optimus_sells
+    ohlc = await fetch_ohlc("XAU/USD", interval, bars)
+    if not ohlc or len(ohlc) < 100:
+        return {"error": "not enough XAU/USD bars for a walk-forward", "have": len(ohlc or [])}
+    result = walkforward_optimus_sells(ohlc, folds=folds, train_frac=train_frac)
+    result["window"] = {"interval": interval, "bars": len(ohlc)}
+    return result
+
+
 @router.post("/alerter/scan")
 async def alerter_scan(notify: bool = Query(False, description="broadcast armed cards to Telegram"),
                        min_conviction: float = Query(0.0, description="skip below this VAULTUM conviction %"),
