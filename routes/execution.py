@@ -67,6 +67,15 @@ async def reconcile(token: str = Query(...),
     return await te.reconcile(db, stuck_minutes=stuck_minutes)
 
 
+@router.post("/breakeven")
+async def breakeven(token: str = Query(...), db: AsyncSession = Depends(get_db)):
+    """Arm the runner's stop to break-even on any scale-out group whose first partial has
+    filled, queuing the SL-to-BE modify for the bridge. Idempotent — runs on ack too, but
+    schedule it (cron) as a safety net so a missed ack still trails the stop. Token-guarded."""
+    _auth(token)
+    return await te.breakeven_sweep(db)
+
+
 @router.get("/status")
 async def status(db: AsyncSession = Depends(get_db)):
     """Live-execution readiness: is the switch on, the token set, and how many
