@@ -128,6 +128,18 @@ async def _gather_scores() -> dict:
     scores["geopolitical"] = vs.geopolitical_score(fm.get("geopolitical_risk"))
     scores["cb_divergence"] = vs.cb_divergence_score(
         (fm.get("cb_divergence") or {}).get("fed_minus_peers"))
+
+    # --- volume-profile location (POC/value-area anatomy) → bias ---
+    try:
+        from gold import volume_profile as gvp
+        if bars and len(bars) >= 20:
+            pr = gvp.profile_read(bars)
+            scores["volume_location"] = vs.volume_location_score(
+                pr.get("location"), pr.get("vs_poc"))
+        else:
+            scores["volume_location"] = vs.volume_location_score()
+    except Exception:
+        scores["volume_location"] = vs.volume_location_score()
     return scores, hmm
 
 
