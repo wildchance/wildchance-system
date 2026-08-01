@@ -247,11 +247,27 @@ def _lot_fractions(total: float, fracs, min_lot: float = 0.01, step: float = 0.0
     return [round(a * step, 2) for a in alloc]
 
 
+def _snap_to_hvn(entry: float, dist: float, sign: int, hvn) -> float:
+    """Snap a partial's target (entry + sign*dist) to the nearest High-Volume Node in the
+    profit direction — bank INTO the magnet where the exit liquidity sits. Falls back to
+    the raw distance when no HVN is near (within 40% of the fixed distance)."""
+    raw = entry + sign * dist
+    cands = [h for h in (hvn or []) if (sign < 0 and h < entry) or (sign > 0 and h > entry)]
+    if not cands:
+        return round(raw, 2)
+    nearest = min(cands, key=lambda h: abs(h - raw))
+    return round(nearest if abs(nearest - raw) <= dist * 0.4 else raw, 2)
+
+
 def plan_partial_exit(sig: dict, symbol: str = "XAUUSD", source: str = "gold",
-                      partials=DEFAULT_EXIT_PARTIALS) -> List[dict]:
+                      partials=DEFAULT_EXIT_PARTIALS, hvn=None) -> List[dict]:
     """Build the 250/500 scale-out legs for a sized signal — banking partials in price
     points as price runs in favour and carrying the runner to the final target with a
     break-even trail armed on the first partial fill.
+
+    When ``hvn`` (a list of High-Volume-Node prices) is given, the partial targets SNAP to
+    the nearest HVN in the profit direction — banking into the magnets where exit liquidity
+    sits — and the runner rides to the deepest HVN past the value (through the LVN void).
 
     Legs share a ``group_id``; the runner carries ``be_price`` (entry) + ``be_after`` (p1)
     so ``breakeven_sweep`` moves its stop to BE once p1 fills. Falls back to the plain
@@ -269,6 +285,11 @@ def plan_partial_exit(sig: dict, symbol: str = "XAUUSD", source: str = "gold",
         return _build_ladder_orders(sig, symbol, source, True)
     sign = -1 if base["side"] == "sell" else 1                 # sell banks DOWN, buy banks UP
     final_tp = min(tps) if base["side"] == "sell" else max(tps)
+    # runner rides to the deepest HVN beyond the card TP (through the LVN void), if any
+    if hvn:
+        beyond = [h for h in hvn if (sign < 0 and h <= final_tp) or (sign > 0 and h >= final_tp)]
+        if beyond:
+            final_tp = min(beyond) if sign < 0 else max(beyond)
 
     fracs = [f for _, f in partials]
     vols = _lot_fractions(lot, fracs)
@@ -285,7 +306,7 @@ def plan_partial_exit(sig: dict, symbol: str = "XAUUSD", source: str = "gold",
         if i < n - 1:                                          # a banked partial
             dist = partials[i][0]
             leg["scale_role"] = f"p{i + 1}"
-            leg["tp"] = round(entry + sign * dist, 2)
+            leg["tp"] = _snap_to_hvn(entry, dist, sign, hvn) if hvn else round(entry + sign * dist, 2)
             leg["comment"] = (f"{sig.get('profile') or source} p{i + 1}")[:31]
         else:                                                  # the runner
             leg["scale_role"] = "runner"
@@ -402,12 +423,23 @@ async def maybe_enqueue(db: AsyncSession, sig: dict, source: str = "gold") -> Op
             orders = build_fleet_orders(sig, source)
             out = [await enqueue(db, o) for o in orders]
             return {"fleet": out, "accounts": len(out)} if out else None
-        # 250/500 runner break-even scale-out when the signal asks for it
+        # 250/500 runner break-even scale-out when the signal asks for it. Snap the
+        # partial/runner targets to the live High-Volume Nodes when we can read them.
         if sig.get("exit_style") == "partial":
-            legs = plan_partial_exit(sig, source=source)
+            hvn = None
+            try:
+                from services.ohlc_service import fetch_ohlc
+                from gold import volume_profile as gvp
+                vp_bars = await fetch_ohlc("XAU/USD", "1h", 120)
+                if vp_bars and len(vp_bars) >= 20:
+                    hvn = gvp.nodes(vp_bars).get("hvn") or None
+            except Exception:
+                hvn = None
+            legs = plan_partial_exit(sig, source=source, hvn=hvn)
             if len(legs) >= 2:
                 out = [await enqueue(db, leg) for leg in legs]
-                return {"scale_out": out, "legs": len(out), "group_id": legs[0].get("group_id")}
+                return {"scale_out": out, "legs": len(out),
+                        "group_id": legs[0].get("group_id"), "hvn_snapped": bool(hvn)}
         order = build_order(sig, source=source)
         if not order:
             return None
