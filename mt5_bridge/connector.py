@@ -93,6 +93,33 @@ def place(o):
     return "filled" if not is_limit else "sent", res.order, res.price
 
 
+def modify(o):
+    """Move an existing position's stop/target (the runner's break-even trail). The order
+    carries the MT5 ``ticket`` and the new ``sl``. Returns (status, ticket, fill_price)."""
+    ticket = o.get("ticket")
+    if not ticket:
+        return "rejected", None, None
+    pos = mt5.positions_get(ticket=int(ticket))
+    if not pos:
+        print(f"  modify {o['id']}: position {ticket} not found (already closed?)")
+        return "rejected", None, None
+    p = pos[0]
+    req = {
+        "action": mt5.TRADE_ACTION_SLTP,
+        "symbol": p.symbol,
+        "position": int(ticket),
+        "sl": float(o["sl"]) if o.get("sl") else p.sl,
+        "tp": float(o["tp"]) if o.get("tp") else p.tp,
+        "magic": int(o.get("magic") or 770001),
+    }
+    res = mt5.order_send(req)
+    if res is None or res.retcode not in (mt5.TRADE_RETCODE_DONE, mt5.TRADE_RETCODE_PLACED):
+        print(f"  modify {o['id']} rejected: {getattr(res, 'retcode', '?')} {mt5.last_error()}")
+        return "rejected", None, None
+    print(f"  modify {o['id']}: position {ticket} SL→{req['sl']} (break-even)")
+    return "filled", int(ticket), req["sl"]
+
+
 def ack(order_id, status, ticket=None, fill_price=None):
     try:
         requests.post(f"{APP}/execution/ack", params={"token": TOKEN}, timeout=15,
@@ -111,7 +138,10 @@ def loop():
             r = requests.get(f"{APP}/execution/pending", params=params, timeout=15)
             orders = r.json().get("orders", []) if r.ok else []
             for o in orders:
-                if o.get("symbol", SYMBOL).upper().startswith("XAU"):
+                if o.get("order_type") == "modify":
+                    status, ticket, fill = modify(o)     # runner SL→break-even
+                    ack(o["id"], status, ticket, fill)
+                elif o.get("symbol", SYMBOL).upper().startswith("XAU"):
                     status, ticket, fill = place(o)
                     ack(o["id"], status, ticket, fill)
                 else:
