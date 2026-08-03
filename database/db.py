@@ -1,65 +1,92 @@
+import logging
 from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from decouple import config
 
-_RAW_URL = config("DATABASE_URL")
+_log = logging.getLogger("uvicorn.error")
+# Local SQLite fallback so the API ALWAYS boots — even with a missing or malformed
+# DATABASE_URL. The stateless brain (signals, cards, volume-profile, VAULTUM, backtests)
+# works immediately; set a real Postgres URL to persist tracking/execution.
+_SQLITE_FALLBACK = "sqlite+aiosqlite:///./wildchance.db"
 
 
-def _normalize(url: str):
-    """Return (sqlalchemy_url, connect_args) suitable for the asyncpg driver.
+def _clean(raw) -> str:
+    """Strip the common paste mistakes that make a good URL unparseable (and crash boot):
+    surrounding quotes, whitespace/newlines, a leading ``psql `` wrapper from the Neon /
+    Render copy snippet, and an accidental ``DATABASE_URL=`` echo."""
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    if s.lower().startswith("psql "):
+        s = s[5:].strip()
+    if s.lower().startswith("database_url="):
+        s = s.split("=", 1)[1].strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+        s = s[1:-1].strip()
+    return s
 
-    Managed Postgres providers (Neon, Supabase, …) hand out libpq-style URLs
-    like ``postgresql://…?sslmode=require&channel_binding=require``. The
-    SQLAlchemy *asyncpg* dialect forwards unknown query params straight to
-    ``asyncpg.connect()``, which does NOT accept ``sslmode`` — so the raw Neon
-    URL fails with ``TypeError: connect() got an unexpected keyword 'sslmode'``.
 
-    Here we:
-      • upgrade ``postgresql://`` → ``postgresql+asyncpg://``
-      • strip the libpq-only params (``sslmode``/``channel_binding``)
-      • re-enable TLS via ``connect_args={"ssl": True}`` when the URL asked for
-        SSL or points at a host that requires it (Neon/Supabase).
-    Plain local URLs (e.g. the docker-compose Postgres) are unaffected.
-    """
+def _normalize(url):
+    """Return (sqlalchemy_url, connect_args). Recovers a slightly-mangled Postgres URL and
+    routes it to the asyncpg driver; falls back to local SQLite when the value is empty or
+    unparseable, so a bad env var can never take the whole API down at import time.
+
+    Managed Postgres (Neon/Supabase) hands out libpq URLs like
+    ``postgresql://…?sslmode=require&channel_binding=require`` — the asyncpg dialect
+    forwards those unknown params to ``asyncpg.connect()`` which rejects ``sslmode``. We
+    upgrade the scheme, strip the libpq-only params, and re-enable TLS via connect_args."""
+    url = _clean(url)
+    if not url or "://" not in url:
+        return _SQLITE_FALLBACK, {}
+    if url.startswith("postgres://"):                       # Heroku-style alias
+        url = url.replace("postgres://", "postgresql://", 1)
     if url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    try:
+        parts = urlsplit(url)
+        query = dict(parse_qsl(parts.query))
+        sslmode = query.pop("sslmode", None)
+        query.pop("channel_binding", None)
+        host = parts.hostname or ""
+        enable_ssl = (
+            sslmode in ("require", "verify-ca", "verify-full")
+            or "neon.tech" in host
+            or "supabase" in host
+        )
+        connect_args = {"ssl": True} if enable_ssl else {}
+        cleaned = urlunsplit(
+            (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+        return cleaned, connect_args
+    except Exception:
+        _log.error("DATABASE_URL %r could not be parsed — falling back to SQLite", url)
+        return _SQLITE_FALLBACK, {}
 
-    parts = urlsplit(url)
-    query = dict(parse_qsl(parts.query))
-    sslmode = query.pop("sslmode", None)
-    query.pop("channel_binding", None)
 
-    host = parts.hostname or ""
-    enable_ssl = (
-        sslmode in ("require", "verify-ca", "verify-full")
-        or "neon.tech" in host
-        or "supabase" in host
-    )
-    connect_args = {"ssl": True} if enable_ssl else {}
-
-    cleaned = urlunsplit(
-        (parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment)
-    )
-    return cleaned, connect_args
+def _make_engine(url: str, connect_args: dict):
+    if url.startswith("sqlite"):
+        return create_async_engine(url, echo=False)
+    # Serverless Postgres (Neon free) auto-suspends and drops connections; pool_pre_ping
+    # revalidates (and reconnects) before each use and pool_recycle discards stale ones.
+    return create_async_engine(url, echo=False, connect_args=connect_args,
+                               pool_pre_ping=True, pool_recycle=300)
 
 
+_RAW_URL = config("DATABASE_URL", default="")
 DATABASE_URL, _CONNECT_ARGS = _normalize(_RAW_URL)
 
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    connect_args=_CONNECT_ARGS,
-    # Serverless Postgres (Neon free) auto-suspends after a few minutes idle and
-    # drops open connections. pool_pre_ping checks a connection is alive (and
-    # transparently reconnects) before each use, and pool_recycle proactively
-    # discards connections older than 5 minutes — together this prevents the
-    # "connection was closed / InterfaceError" 500s on the first request after
-    # the database has been idle.
-    pool_pre_ping=True,
-    pool_recycle=300,
-)
+try:
+    engine = _make_engine(DATABASE_URL, _CONNECT_ARGS)
+except Exception as e:                                   # never crash boot on the engine
+    _log.error("DB engine for %r failed (%s) — falling back to local SQLite", DATABASE_URL, e)
+    try:
+        DATABASE_URL, _CONNECT_ARGS = _SQLITE_FALLBACK, {}
+        engine = _make_engine(DATABASE_URL, {})
+    except Exception:                                   # even the sqlite driver is missing
+        DATABASE_URL = "postgresql+asyncpg://localhost/wildchance"   # constructible dummy
+        engine = create_async_engine(DATABASE_URL, echo=False)
+
 AsyncSessionLocal = sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
 Base = declarative_base()
 
