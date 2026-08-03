@@ -64,6 +64,47 @@ PORTFOLIO_VAR_GATE_ENABLED = _env_bool("PORTFOLIO_VAR_GATE_ENABLED", False)
 PORTFOLIO_EQUITY_USD = _env_num("PORTFOLIO_EQUITY_USD", 0.0)
 PORTFOLIO_VAR_LIMIT_PCT = _env_num("PORTFOLIO_VAR_LIMIT_PCT", 5.0)
 
+# --- strategy → account routing (5 accounts, DIFFERENT setups) ---------------------
+# DIFFERENT from FLEET (which copies ONE trade to all accounts). With routing ON, each
+# setup's `source` is stamped onto the order's `account`, so a per-account VPS connector
+# (MT5_ACCOUNT=accN, ?account= filter) only ever places ITS strategy's trades. Fully
+# env-driven: set STRATEGY_ACCOUNTS to a JSON {source: account} map to change the wiring
+# with no code change. Unmapped sources fall back to STRATEGY_DEFAULT_ACCOUNT (or stay
+# untagged → an unfiltered catch-all connector picks them up).
+STRATEGY_ROUTING_ENABLED = _env_bool("STRATEGY_ROUTING_ENABLED", False)
+STRATEGY_DEFAULT_ACCOUNT = config("STRATEGY_DEFAULT_ACCOUNT", default=None)
+_DEFAULT_STRATEGY_ACCOUNTS = {
+    "optimus": "acc1", "gold_optimus": "acc1",          # reject-gated sells/buys
+    "gold_intraday": "acc2",                            # Hurst/FLD intraday
+    "gold_asian": "acc3", "asian_breakout": "acc3",     # Asian-range breakout
+    "gold_scan": "acc4",                                # ICT weekly-profile swing
+    "gold_cbdr": "acc5", "cbdr": "acc5",                # pre-London CBDR limits
+}
+
+
+def _load_strategy_accounts() -> dict:
+    import json
+    raw = config("STRATEGY_ACCOUNTS", default=None)
+    if raw:
+        try:
+            d = json.loads(raw)
+            if isinstance(d, dict) and d:
+                return {str(k): str(v) for k, v in d.items()}
+        except Exception:
+            pass
+    return dict(_DEFAULT_STRATEGY_ACCOUNTS)
+
+
+STRATEGY_ACCOUNTS = _load_strategy_accounts()
+
+
+def strategy_account(source: str) -> Optional[str]:
+    """The account a setup's ``source`` routes to when STRATEGY_ROUTING is on (else None,
+    preserving single-account/catch-all behaviour). Unmapped → STRATEGY_DEFAULT_ACCOUNT."""
+    if not STRATEGY_ROUTING_ENABLED:
+        return None
+    return STRATEGY_ACCOUNTS.get(source) or STRATEGY_DEFAULT_ACCOUNT
+
 
 async def var_gate(db: AsyncSession, sig: dict, source: str = "gold") -> dict:
     """Portfolio VaR/ES verdict for adding this signal to the open book. Fail-OPEN:
@@ -423,6 +464,7 @@ async def maybe_enqueue(db: AsyncSession, sig: dict, source: str = "gold") -> Op
             orders = build_fleet_orders(sig, source)
             out = [await enqueue(db, o) for o in orders]
             return {"fleet": out, "accounts": len(out)} if out else None
+        acct = strategy_account(source)                   # 5-account per-setup routing
         # 250/500 runner break-even scale-out when the signal asks for it. Snap the
         # partial/runner targets to the live High-Volume Nodes when we can read them.
         if sig.get("exit_style") == "partial":
@@ -437,12 +479,17 @@ async def maybe_enqueue(db: AsyncSession, sig: dict, source: str = "gold") -> Op
                 hvn = None
             legs = plan_partial_exit(sig, source=source, hvn=hvn)
             if len(legs) >= 2:
+                for leg in legs:
+                    leg["account"] = leg.get("account") or acct
                 out = [await enqueue(db, leg) for leg in legs]
                 return {"scale_out": out, "legs": len(out),
-                        "group_id": legs[0].get("group_id"), "hvn_snapped": bool(hvn)}
+                        "group_id": legs[0].get("group_id"), "hvn_snapped": bool(hvn),
+                        "account": acct}
         order = build_order(sig, source=source)
         if not order:
             return None
+        if acct:
+            order["account"] = acct
         return await enqueue(db, order)
     except Exception:
         return None
