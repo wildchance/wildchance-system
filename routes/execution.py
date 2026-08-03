@@ -76,6 +76,25 @@ async def breakeven(token: str = Query(...), db: AsyncSession = Depends(get_db))
     return await te.breakeven_sweep(db)
 
 
+@router.get("/routing")
+async def routing():
+    """The strategy→account routing map — which setup (source) places on which account
+    when STRATEGY_ROUTING is on. Set STRATEGY_ACCOUNTS (JSON) in the app env to change it;
+    each per-account VPS connector (MT5_ACCOUNT=accN) then places only its strategy."""
+    return {
+        "strategy_routing_enabled": te.STRATEGY_ROUTING_ENABLED,
+        "fleet_enabled": te.FLEET_ENABLED,
+        "map": te.STRATEGY_ACCOUNTS,
+        "default_account": te.STRATEGY_DEFAULT_ACCOUNT,
+        "mode": ("per-setup routing (5 accounts, different setups)" if te.STRATEGY_ROUTING_ENABLED
+                 else "copy-fleet (same trade × accounts)" if te.FLEET_ENABLED
+                 else "single account (no routing)"),
+        "note": ("each source routes to its account; run one VPS connector per account "
+                 "with MT5_ACCOUNT=accN" if te.STRATEGY_ROUTING_ENABLED else
+                 "set STRATEGY_ROUTING_ENABLED=true + STRATEGY_ACCOUNTS to split setups across accounts"),
+    }
+
+
 @router.get("/status")
 async def status(db: AsyncSession = Depends(get_db)):
     """Live-execution readiness: is the switch on, the token set, and how many
