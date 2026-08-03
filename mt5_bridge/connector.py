@@ -18,11 +18,16 @@ Setup (Windows) — ONE connector per account:
   set MAX_VOLUME=0.10             # hard lot cap for THIS account
   py connector.py
 
-5-account fleet: run 5 copies (5 terminals, 5 windows), each with its own
-MT5_ACCOUNT=acc1..acc5 + its own MT5_LOGIN. Turn on FLEET_ENABLED=true in the app
-so one signal fans out to per-account sized orders; each connector's ?account=
-filter pulls only its own, so acc1 gets cent lots and acc5 the layering lots — no
-duplicate fills. Leave MT5_ACCOUNT unset for a single-account setup (all orders).
+5-account setups: run 5 copies (5 terminals, 5 windows on ONE VPS is fine — budget
+~8 GB RAM), each with its own MT5_ACCOUNT=acc1..acc5 + its own MT5_LOGIN. Each
+connector's ?account= filter pulls only its own orders — no duplicate fills. Two app
+modes decide WHAT each account gets:
+  • FLEET_ENABLED=true  — COPY one signal to all 5, sized per account (acc1 cent lots
+    … acc5 layering lots). Same trade everywhere.
+  • STRATEGY_ROUTING_ENABLED=true — DIFFERENT setup per account: each strategy's source
+    routes to its own account via the STRATEGY_ACCOUNTS map (e.g. optimus→acc1,
+    intraday→acc2, asian→acc3, scan→acc4, cbdr→acc5). Verify at GET /execution/routing.
+Leave MT5_ACCOUNT unset for a single-account setup (all orders, no filter).
 
 Safety: it only places orders the app already sized + prop-gated. Start on a
 DEMO / practice account first. Set MAX_VOLUME to hard-cap lot size.
