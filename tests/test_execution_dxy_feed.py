@@ -76,6 +76,38 @@ def test_maybe_enqueue_scales_out_when_exit_style_partial(monkeypatch):
     assert runner["be_price"] == 4200.0 and runner["be_after"] == "p1"
 
 
+def test_strategy_account_routes_by_source(monkeypatch):
+    monkeypatch.setattr(te, "STRATEGY_ROUTING_ENABLED", True)
+    monkeypatch.setattr(te, "STRATEGY_ACCOUNTS",
+                        {"optimus": "acc1", "gold_intraday": "acc2", "gold_scan": "acc4"})
+    monkeypatch.setattr(te, "STRATEGY_DEFAULT_ACCOUNT", "acc1")
+    assert te.strategy_account("optimus") == "acc1"
+    assert te.strategy_account("gold_intraday") == "acc2"
+    assert te.strategy_account("unknown_src") == "acc1"      # fallback to default
+
+
+def test_strategy_routing_off_returns_none(monkeypatch):
+    monkeypatch.setattr(te, "STRATEGY_ROUTING_ENABLED", False)
+    assert te.strategy_account("optimus") is None            # single-account behaviour intact
+
+
+def test_maybe_enqueue_tags_account_by_strategy(monkeypatch):
+    monkeypatch.setattr(te, "EXECUTION_ENABLED", True)
+    monkeypatch.setattr(te, "FLEET_ENABLED", False)
+    monkeypatch.setattr(te, "STRATEGY_ROUTING_ENABLED", True)
+    monkeypatch.setattr(te, "STRATEGY_ACCOUNTS", {"gold_intraday": "acc2"})
+    monkeypatch.setattr(te, "STRATEGY_DEFAULT_ACCOUNT", None)
+    captured = {}
+
+    async def fake_enqueue(db, order):
+        captured["order"] = order
+        return {"id": 1, "status": "pending", **order}
+
+    monkeypatch.setattr(te, "enqueue", fake_enqueue)
+    out = _run(te.maybe_enqueue(_FakeDB(), _sig(), "gold_intraday"))
+    assert out is not None and captured["order"]["account"] == "acc2"   # routed to acc2
+
+
 def test_maybe_enqueue_swallows_errors(monkeypatch):
     monkeypatch.setattr(te, "EXECUTION_ENABLED", True)
 
