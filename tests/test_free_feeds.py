@@ -31,6 +31,37 @@ def test_new_scores_degrade_to_neutral():
         assert s["value"] == 50.0 and s["confidence"] <= 0.2
 
 
+# --- geopolitical news-headline feed (reliable primary, GDELT fallback) ------------
+
+_RSS = """<rss><channel><title>Google News</title>
+<item><title>Missile strike kills dozens as invasion escalates</title></item>
+<item><title>Air strike on port, troops advance in new offensive</item></title></item>
+<item><title>Nuclear tensions rise after retaliation threat</title></item>
+<item><title>Markets rally on tech earnings</title></item>
+<item><title>Central bank holds rates steady</title></item>
+<item><title>New sanctions announced amid conflict</title></item>
+</channel></rss>"""
+
+
+def test_rss_titles_skip_channel_and_unescape():
+    titles = fm._parse_rss_titles(_RSS)
+    assert "google news" not in titles           # channel title skipped
+    assert any("missile strike" in t for t in titles)
+
+
+def test_geo_headline_score_high_when_escalation_dense():
+    titles = fm._parse_rss_titles(_RSS)
+    hi = fm._score_geo_headlines(titles)
+    assert hi is not None and hi > 60           # lots of strike/missile/invasion words
+    calm = ["markets rise", "earnings beat", "rates held", "trade talks resume",
+            "growth steady", "jobs report solid"]
+    assert fm._score_geo_headlines(calm) == 40.0   # baseline when no escalation words
+
+
+def test_geo_headline_score_needs_minimum_headlines():
+    assert fm._score_geo_headlines(["war", "missile"]) is None   # too few → defer to fallback
+
+
 # --- cb_divergence math (encoded rates) -------------------------------------------
 
 def test_cb_divergence_uses_policy_rates():
