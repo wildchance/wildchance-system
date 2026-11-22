@@ -14,7 +14,7 @@ const $=id=>document.getElementById(id);let KEY=null;try{KEY=localStorage.getIte
 async function j(u){const r=await fetch(u,{headers:KEY?{'X-API-Key':KEY}:{}});let d={};try{d=await r.json()}catch(e){}if(!r.ok)throw new Error(d.detail||r.status);return d}
 function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 async function show(){try{const m=await j('/members/me');$('login').style.display='none';$('app').style.display='block';
-$('status').innerHTML=`${m.email} · plan <b>${m.tier}</b>`+(m.paid_until?` · active until ${m.paid_until.slice(0,10)}`:'')+(location.search.includes('paid=1')?' · <span class="ok">payment received — thank you!</span>':'');
+$('status').innerHTML=`${esc(m.email)} · plan <b>${esc(m.tier)}</b>`+(m.paid_until?` · active until ${m.paid_until.slice(0,10)}`:'')+(location.search.includes('paid=1')?' · <span class="ok">payment received — thank you!</span>':'');
 $('tg').innerHTML=m.telegram_invite?`<a class="btn" href="${m.telegram_invite}" target="_blank" rel="noopener">Join the private Telegram</a>`:(m.paid?'':'<a class="btn" href="/pricing">Upgrade for full signals</a>');
 j('/macro/brief').then(b=>$('brief').textContent=b.brief||'—').catch(()=>$('brief').textContent='Unavailable');
 const f=await j('/members/feed');$('feed').innerHTML=f.signals.length?f.signals.map(s=>`<div class="sig"><span class="tag">${s.kind}</span><span class="muted">${(s.at||'').replace('T',' ').slice(0,16)} UTC</span>\n${esc(s.text)}</div>`).join(''):'No signals yet: alerts appear here as they are sent.'}

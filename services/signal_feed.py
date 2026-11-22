@@ -24,11 +24,21 @@ def kind_of(text: str) -> str:
     return "other"
 
 
-def extract_text(content: bytes) -> str:
+def extract_text(content: bytes, channel: str = None) -> str:
+    """Text of a sendMessage body — only when it goes to the SIGNAL channel. Bot replies
+    to individual users (inbound commands) must never reach the members' feed."""
     try:
-        return str(json.loads(content).get("text") or "")
-    except (ValueError, AttributeError):
+        d = json.loads(content)
+    except (ValueError, AttributeError, TypeError):
         return ""
+    if not isinstance(d, dict):
+        return ""
+    if channel is None:
+        from decouple import config
+        channel = config("TELEGRAM_CHAT_ID", default=None)
+    if not channel or str(d.get("chat_id")) != str(channel):
+        return ""
+    return str(d.get("text") or "")
 
 
 async def record(text: str) -> None:

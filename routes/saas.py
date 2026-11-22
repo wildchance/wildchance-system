@@ -25,7 +25,8 @@ async def tiers():
 
 
 @router.post("/signup")
-async def signup(email: str = Query(..., description="account email"),
+async def signup(email: str = Query(..., description="account email", max_length=254,
+                                    pattern=r"^[^@\s<>\"']+@[^@\s<>\"']+\.[A-Za-z]{2,}$"),
                  tier: str = Query("scout"), db: AsyncSession = Depends(get_db)):
     """Create an account + mint an API key (idempotent on email). Start on Scout (free)."""
     return await svc.signup(db, email, tier)

@@ -132,7 +132,10 @@ def test_free_member_sees_teaser_only(client):
 
 def test_feed_capture_helpers():
     from services import signal_feed as sf
-    assert sf.extract_text(b'{"chat_id": 1, "text": "hi"}') == "hi"
+    assert sf.extract_text(b'{"chat_id": -100123, "text": "hi"}', channel="-100123") == "hi"
+    assert sf.extract_text(b'{"chat_id": 555, "text": "your /history"}', channel="-100123") == ""
+    assert sf.extract_text(b'{"chat_id": 1, "text": "x"}', channel="") == ""
+    assert sf.extract_text(b'[1,2]', channel="1") == ""
     assert sf.kind_of("🎯 Swing fade — XAUUSD") == "swing" and sf.kind_of("📦 CBDR — box") == "cbdr"
 
 
@@ -146,3 +149,11 @@ def test_pages_served():
         assert r.status_code == 200 and needle in r.text and "Risk warning" in r.text
     assert c.get("/status").json()["status"] == "Server running"
     assert c.post("/billing/checkout?provider=paystack&tier=trader").status_code == 401
+
+
+def test_signup_rejects_html_emails():
+    from fastapi.testclient import TestClient
+    from main import app
+    c = TestClient(app)
+    assert c.post('/saas/signup?email=<img src=x onerror=alert(1)>@x.co').status_code == 422
+    assert c.post('/saas/signup?email=notanemail').status_code == 422
