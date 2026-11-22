@@ -474,6 +474,12 @@ def fetch_prices():
                     out[pair] = float(node["price"])
                 except (TypeError, ValueError):
                     pass
+    try:                                                # real prices → freshness guard
+        from services.freshness import record
+        for pair in out:
+            record(pair, "twelvedata")
+    except Exception:
+        pass
     # backfill any missing symbol from the snapshot so downstream never KeyErrors
     for pair in symbols:
         out.setdefault(pair, PRICE_FALLBACK[pair])
