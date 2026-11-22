@@ -64,7 +64,7 @@ def test_tick_endpoint(monkeypatch):
     monkeypatch.setattr(rc, "TOKEN", "ct")
     called = []
 
-    async def fake_calls(calls):
+    async def fake_calls(calls, now=None):
         called.extend(calls)
         return [{"call": f"{m} {p}", "code": 502, "detail": "no data"} for m, p in calls]
 
@@ -119,3 +119,55 @@ def test_health_reports_data_and_bridge_is_header_only(monkeypatch):
     body = {"symbol": "XAUUSD", "timeframe": "H1", "bars": []}
     assert c.post("/bridge/bars?token=tk", json=body).status_code == 403     # query ignored
     assert c.post("/bridge/bars", json=body, headers={"X-Bridge-Token": "tk"}).status_code == 200
+
+
+# --- central trade gate in the scheduler ----------------------------------------------
+def test_call_classes():
+    c = cs.call_class
+    assert c("/gold/scan?balance=5000&notify=true") == "entry"
+    assert c("/candlerange/crt?session=ny&execute=true") == "entry"
+    assert c("/swing/scan?notify=true") == "entry" and c("/zconfluence/scan?notify=true") == "entry"
+    assert c("/alerts/session?label=New%20York") == "digest" and c("/intraday/scan") == "digest"
+    assert c("/gold/monitor") == "other" and c("/wildchance/scrape?tier=6h") == "other"
+    assert c("/scorecard/weekly") == "other" and c("/sentiment/scan") == "other"
+
+
+def test_hold_reasons_weekend_and_cbdr():
+    sat = dt.datetime(2026, 11, 28, 12, 0, tzinfo=U)
+    cbdr = dt.datetime(2026, 11, 23, 20, 0, tzinfo=U)          # Mon 15:00 NY
+    london = dt.datetime(2026, 11, 24, 8, 0, tzinfo=U)         # Tue 03:00 NY
+    assert cs.hold_reason("/gold/scan?notify=true", sat) == "market closed"
+    assert cs.hold_reason("/alerts/session?label=x", sat) == "market closed"
+    assert cs.hold_reason("/gold/monitor", sat) is None             # manage always runs
+    assert "CBDR" in cs.hold_reason("/gold/scan?notify=true", cbdr)
+    assert cs.hold_reason("/alerts/session?label=x", cbdr) is None  # digest OK in CBDR window
+    assert cs.hold_reason("/gold/scan?notify=true", london) is None
+
+
+def test_held_calls_dont_count_as_outage(monkeypatch):
+    import asyncio
+    import routes.cron as rc
+    import services.realtime as rt
+    alerts = []
+
+    async def fake_alert(key, text, ttl_hours=None):
+        alerts.append(key)
+        return True
+
+    async def yes(slot):
+        return True
+    monkeypatch.setattr(rt, "alert_once", fake_alert)
+    monkeypatch.setattr(rc, "_claim", yes)
+    sat = dt.datetime(2026, 11, 28, 12, 0, tzinfo=U)
+    job = cs.Job("t", cs.UTC, (12,), 0, (("POST", "/gold/scan?notify=true"),
+                                          ("POST", "/gold/intraday?notify=true"),
+                                          ("POST", "/gold/alerter/scan?notify=true"),
+                                          ("GET", "/swing/scan?notify=true")))
+    loop = asyncio.new_event_loop()
+    try:
+        rec = loop.run_until_complete(rc._run_jobs([("t@x", job)], sat))
+    finally:
+        loop.close()
+    res = rec["jobs"][0]["results"]
+    assert all(r["code"] == 0 and r["detail"] == "held: market closed" for r in res)
+    assert alerts == []                                            # no false outage alarm
