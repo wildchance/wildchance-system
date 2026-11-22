@@ -109,7 +109,7 @@ jobs:
             post "/gold/retracement?deploy=true&force=true"
             post "/gold/confirm?deploy=true"
             post "/gold/stratops/deploy"
-            post "/swing/scan?notify=true"
+            get "/swing/scan?notify=true"
             exit 0
           fi
 
@@ -141,7 +141,7 @@ jobs:
             "0 0,12,18 * * *")
               post "/wildchance/scrape?tier=6h"
               post "/autoalert/confluence?min_confidence=85"
-              post "/swing/scan?notify=true"      # HTF Bollinger ±2σ fades (backup when no EA feed)
+              get "/swing/scan?notify=true"      # HTF Bollinger ±2σ fades (backup when no EA feed)
               ;;
             "0 21 * * 5")
               post "/wildchance/scrape?tier=weekly"
@@ -233,7 +233,7 @@ jobs:
               # state (paper-deploy SELL-the-OTE on a fresh flip).
               post "/gold/recon?force=true"
               post "/gold/retracement?deploy=true"
-              post "/swing/scan?notify=true"      # new trading day → HTF Bollinger swing read
+              get "/swing/scan?notify=true"      # new trading day → HTF Bollinger swing read
               ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac
