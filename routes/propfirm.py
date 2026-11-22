@@ -116,3 +116,17 @@ async def challenge_guard(equity: float = Query(...),
                            day_start_equity if day_start_equity is not None else day_start_balance,
                            phase, preset, peak_equity=peak_equity,
                            trading_days=trading_days)
+
+
+@router.get("/lots")
+async def lots(balance: float = Query(2500.0, gt=0),
+               symbol: str = Query("EURUSD"),
+               sl_pips: float = Query(10.0, gt=0),
+               target_usd: Optional[float] = Query(None, gt=0,
+                   description="default ≈ 0.52 % of balance ($13 on 2.5k)"),
+               price: Optional[float] = Query(None, description="needed for USDxxx pairs"),
+               pip_value: Optional[float] = Query(None, description="USD per pip per lot (crosses)"),
+               max_risk_pct: float = Query(0.5, gt=0, le=5)):
+    """Target-based FX lot ladder (owner's sheet): lot per TP rung 1.3R…5.2R."""
+    from propfirm.target_lots import ladder
+    return ladder(balance, symbol, sl_pips, target_usd, price, pip_value, max_risk_pct)
