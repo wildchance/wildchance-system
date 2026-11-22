@@ -2,6 +2,8 @@
 
   GET /sentiment/scan            score the swing universe (cached SENTIMENT_TTL_MIN)
   GET /sentiment/{symbol}        one instrument, e.g. /sentiment/XAUUSD?force=true
+  GET /sentiment/polymarket      prediction-market read per asset
+  GET /sentiment/composite/{sym} news + Polymarket + Myfxbook retail (contrarian)
 """
 
 from __future__ import annotations
@@ -23,11 +25,31 @@ async def _one(sym: str, force: bool):
 
 @router.get("/scan")
 async def scan(force: bool = Query(False)):
+    """Refresh every source, then report the composite per asset."""
     from services.swing_service import universe, display
+    from services import market_sentiment as ms, polymarket_service as pm
+    from wildchance import wildchance_scraper as wc
     syms = [display(s) for s in universe()]
     rows = await asyncio.gather(*(_one(s, force) for s in syms))
+    poly = await pm.fetch()
+    await asyncio.to_thread(wc.fetch_retail)
     return {"auto_bias": ai.AUTO_BIAS, "model": ai.NVIDIA_MODEL,
-            "locks": ai.cached_locks(), "results": list(rows)}
+            "polymarket": {k: poly[k] for k in ("ok", "relevant", "used", "as_of")},
+            "retail": wc.retail_status(),
+            "locks": ms.cached_locks(syms),
+            "composite": [ms.read(s) for s in syms], "news": list(rows)}
+
+
+@router.get("/polymarket")
+async def polymarket():
+    from services import polymarket_service as pm
+    return await pm.fetch()
+
+
+@router.get("/composite/{symbol}")
+async def composite(symbol: str):
+    from services import market_sentiment as ms
+    return ms.read(symbol)
 
 
 @router.get("/{symbol}")

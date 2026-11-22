@@ -26,9 +26,9 @@ def macro_bias() -> Dict[str, str]:
     Elliott-wave maps…). Env MACRO_BIAS='{"BTCUSD":"SELL_ONLY","XAUUSD":"BOTH"}'."""
     import json
     out: Dict[str, str] = {}
-    try:                                    # AI sentiment locks (opt-in, strong reads only)
-        from services.ai_sentiment import cached_locks
-        out.update(cached_locks())
+    try:                                    # composite sentiment locks (opt-in; news +
+        from services.market_sentiment import cached_locks   # Polymarket + retail agree)
+        out.update(cached_locks([display(s) for s in universe()]))
     except Exception:
         pass
     try:                                    # your manual locks always win
@@ -96,10 +96,18 @@ async def analyze(symbol: str, with_cbdr: bool = True) -> Dict:
             pass
     setup = apply_bias(setup, macro_bias().get(display(symbol)))
     try:                                    # cached AI sentiment as context (no API call here)
-        from services.ai_sentiment import _cache
-        s = _cache.get(display(symbol))
-        if s:
-            setup["sentiment"] = {k: s[k] for k in ("bias", "score", "confidence", "as_of")}
+        from services.market_sentiment import read
+        r = read(display(symbol))
+        if r["composite"] is not None:
+            setup["sentiment"] = r
+        from derivs.expiry import flags_for
+        import datetime as _dt
+        ex = flags_for(display(symbol), _dt.date.today())
+        if ex:
+            setup["expiry"] = ex
+            setup.setdefault("blockers", [])
+            setup["notes"] = [f"[EXPIRY] {e['market']} {e['type']} {e['date']} — pinning/vol risk"
+                              for e in ex]
     except Exception:
         pass
     return {"symbol": display(symbol), "td_symbol": symbol, **setup,
@@ -135,7 +143,10 @@ def format_alert(r: Dict) -> str:
         lines.append("Trigger: close back inside 2σ on " + "/".join(r["triggers"]))
     if r.get("sentiment"):
         se = r["sentiment"]
-        lines.append(f"AI sentiment: {se['bias']} ({se['score']:+.2f}, conf {se['confidence']:.0%})")
+        parts = ", ".join(f"{k} {v:+.2f}" for k, v in se["components"].items() if v is not None)
+        lines.append(f"Sentiment: {se['bias']} {se['composite']:+.2f} ({parts})")
+    for n in r.get("notes", []):
+        lines.append(n)
     if r.get("cbdr_confluence"):
         m = r["cbdr_confluence"][0]
         lines.append(f"CBDR {m['cbdr']} ≈ {m['band']} → limit {r.get('limit_entry')}")
