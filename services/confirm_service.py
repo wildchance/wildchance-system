@@ -111,6 +111,15 @@ async def confirm(balance: float = 5000.0, risk_usd: float = 20.0,
     # dedup on the rejection signature (level + close)
     sig = f"{r['signal']}:{r['level']}:{r['close']}"
     changed = sig != _read_last()
+    # owner's rules: no CBDR-forming entries, furthest TP ≥ 1.3R, weekly profile not against
+    from services import trade_gate as tg
+    gate = tg.evaluate("XAU/USD", r["signal"], float(sized["entry"]), float(sized["stop"]),
+                       [t.get("price") for t in sized.get("targets", [])],
+                       weekly=await tg.weekly_profile("XAU/USD"))
+    if not gate["allow"]:
+        _write_last(sig)
+        return {"confirmed": True, "sized": sized, "gated": gate,
+                "reason": "held by trade gate: " + "; ".join(gate["reasons"])}
     sent = False
     if notify and changed:
         sent = await gold_scan._tg(_card_text(sized, r))
