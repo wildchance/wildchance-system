@@ -171,3 +171,28 @@ def test_held_calls_dont_count_as_outage(monkeypatch):
     res = rec["jobs"][0]["results"]
     assert all(r["code"] == 0 and r["detail"] == "held: market closed" for r in res)
     assert alerts == []                                            # no false outage alarm
+
+
+def test_no_job_is_dead_on_arrival():
+    """Every job with entry calls must have at least one weekday slot where the central
+    gate lets entries through (regression: newcbdr at 14:00 NY, Sunday review at 17:00 NY)."""
+    for j in cs.jobs():
+        entries = [p for _, p in j.calls if cs.call_class(p) == "entry"]
+        if not entries:
+            continue
+        ok = False
+        for day in range(23, 30):                                 # one full week (Nov 2026)
+            for h in range(24):
+                now = dt.datetime(2026, 11, day, h, 30, tzinfo=U)
+                for slot in cs.slots(j, now, 60):
+                    if cs.hold_reason(entries[0], slot) is None:
+                        ok = True
+        assert ok, f"{j.name}: entries are held at every scheduled slot"
+
+
+def test_rescheduled_jobs():
+    j = _job("cbdr_complete_2000ny")
+    assert cs.slots(j, dt.datetime(2026, 11, 24, 1, 10, tzinfo=U), 10)      # 20:05 NY (EST)
+    w = _job("weekly_review_sun")
+    assert cs.slots(w, dt.datetime(2026, 11, 30, 1, 10, tzinfo=U), 10)      # Sun 20:05 NY
+    assert cs.hold_reason("/gold/scan?notify=true", dt.datetime(2026, 11, 30, 1, 5, tzinfo=U)) is None

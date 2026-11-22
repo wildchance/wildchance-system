@@ -71,7 +71,10 @@ def jobs() -> List[Job]:
             (P, "/gold/regime/refresh"), (P, "/gold/dxy/flip")), days=(4,)),
         Job("monthly_scorecard", UTC, (8,), 0, ((P, "/scorecard/digest"),), dom=1),
         Job("hourly", UTC, None, 0, tuple(hourly)),
-        Job("weekly_review_sun", UTC, (22,), 0, ((P, "/scorecard/weekly"),
+        # Sunday weekly open — 20:05 New York, once Sunday's CBDR box (17:00 open → 20:00)
+        # is complete. 22:00 UTC was 17:00 NY in winter: inside the thin open hour AND the
+        # forming box, so the weekly gold swing scan was held every week.
+        Job("weekly_review_sun", NY, (20,), 5, ((P, "/scorecard/weekly"),
             (P, "/gold/scan?balance=5000&notify=true"), (P, "/cbdr/alert/XAU/USD?window=trade4"),
             (P, "/gold/monitor"), (P, "/gold/scorecard/digest"), (P, "/gold/stratops/fit")), days=(6,)),
         Job("asia_accumulation", UTC, (2,), 0, ((P, "/gold/intraday?balance=5000&notify=true"),
@@ -100,7 +103,12 @@ def jobs() -> List[Job]:
         Job("ny_am_0930", NY, (9,), 30, ((P, "/gold/intraday?balance=5000&require_distribution=true&notify=true"),),
             days=WEEKDAYS),
         Job("newday_0000ny", NY, (0,), 0, newday),
-        Job("newcbdr_1400ny", NY, (14,), 0, newday),
+        # The CBDR box forms 14:00–20:00 NY (entries are held meanwhile); trade it once
+        # it is COMPLETE: box levels for the majors + gold, then the swing/recon reads.
+        Job("cbdr_complete_2000ny", NY, (20,), 5, (
+            (P, "/cbdr/alert/XAU/USD?window=cbdr"), (P, "/cbdr/alert/EUR/USD?window=cbdr"),
+            (P, "/cbdr/alert/GBP/USD?window=cbdr"), (P, "/cbdr/alert/USD/JPY?window=cbdr"))
+            + newday),
         Job("friday_preclose", NY, (16,), 55, ((P, "/candlerange/friday"),), days=(4,)),
     ]
 
