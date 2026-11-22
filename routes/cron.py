@@ -53,7 +53,7 @@ async def _call_all(calls) -> List[Dict]:
     from main import app
     out = []
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://app", timeout=180) as c:
+    async with httpx.AsyncClient(transport=transport, base_url="http://app", timeout=900) as c:
         for method, path in calls:
             try:
                 r = await c.request(method, path)
