@@ -140,6 +140,41 @@ def due(now: dt.datetime, done: Iterable[str] = (), job_list: Optional[Sequence[
     return res
 
 
+# Call classes for the central trade gate (services.trade_gate.session_block):
+#   ENTRY  → new trades / deploys / trade alerts: held on weekends AND while the CBDR box forms
+#   DIGEST → setup / breach / box digests: held on weekends only (Friday's bars)
+#   other  → manage open trades, scrapes, COT, refreshes, reports: always run
+import re as _re
+
+_ENTRY = _re.compile(r"execute=true|deploy=true|/stratops/deploy|/gold/scan|/gold/intraday|"
+                     r"/gold/alerter|/swing/scan|/zconfluence|/cbdr/limits|/gold/prelondon|"
+                     r"/gold/recon|/candlerange/crt|/autoalert")
+_DIGEST = _re.compile(r"/alerts/session|/intraday/scan|/cbdr/alert|/candlerange/(scan|friday)|"
+                      r"/gold/zones/digest|/gold/kingdom-report|/gold/dxy/flip|/usdjpy/scan")
+
+
+def call_class(path: str) -> str:
+    if _ENTRY.search(path):
+        return "entry"
+    if _DIGEST.search(path):
+        return "digest"
+    return "other"
+
+
+def hold_reason(path: str, now: dt.datetime) -> Optional[str]:
+    """Why the central gate holds this call right now (None = run it)."""
+    from services.freshness import market_open
+    from services.trade_gate import session_block
+    cls = call_class(path)
+    if cls == "other":
+        return None
+    if not market_open(now):
+        return "market closed"
+    if cls == "entry":
+        return session_block(now)
+    return None
+
+
 def redact(path: str) -> str:
     import re
     return re.sub(r"(token=)[^&]+", r"\1***", path)

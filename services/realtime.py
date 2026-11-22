@@ -57,6 +57,11 @@ async def on_bars(symbol: str, timeframe: str) -> Dict:
     from services import swing_service as sw
     sym, tf = symbol.upper(), timeframe.upper()
     out: Dict = {"symbol": sym, "timeframe": tf}
+    from services.trade_gate import session_block
+    held = session_block()
+    if held:                                  # owner's rules: no entries now
+        out["held"] = held
+        return out
     try:
         if tf in ("H4", "D1", "W1"):
             r = await sw.analyze(td_symbol(sym))

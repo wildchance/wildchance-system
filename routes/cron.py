@@ -49,12 +49,18 @@ async def _claim(slot: str) -> bool:
         return "unique" not in str(e).lower() and "duplicate" not in str(e).lower()
 
 
-async def _call_all(calls) -> List[Dict]:
+async def _call_all(calls, now: Optional[dt.datetime] = None) -> List[Dict]:
     from main import app
     out = []
+    now = now or dt.datetime.now(dt.timezone.utc)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://app", timeout=900) as c:
         for method, path in calls:
+            held = cs.hold_reason(path, now)
+            if held:                                   # central trade gate (owner's rules)
+                out.append({"call": f"{method} {cs.redact(path)}", "code": 0,
+                            "detail": f"held: {held}"})
+                continue
             try:
                 r = await c.request(method, path)
                 code, body = r.status_code, r.text[:160]
@@ -70,10 +76,10 @@ async def _run_jobs(items, now: dt.datetime, forced: bool = False) -> Dict:
     for slot, job in items:
         if not forced and not await _claim(slot):
             continue
-        ran.append({"slot": slot, "results": await _call_all(job.calls)})
+        ran.append({"slot": slot, "results": await _call_all(job.calls, now)})
     rec = {"tick_utc": now.isoformat(timespec="seconds"), "jobs": ran}
     HISTORY.appendleft(rec)
-    calls = [r for j in ran for r in j["results"]]
+    calls = [r for j in ran for r in j["results"] if r["code"] != 0]   # executed only
     failed = [r for r in calls if r["code"] >= 500]
     if len(calls) >= 4 and len(failed) / len(calls) >= 0.6:
         from services.realtime import alert_once
