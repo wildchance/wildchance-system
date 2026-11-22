@@ -95,6 +95,7 @@ from routes.sentiment import router as sentiment_router
 from routes.derivs import router as derivs_router
 from routes.cron import router as cron_router
 from routes.zconfluence import router as zconfluence_router
+from routes.macro import router as macro_router
 from routes.bt_engines import router as bt_engines_router   # Bumblebee / Warthog backtests
 
 # Real-time streaming
@@ -295,6 +296,7 @@ app.include_router(derivs_router)
 app.include_router(cron_router)
 app.include_router(bt_engines_router)
 app.include_router(zconfluence_router)
+app.include_router(macro_router)
 app.include_router(correlation_router)
 
 # Serve the static dashboards (EdgeFinder board at /static/dashboard/edgefinder.html).

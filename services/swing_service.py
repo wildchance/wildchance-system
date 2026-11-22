@@ -21,6 +21,25 @@ DISPLAY = {"XAU/USD": "XAUUSD", "XAG/USD": "XAGUSD", "BTC/USD": "BTCUSD", "WTI/U
            "SPX": "US500", "NDX": "NAS100", "DJI": "US30"}
 
 
+# Owner's macro views as switchable Stage-0 presets (MACRO_REGIMES="a,b"). These are
+# the OWNER's theses, not forecasts made by the system. Precedence (low → high):
+# AI sentiment locks < regime presets < manual MACRO_BIAS.
+REGIME_PRESETS: Dict[str, Dict[str, str]] = {
+    # midterm "blue sweep" → policy uncertainty: risk-off tilt
+    "political_uncertainty": {"US500": "SELL_ONLY", "NAS100": "SELL_ONLY", "US30": "SELL_ONLY",
+                              "XAUUSD": "BUY_ONLY"},
+    # Trump-1 analog on DXY: 2017-18 drop then 2018-19 rebound → USD-bullish leg
+    "usd_bull_trump1_analog": {"EURUSD": "SELL_ONLY", "GBPUSD": "SELL_ONLY",
+                               "AUDUSD": "SELL_ONLY", "NZDUSD": "SELL_ONLY",
+                               "USDJPY": "BUY_ONLY", "USDCAD": "BUY_ONLY", "USDCHF": "BUY_ONLY"},
+}
+
+
+def active_regimes() -> List[str]:
+    raw = str(config("MACRO_REGIMES", default="") or "")
+    return [r.strip() for r in raw.split(",") if r.strip() in REGIME_PRESETS]
+
+
 def macro_bias() -> Dict[str, str]:
     """Stage-0 weekly direction locks from your own HTF analysis (COT, currency meter,
     Elliott-wave maps…). Env MACRO_BIAS='{"BTCUSD":"SELL_ONLY","XAUUSD":"BOTH"}'."""
@@ -31,6 +50,8 @@ def macro_bias() -> Dict[str, str]:
         out.update(cached_locks([display(s) for s in universe()]))
     except Exception:
         pass
+    for r in active_regimes():              # owner's regime presets
+        out.update(REGIME_PRESETS[r])
     try:                                    # your manual locks always win
         raw = json.loads(config("MACRO_BIAS", default="{}") or "{}")
         out.update({str(k).upper().replace("/", ""): str(v).upper() for k, v in raw.items()})
