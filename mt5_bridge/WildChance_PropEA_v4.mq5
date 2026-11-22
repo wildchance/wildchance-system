@@ -40,15 +40,15 @@ enum ENUM_MACRO_BIAS
 
 enum ENUM_FP_PRESET
   {
-   FP_CUSTOM        = 0, // Custom (use the % inputs below as-is)
-   FP_2STEP_STD_5   = 1, // FundingPips 2-Step Standard 8%/5%, 5% daily, 10% static
-   FP_2STEP_STD_3   = 2, // FundingPips 2-Step Standard 8%/5%, 3% daily, 10% static
-   FP_2STEP_FLEX    = 3, // FundingPips 2-Step Flex 10%/8%, 4% daily, 12% static
-   FP_2STEP_PRO     = 4, // FundingPips 2-Step Pro 6%/6%, 3% daily, 6% static
-   FP_1STEP_3       = 5, // FundingPips 1-Step Flex 12%, 3% daily, 12% static
-   FP_1STEP_2       = 6, // FundingPips 1-Step Flex 12%, 2% daily, 12% static
-   FP_1STEP_LABS    = 7, // FundingPips 1-Step LABS001 5%, 1% daily, 3% EOD max
-   FP_ZERO          = 8  // FundingPips Zero: no target, 3% daily, 5% trailing max
+   PLAN_CUSTOM        = 0, // Custom (use the % inputs below as-is)
+   PLAN_2STEP_STD_5   = 1, // FundingPips 2-Step Standard 8%/5%, 5% daily, 10% static
+   PLAN_2STEP_STD_3   = 2, // FundingPips 2-Step Standard 8%/5%, 3% daily, 10% static
+   PLAN_2STEP_FLEX    = 3, // FundingPips 2-Step Flex 10%/8%, 4% daily, 12% static
+   PLAN_2STEP_PRO     = 4, // FundingPips 2-Step Pro 6%/6%, 3% daily, 6% static
+   PLAN_1STEP_3       = 5, // FundingPips 1-Step Flex 12%, 3% daily, 12% static
+   PLAN_1STEP_2       = 6, // FundingPips 1-Step Flex 12%, 2% daily, 12% static
+   PLAN_1STEP_LABS    = 7, // FundingPips 1-Step LABS001 5%, 1% daily, 3% EOD max
+   PLAN_ZERO          = 8  // FundingPips Zero: no target, 3% daily, 5% trailing max
   };
 
 enum ENUM_MAX_REF { MAXREF_STATIC=0, MAXREF_TRAILING=1, MAXREF_EOD=2 };
@@ -61,7 +61,7 @@ enum ENUM_LUNAR_SHIFT_MODE
 
 //----------------------------------------------------------------- inputs
 input group "=== 1. PROP CHALLENGE GUARD (FundingPips) ==="
-input ENUM_FP_PRESET InpPreset      = FP_2STEP_STD_5; // Account plan (sets daily/max/target/max type)
+input ENUM_FP_PRESET InpPreset      = PLAN_2STEP_STD_5; // Account plan (sets daily/max/target/max type)
 input int      InpPhase             = 1;      // 1 / 2 = evaluation phase, 0 = funded (no target lock)
 input double   InpDailyBufferPct    = 70;     // Stop at this % of the firm's daily limit (5% -> 3.5%)
 input double   InpMaxBufferPct      = 80;     // Stop at this % of the firm's max loss (10% -> 8%)
@@ -308,17 +308,17 @@ void ApplyPreset()
    double d=0, m=0, t1=0, t2=0; int ref=MAXREF_STATIC, md=0; bool prof=false; string nm="CUSTOM";
    switch(InpPreset)
      {
-      case FP_2STEP_STD_5: d=5; m=10; t1=8;  t2=5; md=3; nm="FP 2-Step Std 5%";   break;
-      case FP_2STEP_STD_3: d=3; m=10; t1=8;  t2=5; md=3; nm="FP 2-Step Std 3%";   break;
-      case FP_2STEP_FLEX:  d=4; m=12; t1=10; t2=8; md=1; nm="FP 2-Step Flex";     break;
-      case FP_2STEP_PRO:   d=3; m=6;  t1=6;  t2=6; nm="FP 2-Step Pro";      break;
-      case FP_1STEP_3:     d=3; m=12; t1=12; t2=0; nm="FP 1-Step 3%";       break;
-      case FP_1STEP_2:     d=2; m=12; t1=12; t2=0; nm="FP 1-Step 2%";       break;
-      case FP_1STEP_LABS:  d=1; m=3;  t1=5;  t2=0; ref=MAXREF_EOD; nm="FP LABS001"; break;
-      case FP_ZERO:        d=3; m=5;  t1=0;  t2=0; ref=MAXREF_TRAILING; md=7; prof=true; nm="FP Zero"; break;
+      case PLAN_2STEP_STD_5: d=5; m=10; t1=8;  t2=5; md=3; nm="FP 2-Step Std 5%";   break;
+      case PLAN_2STEP_STD_3: d=3; m=10; t1=8;  t2=5; md=3; nm="FP 2-Step Std 3%";   break;
+      case PLAN_2STEP_FLEX:  d=4; m=12; t1=10; t2=8; md=1; nm="FP 2-Step Flex";     break;
+      case PLAN_2STEP_PRO:   d=3; m=6;  t1=6;  t2=6; nm="FP 2-Step Pro";      break;
+      case PLAN_1STEP_3:     d=3; m=12; t1=12; t2=0; nm="FP 1-Step 3%";       break;
+      case PLAN_1STEP_2:     d=2; m=12; t1=12; t2=0; nm="FP 1-Step 2%";       break;
+      case PLAN_1STEP_LABS:  d=1; m=3;  t1=5;  t2=0; ref=MAXREF_EOD; nm="FP LABS001"; break;
+      case PLAN_ZERO:        d=3; m=5;  t1=0;  t2=0; ref=MAXREF_TRAILING; md=7; prof=true; nm="FP Zero"; break;
       default: break;
      }
-   if(InpPreset == FP_CUSTOM)
+   if(InpPreset == PLAN_CUSTOM)
      { g_dailyPct=InpDailyLossLimitPct; g_maxPct=InpMaxLossLimitPct; g_targetPct=InpProfitTargetPct; }
    else
      {
@@ -327,7 +327,7 @@ void ApplyPreset()
       g_targetPct = (InpPhase<=0) ? 0 : (InpPhase==1 ? t1 : t2);
      }
    g_maxRef = ref; g_presetName = nm;
-   g_minDays = (InpPreset == FP_CUSTOM) ? InpMinTradingDays : ((InpPhase<=0 && !prof) ? 0 : md);
+   g_minDays = (InpPreset == PLAN_CUSTOM) ? InpMinTradingDays : ((InpPhase<=0 && !prof) ? 0 : md);
    g_minDaysProfitable = prof;
    if(InpRiskPct > g_dailyPct)
       Print("WildChance WARNING: risk/trade ",InpRiskPct,"% exceeds the daily guard ",g_dailyPct,"%");
