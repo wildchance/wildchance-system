@@ -1,10 +1,11 @@
 """EA → app data bridge. The MT5 EA pushes closed broker bars + an account snapshot.
 
-  POST /bridge/bars?token=…     {"symbol":"XAUUSD.r","timeframe":"H1","bars":[{t,o,h,l,c,v}]}
-  POST /bridge/account?token=…  {"login":…, "balance":…, "equity":…, "guard":"ACTIVE", …}
+  POST /bridge/bars              {"symbol":"XAUUSD.r","timeframe":"H1","bars":[{t,o,h,l,c,v}]}
+  POST /bridge/account           {"login":…, "balance":…, "equity":…, "guard":"ACTIVE", …}
   GET  /bridge/status           what has arrived, how fresh, last account snapshots
 
-Auth: BRIDGE_TOKEN (falls back to EXECUTION_TOKEN). Without either → 503.
+Auth: BRIDGE_TOKEN (falls back to EXECUTION_TOKEN) in the X-Bridge-Token HEADER only —
+a ?token= query parameter is ignored so the secret never lands in request logs.
 Every bar push also runs the real-time engines for that symbol (services.realtime).
 """
 
@@ -42,10 +43,9 @@ class BarsIn(BaseModel):
 
 @router.post("/bars")
 async def bars(body: BarsIn, background: BackgroundTasks,
-               token: Optional[str] = Query(None),
                x_bridge_token: Optional[str] = Header(None),
                db: AsyncSession = Depends(get_db)):
-    _auth(token or x_bridge_token)
+    _auth(x_bridge_token)
     res = await broker_feed.ingest(db, body.symbol, body.timeframe, body.bars)
     if res.get("ok"):
         from services.realtime import on_bars
@@ -54,9 +54,9 @@ async def bars(body: BarsIn, background: BackgroundTasks,
 
 
 @router.post("/account")
-async def account(snapshot: Dict, token: Optional[str] = Query(None),
+async def account(snapshot: Dict,
                   x_bridge_token: Optional[str] = Header(None)):
-    _auth(token or x_bridge_token)
+    _auth(x_bridge_token)
     key = str(snapshot.get("login") or "default")
     _accounts[key] = {**snapshot, "received_utc": dt.datetime.now(dt.timezone.utc).isoformat()}
     return {"ok": True}
@@ -73,11 +73,11 @@ async def status():
 
 @router.get("/export")
 async def export(symbol: str = Query(...), timeframe: str = Query("D1"),
-                 n: int = Query(3000, ge=10, le=20000), token: Optional[str] = Query(None),
+                 n: int = Query(3000, ge=10, le=20000),
                  x_bridge_token: Optional[str] = Header(None),
                  db: AsyncSession = Depends(get_db)):
     """Broker bars oldest-first for offline research (backtest/bb_sweep.py on a compute box)."""
-    _auth(token or x_bridge_token)
+    _auth(x_bridge_token)
     rows = await broker_feed.recent(db, symbol, timeframe.upper(), n)
     bars = [{"t": int(r.ts.replace(tzinfo=r.ts.tzinfo or dt.timezone.utc).timestamp()),
              "o": r.open, "h": r.high, "l": r.low, "c": r.close, "v": r.volume}
@@ -91,11 +91,11 @@ class CalendarIn(BaseModel):
 
 
 @router.post("/calendar")
-async def calendar(body: CalendarIn, token: Optional[str] = Query(None),
+async def calendar(body: CalendarIn,
                    x_bridge_token: Optional[str] = Header(None)):
     """The EA's MT5 economic calendar (broker-grade, free) — backs up the ForexFactory feed.
     events: [{t: unix UTC, ccy, event, impact: high|medium|low, actual, forecast, previous}]"""
-    _auth(token or x_bridge_token)
+    _auth(x_bridge_token)
     from wildchance import wildchance_scraper as wc
     n = wc.set_ea_calendar(body.events)
     return {"ok": True, "events": n}

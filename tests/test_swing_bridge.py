@@ -111,11 +111,11 @@ def test_ea_push_feeds_swing_engine_end_to_end(monkeypatch, tmp_path):
     with TestClient(app) as c:
         assert c.post("/bridge/bars", json={"symbol": "XAGUSD.r", "timeframe": "D1",
                                             "bars": bars}).status_code == 403
-        r = c.post("/bridge/bars?token=t0k", json={"symbol": "XAGUSD.r", "timeframe": "D1",
+        r = c.post("/bridge/bars", headers={"X-Bridge-Token": "t0k"}, json={"symbol": "XAGUSD.r", "timeframe": "D1",
                                                    "bars": bars}).json()
         assert r["ok"] and r["symbol"] == "XAGUSD" and r["bars"] == len(d1)
         # re-push overlapping bars → upsert, not duplicates
-        c.post("/bridge/bars?token=t0k", json={"symbol": "XAGUSD", "timeframe": "D1",
+        c.post("/bridge/bars", headers={"X-Bridge-Token": "t0k"}, json={"symbol": "XAGUSD", "timeframe": "D1",
                                                "bars": bars[-5:]})
         st = c.get("/bridge/status").json()
         row = [s for s in st["feed"]["series"] if s["symbol"] == "XAGUSD" and s["timeframe"] == "D1"][0]
@@ -123,7 +123,7 @@ def test_ea_push_feeds_swing_engine_end_to_end(monkeypatch, tmp_path):
         sw = c.get("/swing/XAGUSD").json()
         assert sw["symbol"] == "XAGUSD" and sw["bands"]["D1"]["zone"] == "STRETCHED_HIGH"
         assert sw["side"] == "SELL"
-        assert c.post("/bridge/account?token=t0k", json={"login": 1, "equity": 10000}).json()["ok"]
+        assert c.post("/bridge/account", json={"login": 1, "equity": 10000}, headers={"X-Bridge-Token": "t0k"}).json()["ok"]
     app.dependency_overrides.clear()
 
 

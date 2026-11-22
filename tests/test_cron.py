@@ -91,3 +91,31 @@ def test_tick_endpoint(monkeypatch):
     assert c.get("/cron/run?job=nope&token=ct").status_code == 404
     jobs = c.get("/cron/jobs").json()["jobs"]
     assert len(jobs) == 25 and all(j["next_utc"] for j in jobs)
+
+
+# --- data freshness -------------------------------------------------------------------
+def test_freshness_grades():
+    from services import freshness as f
+    wed = dt.datetime(2026, 11, 25, 15, 0, tzinfo=U)
+    sat = dt.datetime(2026, 11, 28, 15, 0, tzinfo=U)
+    sun_open = dt.datetime(2026, 11, 29, 23, 0, tzinfo=U)      # 18:00 NY → open
+    fri_close = dt.datetime(2026, 11, 27, 22, 30, tzinfo=U)    # 17:30 NY → closed
+    assert f.market_open(wed) and f.market_open(sun_open)
+    assert not f.market_open(sat) and not f.market_open(fri_close)
+    assert f.grade(30, wed) == "OK" and f.grade(500, wed) == "STALE"
+    assert f.grade(5000, sat) == "CLOSED"
+    assert f.grade(None, wed, uptime_min=10) == "UNKNOWN"
+    assert f.grade(None, wed, uptime_min=200) == "STALE"
+
+
+def test_health_reports_data_and_bridge_is_header_only(monkeypatch):
+    from fastapi.testclient import TestClient
+    import routes.bridge as rb
+    from main import app
+    monkeypatch.setattr(rb, "TOKEN", "tk")
+    c = TestClient(app)
+    h = c.get("/health").json()
+    assert "data" in h and h["data"]["status"] in ("OK", "STALE", "CLOSED", "UNKNOWN")
+    body = {"symbol": "XAUUSD", "timeframe": "H1", "bars": []}
+    assert c.post("/bridge/bars?token=tk", json=body).status_code == 403     # query ignored
+    assert c.post("/bridge/bars", json=body, headers={"X-Bridge-Token": "tk"}).status_code == 200

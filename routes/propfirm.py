@@ -108,8 +108,11 @@ async def challenge_guard(equity: float = Query(...),
                           day_start_equity: Optional[float] = Query(None),
                           phase: int = Query(1, ge=0, le=2, description="0 = funded"),
                           preset: str = Query(ch.DEFAULT_PRESET),
-                          peak_equity: Optional[float] = Query(None, description="trailing presets")):
+                          peak_equity: Optional[float] = Query(None, description="trailing presets"),
+                          trading_days: Optional[int] = Query(None, ge=0,
+                              description="days traded so far (profitable days for Zero)")):
     """The same kill-switch the VPS bridge and the EA run, for a dashboard/what-if."""
     return ch.equity_guard(equity, initial_balance, day_start_balance,
                            day_start_equity if day_start_equity is not None else day_start_balance,
-                           phase, preset, peak_equity=peak_equity)
+                           phase, preset, peak_equity=peak_equity,
+                           trading_days=trading_days)

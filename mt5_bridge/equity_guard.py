@@ -25,25 +25,30 @@ from typing import Dict, Optional
 
 
 # Mirror of propfirm/challenge.py PRESETS (kept stdlib-only so the VPS needs no repo).
-# (daily_loss, max_loss, max_ref: static|trailing|eod, [phase targets])
+# (daily_loss, max_loss, max_ref: static|trailing|eod, [phase targets], min trading days)
 PRESETS = {
-    "fundingpips_2step_8":    (0.05, 0.10, "static",   [0.08, 0.05]),
-    "fundingpips_2step_8_d3": (0.03, 0.10, "static",   [0.08, 0.05]),
-    "fundingpips_2step_flex": (0.04, 0.12, "static",   [0.10, 0.08]),
-    "fundingpips_2step_pro":  (0.03, 0.06, "static",   [0.06, 0.06]),
-    "fundingpips_1step":      (0.03, 0.12, "static",   [0.12]),
-    "fundingpips_1step_d2":   (0.02, 0.12, "static",   [0.12]),
-    "fundingpips_1step_labs": (0.01, 0.03, "eod",      [0.05]),
-    "fundingpips_zero":       (0.03, 0.05, "trailing", []),
-    "ftmo_2step":             (0.05, 0.10, "static",   [0.10, 0.05]),
+    "fundingpips_2step_8":    (0.05, 0.10, "static",   [0.08, 0.05], 3),
+    "fundingpips_2step_8_d3": (0.03, 0.10, "static",   [0.08, 0.05], 3),
+    "fundingpips_2step_flex": (0.04, 0.12, "static",   [0.10, 0.08], 1),
+    "fundingpips_2step_pro":  (0.03, 0.06, "static",   [0.06, 0.06], 0),
+    "fundingpips_1step":      (0.03, 0.12, "static",   [0.12],       0),
+    "fundingpips_1step_d2":   (0.02, 0.12, "static",   [0.12],       0),
+    "fundingpips_1step_labs": (0.01, 0.03, "eod",      [0.05],       0),
+    "fundingpips_zero":       (0.03, 0.05, "trailing", [],           0),   # 7 PROFITABLE days = payout rule
+    "ftmo_2step":             (0.05, 0.10, "static",   [0.10, 0.05], 4),
 }
 
 
 def preset_values(name: str, phase: int = 1):
     """(daily_loss, max_loss, max_ref, target) for a preset + phase (0 = funded)."""
-    daily, mx, ref, targets = PRESETS.get(name, PRESETS["fundingpips_2step_8"])
+    daily, mx, ref, targets, _days = PRESETS.get(name, PRESETS["fundingpips_2step_8"])
     target = targets[min(phase, len(targets)) - 1] if targets and phase >= 1 else 0.0
     return daily, mx, ref, target
+
+
+def preset_min_days(name: str, phase: int = 1) -> int:
+    """Minimum trading days before a phase target counts (0 when funded)."""
+    return PRESETS.get(name, PRESETS["fundingpips_2step_8"])[4] if phase >= 1 else 0
 
 
 def _f(key: str, default: float) -> float:
@@ -57,8 +62,9 @@ class EquityGuard:
     def __init__(self, initial_balance: Optional[float] = None, daily_loss: float = 0.05,
                  max_loss: float = 0.10, target: float = 0.08, daily_buffer: float = 0.70,
                  max_buffer: float = 0.80, state_file: Optional[str] = None,
-                 trailing_max=False):
+                 trailing_max=False, min_days: int = 0):
         self.daily_loss, self.max_loss, self.target = daily_loss, max_loss, target
+        self.min_days = int(min_days)
         # False/"static" · True/"trailing" (peak equity) · "eod" (peak end-of-day)
         self.max_ref = ("trailing" if trailing_max is True else
                         "static" if trailing_max is False else str(trailing_max))
@@ -67,7 +73,7 @@ class EquityGuard:
         self.state: Dict = {"initial_balance": initial_balance, "day_key": None,
                             "day_ref": None, "max_locked": False, "target_locked": False,
                             "daily_locked_day": None, "peak_equity": None,
-                            "peak_eod": None}
+                            "peak_eod": None, "trade_days": []}
         self._load()
         if initial_balance:                     # explicit env/arg always wins
             self.state["initial_balance"] = float(initial_balance)
@@ -75,9 +81,9 @@ class EquityGuard:
     @classmethod
     def from_env(cls) -> "EquityGuard":
         ib = os.environ.get("CHALLENGE_INITIAL_BALANCE")
-        daily, mx, ref, target = preset_values(
-            os.environ.get("CHALLENGE_PRESET", "fundingpips_2step_8"),
-            int(_f("CHALLENGE_PHASE", 1)))
+        preset = os.environ.get("CHALLENGE_PRESET", "fundingpips_2step_8")
+        phase = int(_f("CHALLENGE_PHASE", 1))
+        daily, mx, ref, target = preset_values(preset, phase)
         trail_env = os.environ.get("CHALLENGE_TRAILING_MAX")
         return cls(initial_balance=float(ib) if ib else None,
                    daily_loss=_f("CHALLENGE_DAILY_LOSS", daily),
@@ -86,6 +92,7 @@ class EquityGuard:
                    trailing_max=(("trailing" if trail_env.strip().lower() in
                                   ("1", "true", "yes", "on") else "static")
                                  if trail_env else ref),
+                   min_days=int(_f("CHALLENGE_MIN_DAYS", preset_min_days(preset, phase))),
                    daily_buffer=_f("GUARD_DAILY_BUFFER", 0.70),
                    max_buffer=_f("GUARD_MAX_BUFFER", 0.80),
                    state_file=os.environ.get("GUARD_STATE_FILE", "guard_state.json"))
@@ -111,6 +118,14 @@ class EquityGuard:
         except Exception:
             pass
 
+    def record_trade(self, day_key: str) -> int:
+        """Count a server day on which a trade was placed. Returns trading days so far."""
+        days = set(self.state.get("trade_days") or [])
+        days.add(day_key)
+        self.state["trade_days"] = sorted(days)
+        self._save()
+        return len(days)
+
     # -- the verdict ---------------------------------------------------------------
     def check(self, balance: float, equity: float, day_key: str) -> Dict:
         """day_key: the broker SERVER date (YYYY-MM-DD) — firms reset on server midnight."""
@@ -135,7 +150,8 @@ class EquityGuard:
             action = "MAX_LOCK"
         elif st.get("target_locked") or (target_eq is not None and equity >= target_eq):
             st["target_locked"] = True
-            action = "TARGET_LOCK"
+            days = len(st.get("trade_days") or [])
+            action = "TARGET_MIN_DAYS" if days < self.min_days else "TARGET_LOCK"
         elif st.get("daily_locked_day") == day_key or equity <= daily_floor:
             st["daily_locked_day"] = day_key
             action = "DAILY_LOCK"
@@ -145,4 +161,5 @@ class EquityGuard:
         return {"action": action, "equity": round(equity, 2),
                 "daily_floor": round(daily_floor, 2), "max_floor": round(max_floor, 2),
                 "target_equity": round(target_eq, 2) if target_eq else None,
-                "initial_balance": ib, "day_ref": round(ref, 2)}
+                "initial_balance": ib, "day_ref": round(ref, 2),
+                "trading_days": len(st.get("trade_days") or []), "min_days": self.min_days}

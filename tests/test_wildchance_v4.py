@@ -211,8 +211,10 @@ def test_fundingpips_presets_match_official_plans():
     chk("fundingpips_zero", [], 0.03, 0.05, "trailing", 7)
     assert "fundingpips_2step_10" not in P          # not a real plan
     from mt5_bridge.equity_guard import PRESETS as BP
-    for k, (d, m, ref, t) in BP.items():            # bridge mirror == app table
+    for k, (d, m, ref, t, days) in BP.items():      # bridge mirror == app table
         assert (P[k]["daily_loss"], P[k]["max_loss"], P[k]["max_ref"], P[k]["targets"]) == (d, m, ref, t), k
+        want = P[k]["min_days"] if P[k]["min_days_kind"] == "trading" else 0   # Zero: payout rule
+        assert days == want, k
 
 
 def test_labs_eod_guard_and_tight_risk_warning():
@@ -251,3 +253,27 @@ def test_lunar_gate_blocks_counter_phase_signal(monkeypatch):
     assert te.lunar_gate({"signal": None})["approved"]          # no side → fail-open
     monkeypatch.setattr(te, "LUNAR_GATE_ENABLED", False)
     assert te.lunar_gate({"signal": "SHORT"})["approved"]
+
+
+# --- minimum trading days -------------------------------------------------------------
+def test_target_hit_before_min_days_holds_the_lock():
+    g = ch.equity_guard(10850, 10000, 10800, 10800, phase=1, trading_days=2)
+    assert g["action"] == "TARGET_MIN_DAYS" and g["days_needed"] == 1
+    assert g["min_days"] == {"required": 3, "kind": "trading", "have": 2, "remaining": 1}
+    assert ch.equity_guard(10850, 10000, 10800, 10800, phase=1, trading_days=3)["action"] == "TARGET_LOCK"
+    assert ch.equity_guard(10850, 10000, 10800, 10800, phase=1)["action"] == "TARGET_LOCK"  # unknown days
+    z = ch.equity_guard(10100, 10000, 10000, 10000, phase=0, preset="fundingpips_zero", trading_days=4)
+    assert z["action"] == "TRADE" and z["min_days"]["kind"] == "profitable" and z["min_days"]["remaining"] == 3
+
+
+def test_bridge_counts_trading_days(tmp_path):
+    from mt5_bridge.equity_guard import EquityGuard, preset_min_days
+    assert preset_min_days("fundingpips_2step_8", 1) == 3 and preset_min_days("fundingpips_2step_8", 0) == 0
+    g = EquityGuard(initial_balance=10000, target=0.08, min_days=3, state_file=str(tmp_path / "d.json"))
+    g.check(10000, 10000, "D1")
+    assert g.record_trade("D1") == 1 and g.record_trade("D1") == 1 and g.record_trade("D2") == 2
+    v = g.check(10900, 10900, "D2")
+    assert v["action"] == "TARGET_MIN_DAYS" and v["trading_days"] == 2
+    g.record_trade("D3")
+    assert g.check(10900, 10900, "D3")["action"] == "TARGET_LOCK"
+    assert EquityGuard(initial_balance=10000, state_file=str(tmp_path / "d.json")).state["trade_days"] == ["D1", "D2", "D3"]

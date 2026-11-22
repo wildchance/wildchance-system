@@ -86,12 +86,29 @@ async def _run_jobs(items, now: dt.datetime, forced: bool = False) -> Dict:
     return rec
 
 
+async def _freshness_alert() -> Dict:
+    from services.freshness import gold_status
+    st = await gold_status()
+    if st["status"] == "STALE":
+        from services.realtime import alert_once
+        await alert_once("data-stale",
+                         f"🔴 *Data STALE*: newest gold price is {st['age_min']} min old while the "
+                         f"market is open (limit {st['stale_after_min']:.0f}). Every signal is blind "
+                         f"until the EA feed / TwelveData recovers. Sources: {st['sources']}",
+                         ttl_hours=3)
+    return st
+
+
 async def _tick_bg(items, now):
     if _running["busy"]:
         return
     _running["busy"] = True
     try:
         await _run_jobs(items, now)
+        try:
+            HISTORY[0]["data"] = await _freshness_alert()
+        except Exception:
+            pass
     finally:
         _running["busy"] = False
 

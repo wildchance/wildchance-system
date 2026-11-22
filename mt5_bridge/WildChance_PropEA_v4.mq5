@@ -23,7 +23,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.30"
+#property version   "4.40"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -69,6 +69,7 @@ input double   InpInitialBalance    = 0;      // Account starting balance (0 = c
 input double   InpDailyLossLimitPct = 3.5;    // CUSTOM only: our daily stop, % of initial
 input double   InpMaxLossLimitPct   = 8.0;    // CUSTOM only: our max-loss stop, % of initial
 input double   InpProfitTargetPct   = 8.0;    // CUSTOM only: target % (0 = off)
+input int      InpMinTradingDays    = 0;      // CUSTOM only: min trading days before the target counts
 input bool     InpFlattenAllOnBreach= true;   // On a guard hit close ALL account positions (not only this EA's)
 input double   InpRiskPct           = 0.50;   // Risk % of equity per trade (0.4-0.5 for challenges)
 input int      InpMaxConcurrent     = 2;      // Max open trades for this magic across all charts
@@ -171,6 +172,10 @@ double   g_dailyFloor     = 0, g_maxFloor = 0, g_targetEq = 0;
 string   g_propStatus     = "ACTIVE";
 double   g_dailyPct = 3.5, g_maxPct = 8.0, g_targetPct = 8.0;   // effective guard lines (% of initial)
 int      g_maxRef = MAXREF_STATIC;
+int      g_minDays = 0;                 // required trading days (Zero: profitable days, payout rule)
+bool     g_minDaysProfitable = false;
+int      g_tradeDays = 0, g_profitDays = 0;
+datetime g_lastDayCount = 0;
 string   g_presetName = "CUSTOM";
 
 //----------------------------------------------------------------- bollinger + data push state
@@ -300,17 +305,17 @@ void   GVSet(string k, double v)   { GlobalVariableSet(g_gvp+k, v); }
 // firm limits -> our guard lines (% of initial), buffered; CUSTOM uses the raw inputs
 void ApplyPreset()
   {
-   double d=0, m=0, t1=0, t2=0; int ref=MAXREF_STATIC; string nm="CUSTOM";
+   double d=0, m=0, t1=0, t2=0; int ref=MAXREF_STATIC, md=0; bool prof=false; string nm="CUSTOM";
    switch(InpPreset)
      {
-      case FP_2STEP_STD_5: d=5; m=10; t1=8;  t2=5; nm="FP 2-Step Std 5%";   break;
-      case FP_2STEP_STD_3: d=3; m=10; t1=8;  t2=5; nm="FP 2-Step Std 3%";   break;
-      case FP_2STEP_FLEX:  d=4; m=12; t1=10; t2=8; nm="FP 2-Step Flex";     break;
+      case FP_2STEP_STD_5: d=5; m=10; t1=8;  t2=5; md=3; nm="FP 2-Step Std 5%";   break;
+      case FP_2STEP_STD_3: d=3; m=10; t1=8;  t2=5; md=3; nm="FP 2-Step Std 3%";   break;
+      case FP_2STEP_FLEX:  d=4; m=12; t1=10; t2=8; md=1; nm="FP 2-Step Flex";     break;
       case FP_2STEP_PRO:   d=3; m=6;  t1=6;  t2=6; nm="FP 2-Step Pro";      break;
       case FP_1STEP_3:     d=3; m=12; t1=12; t2=0; nm="FP 1-Step 3%";       break;
       case FP_1STEP_2:     d=2; m=12; t1=12; t2=0; nm="FP 1-Step 2%";       break;
       case FP_1STEP_LABS:  d=1; m=3;  t1=5;  t2=0; ref=MAXREF_EOD; nm="FP LABS001"; break;
-      case FP_ZERO:        d=3; m=5;  t1=0;  t2=0; ref=MAXREF_TRAILING; nm="FP Zero"; break;
+      case FP_ZERO:        d=3; m=5;  t1=0;  t2=0; ref=MAXREF_TRAILING; md=7; prof=true; nm="FP Zero"; break;
       default: break;
      }
    if(InpPreset == FP_CUSTOM)
@@ -322,8 +327,50 @@ void ApplyPreset()
       g_targetPct = (InpPhase<=0) ? 0 : (InpPhase==1 ? t1 : t2);
      }
    g_maxRef = ref; g_presetName = nm;
+   g_minDays = (InpPreset == FP_CUSTOM) ? InpMinTradingDays : ((InpPhase<=0 && !prof) ? 0 : md);
+   g_minDaysProfitable = prof;
    if(InpRiskPct > g_dailyPct)
       Print("WildChance WARNING: risk/trade ",InpRiskPct,"% exceeds the daily guard ",g_dailyPct,"%");
+  }
+
+// Count trading days (any deal opened) and profitable days (net closed P&L > 0) on
+// this ACCOUNT since the guard started (GV "start"), by broker server date.
+void CountTradingDays()
+  {
+   if(TimeCurrent() - g_lastDayCount < 60) return;
+   g_lastDayCount = TimeCurrent();
+   datetime start = (datetime)(long)GVGet("start", 0);
+   if(start == 0) { start = TimeCurrent(); GVSet("start", (double)(long)start); }
+   if(!HistorySelect(start - 86400, TimeCurrent() + 86400)) return;
+   string days[]; string pdays[]; double pnl[];
+   int n = HistoryDealsTotal();
+   for(int i=0; i<n; i++)
+     {
+      ulong t = HistoryDealGetTicket(i);
+      if(t == 0) continue;
+      long type = HistoryDealGetInteger(t, DEAL_TYPE);
+      if(type != DEAL_TYPE_BUY && type != DEAL_TYPE_SELL) continue;
+      datetime when = (datetime)HistoryDealGetInteger(t, DEAL_TIME);
+      if(when < start) continue;
+      string key = TimeToString(when, TIME_DATE);
+      long entry = HistoryDealGetInteger(t, DEAL_ENTRY);
+      if(entry == DEAL_ENTRY_IN)
+        {
+         bool seen=false; for(int k=0;k<ArraySize(days);k++) if(days[k]==key){seen=true;break;}
+         if(!seen){ int z=ArraySize(days); ArrayResize(days,z+1); days[z]=key; }
+        }
+      else
+        {
+         double net = HistoryDealGetDouble(t, DEAL_PROFIT) + HistoryDealGetDouble(t, DEAL_SWAP)
+                    + HistoryDealGetDouble(t, DEAL_COMMISSION);
+         int idx=-1; for(int k=0;k<ArraySize(pdays);k++) if(pdays[k]==key){idx=k;break;}
+         if(idx<0){ idx=ArraySize(pdays); ArrayResize(pdays,idx+1); ArrayResize(pnl,idx+1); pdays[idx]=key; pnl[idx]=0; }
+         pnl[idx] += net;
+        }
+     }
+   g_tradeDays = ArraySize(days);
+   g_profitDays = 0;
+   for(int k=0;k<ArraySize(pnl);k++) if(pnl[k] > 0) g_profitDays++;
   }
 
 void LoadGuardState()
@@ -370,10 +417,18 @@ bool CheckPropGuard()
       g_propStatus = "LOCKED: MAX DD";
       return false;
      }
+   CountTradingDays();
    if(GVGet("targetlock", 0) > 0 || (g_targetEq > 0 && eq >= g_targetEq))
      {
-      if(GVGet("targetlock", 0) == 0) { GVSet("targetlock", 1); Flatten("TARGET_LOCK"); Alert("WildChance: phase TARGET reached - flat & locked"); }
-      g_propStatus = "TARGET PASSED";
+      int need = (g_minDaysProfitable) ? 0 : MathMax(0, g_minDays - g_tradeDays);
+      if(GVGet("targetlock", 0) == 0)
+        {
+         GVSet("targetlock", 1); Flatten("TARGET_LOCK");
+         if(need > 0) Alert("WildChance: TARGET reached - profits locked. Need ", need,
+                            " more trading day(s): place ONE minimal (0.01) trade per day manually.");
+         else         Alert("WildChance: phase TARGET reached - flat & locked");
+        }
+      g_propStatus = (need > 0) ? "TARGET - NEED "+IntegerToString(need)+" DAY(S)" : "TARGET PASSED";
       return false;
      }
    if((int)GVGet("dailylock", 0) == dayKey || eq <= g_dailyFloor)
@@ -1111,11 +1166,13 @@ void PushData()
       string js = StringFormat("{\"login\":%I64d,\"symbol\":\"%s\",\"preset\":\"%s\",\"phase\":%d,"
                                "\"balance\":%.2f,\"equity\":%.2f,\"initial\":%.2f,\"guard\":\"%s\","
                                "\"daily_floor\":%.2f,\"max_floor\":%.2f,\"target\":%.2f,"
-                               "\"open_positions\":%d,\"lunar\":\"%s\",\"bb\":\"%s\"}",
+                               "\"open_positions\":%d,\"lunar\":\"%s\",\"bb\":\"%s\","
+                               "\"trading_days\":%d,\"profitable_days\":%d,\"min_days\":%d}",
                                AccountInfoInteger(ACCOUNT_LOGIN), sym, g_presetName, InpPhase,
                                AccountInfoDouble(ACCOUNT_BALANCE), AccountInfoDouble(ACCOUNT_EQUITY),
                                g_initialBalance, g_propStatus, g_dailyFloor, g_maxFloor, g_targetEq,
-                               CountMagicPositions(), g_lunarPhaseName, g_bbStr);
+                               CountMagicPositions(), g_lunarPhaseName, g_bbStr,
+                               g_tradeDays, g_profitDays, g_minDays);
       PostJson("/bridge/account", js);
      }
   }
@@ -1144,9 +1201,9 @@ void DrawPlan()
   }
 void ClearPlan() { ObjectsDeleteAll(0, OBJ_PREFIX+"plan_"); }
 
-string g_rowKeys[]   = {"title","prop","room","lunar","bb","feed","news","session","bias","state","phase","align",
+string g_rowKeys[]   = {"title","prop","room","days","lunar","bb","feed","news","session","bias","state","phase","align",
                         "id50","pattern","location","hunt","quality","adr","tdi","trendday","signal","gate","trade"};
-string g_rowLabels[] = {"WILDCHANCE PROP EA","PROP GUARD","DAILY / MAX ROOM","LUNAR","BOLLINGER HTF","APP FEED","NEWS GUARD","SESSION",
+string g_rowLabels[] = {"WILDCHANCE PROP EA","PROP GUARD","DAILY / MAX ROOM","TRADING DAYS","LUNAR","BOLLINGER HTF","APP FEED","NEWS GUARD","SESSION",
                         "SESSION BIAS","MARKET / ADX","CYCLE PHASE","EMA ALIGN","ID50","PATTERN","LOCATION",
                         "STOP HUNT","QUALITY","ADR USED","TDI","D1 TREND","SIGNAL","EXECUTION GATE","POSITION"};
 
@@ -1191,7 +1248,14 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title","v4.3 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title","v4.4 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   if(g_minDays > 0)
+      SetVal("days", g_minDaysProfitable ?
+             IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
+             IntegerToString(g_tradeDays)+"/"+IntegerToString(g_minDays)+" traded  ("+IntegerToString(g_profitDays)+" profitable)",
+             (g_minDaysProfitable ? g_profitDays : g_tradeDays) >= g_minDays ? clrLime : clrYellow);
+   else
+      SetVal("days", IntegerToString(g_tradeDays)+" traded (no minimum)", clrSilver);
    SetVal("bb",g_bbStr,(MathAbs(g_bbZ1)>=2||MathAbs(g_bbZ2)>=2)?clrOrange:((MathAbs(g_bbZ1)>=1||MathAbs(g_bbZ2)>=1)?clrYellow:clrSilver));
    SetVal("feed",g_sendStatus,StringFind(g_sendStatus,"OK")==0?clrLime:(g_sendStatus=="OFF"?clrSilver:clrOrange));
    SetVal("prop",g_propStatus,g_propStatus=="ACTIVE"?clrLime:(g_propStatus=="TARGET PASSED"?clrAqua:clrRed));
