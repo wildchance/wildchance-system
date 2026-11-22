@@ -63,6 +63,10 @@ async def scan_and_alert(window: int = Query(20), z_threshold: float = Query(2.0
     results = await isvc.scan(_symbols(symbols), window=window, z_threshold=z_threshold)
     fresh = isvc.fresh_breaches(results)
     sent = False
+    from services.freshness import market_open
+    if not market_open() and not force:
+        return {"scanned": len(results), "fresh_count": len(fresh), "sent": False,
+                "held": "market closed — breaches are on Friday's bars", "fresh": fresh}
     if fresh:
         sent = await _send(isvc.format_alert(fresh))
     elif force:

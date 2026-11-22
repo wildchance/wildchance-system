@@ -104,3 +104,28 @@ def test_signal_card_has_no_old_lot_line():
     from services.signal_engine import build_manual, format_card
     card = format_card(build_manual("EUR/USD", "short", 1.09701, 1.09801, [1.09246], balance=2500))
     assert "Lot ≤" not in card and "*Lots*" in card
+
+
+def test_weekend_blocks_all_new_trades():
+    sat = dt.datetime(2026, 11, 28, 12, 0, tzinfo=U)
+    sun_before_open = dt.datetime(2026, 11, 22, 19, 54, tzinfo=U)   # the screenshot time
+    for t in (sat, sun_before_open):
+        assert "market closed" in tg.session_block(t)
+    g = tg.evaluate("EUR/USD", "SELL", 1.104, 1.105, [1.096], now=sat)
+    assert not g["allow"] and "market closed" in g["reasons"][0]
+    assert "CBDR" in tg.session_block(dt.datetime(2026, 11, 23, 20, 0, tzinfo=U))  # Mon 15:00 NY
+
+
+def test_intraday_alert_held_when_closed(monkeypatch):
+    from fastapi.testclient import TestClient
+    import services.freshness as fr
+    import services.intraday_service as isvc
+    from main import app
+
+    async def fake_scan(*a, **k):
+        return [{"ok": True, "fired": True, "fresh": True, "symbol": "USD/JPY", "z": 3.7,
+                 "lean": "SELL", "direction": "overbought", "last_close": 158.6}]
+    monkeypatch.setattr(isvc, "scan", fake_scan)
+    monkeypatch.setattr(fr, "market_open", lambda now=None: False)
+    r = TestClient(app).post("/intraday/scan").json()
+    assert r["sent"] is False and "market closed" in r["held"]

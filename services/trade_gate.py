@@ -26,7 +26,11 @@ BLOCK_CBDR_FORMING = str(config("BLOCK_CBDR_FORMING", default="true")).lower() i
 
 
 def session_block(now: Optional[dt.datetime] = None) -> Optional[str]:
-    ny = (now or dt.datetime.now(dt.timezone.utc)).astimezone(NY)
+    now = now or dt.datetime.now(dt.timezone.utc)
+    from services.freshness import market_open
+    if not market_open(now):            # weekend: bars are Friday's — never a live entry
+        return "market closed (Fri 17:00 → Sun 17:00 NY) — setups would use Friday's bars"
+    ny = now.astimezone(NY)
     if BLOCK_CBDR_FORMING and 14 <= ny.hour < 20:
         return "CBDR box forming (14:00–20:00 NY) — wait for the box"
     if ny.weekday() == 6 and 17 <= ny.hour < 18:
