@@ -12,7 +12,8 @@
 //|   - FundingPips plan picker (Std/Flex/Pro/1-Step/LABS/Zero), with  |
 //|     trailing (Zero) and end-of-day (LABS001) max-loss modes         |
 //|   - HTF Bollinger +-1/+-2 sigma confluence for M/W reversals        |
-//|   - Pushes broker bars + account snapshot to the app (/bridge)     |
+//|   - Pushes broker bars, account snapshot and the MT5 economic      |
+//|     calendar to the app (/bridge); token sent as a header          |
 //|   - Risk sizing that SKIPS (never rounds up) when min lot over-    |
 //|     risks; auto filling mode; 1/3-1/3-1/3 R ladder + BE after TP1  |
 //|                                                                    |
@@ -22,7 +23,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.20"
+#property version   "4.30"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -179,7 +180,7 @@ string   g_bbStr="-";
 ENUM_TIMEFRAMES g_sendTF[];
 datetime g_sentBar[];
 bool     g_sentInit[];
-datetime g_lastAcctPush=0;
+datetime g_lastAcctPush=0, g_lastCalPush=0;
 string   g_sendStatus="OFF";
 
 //----------------------------------------------------------------- lunar state
@@ -1024,11 +1025,12 @@ long ServerToUtcOffset()
 bool PostJson(string path, string body)
   {
    string url = InpAppUrl; if(StringSubstr(url, StringLen(url)-1)=="/") url = StringSubstr(url,0,StringLen(url)-1);
-   url += path + "?token=" + InpBridgeToken;
+   url += path;                                   // token goes in a header, never in the URL/logs
    char data[], result[]; string resHeaders;
    StringToCharArray(body, data, 0, StringLen(body), CP_UTF8);
+   string headers = "Content-Type: application/json\r\nX-Bridge-Token: " + InpBridgeToken + "\r\n";
    ResetLastError();
-   int code = WebRequest("POST", url, "Content-Type: application/json\r\n", 5000, data, result, resHeaders);
+   int code = WebRequest("POST", url, headers, 5000, data, result, resHeaders);
    if(code == -1)
      {
       g_sendStatus = "ERR "+IntegerToString(GetLastError())+" (allow URL in Options)";
@@ -1038,8 +1040,48 @@ bool PostJson(string path, string body)
    return code==200;
   }
 
+string JsonEsc(string v)
+  {
+   StringReplace(v, "\\", "\\\\"); StringReplace(v, "\"", "\\\"");
+   return v;
+  }
+
+// MT5 economic calendar (medium + high impact, -1 day .. +7 days) -> /bridge/calendar.
+// Backs up the app's ForexFactory feed, which rate-limits cloud servers.
+void PushCalendar()
+  {
+   long off = ServerToUtcOffset();
+   datetime now = TimeTradeServer();
+   MqlCalendarValue vals[];
+   int n = CalendarValueHistory(vals, now - 86400, now + 7*86400);
+   if(n <= 0) return;
+   string js = "{\"events\":[";
+   int added = 0;
+   for(int i=0; i<n && added<400; i++)
+     {
+      MqlCalendarEvent ev;
+      if(!CalendarEventById(vals[i].event_id, ev)) continue;
+      if(ev.importance < CALENDAR_IMPORTANCE_MODERATE) continue;
+      MqlCalendarCountry c;
+      if(!CalendarCountryById(ev.country_id, c)) continue;
+      string imp = (ev.importance == CALENDAR_IMPORTANCE_HIGH) ? "high" : "medium";
+      if(added > 0) js += ",";
+      js += "{\"t\":" + IntegerToString((long)vals[i].time - off) +
+            ",\"ccy\":\"" + c.currency + "\",\"event\":\"" + JsonEsc(ev.name) +
+            "\",\"impact\":\"" + imp + "\"" +
+            ",\"actual\":"   + (vals[i].HasActualValue()   ? DoubleToString(vals[i].GetActualValue(),3)   : "null") +
+            ",\"forecast\":" + (vals[i].HasForecastValue() ? DoubleToString(vals[i].GetForecastValue(),3) : "null") +
+            ",\"previous\":" + (vals[i].HasPreviousValue() ? DoubleToString(vals[i].GetPreviousValue(),3) : "null") + "}";
+      added++;
+     }
+   js += "]}";
+   if(added > 0) PostJson("/bridge/calendar", js);
+  }
+
 void PushData()
   {
+   if(TimeCurrent() - g_lastCalPush >= 6*3600)      // calendar every 6h (and at start)
+     { g_lastCalPush = TimeCurrent(); PushCalendar(); }
    string sym = (InpAppSymbol!="") ? InpAppSymbol : _Symbol;
    long off = ServerToUtcOffset();
    for(int k=0;k<ArraySize(g_sendTF);k++)
@@ -1149,7 +1191,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title","v4.2 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title","v4.3 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    SetVal("bb",g_bbStr,(MathAbs(g_bbZ1)>=2||MathAbs(g_bbZ2)>=2)?clrOrange:((MathAbs(g_bbZ1)>=1||MathAbs(g_bbZ2)>=1)?clrYellow:clrSilver));
    SetVal("feed",g_sendStatus,StringFind(g_sendStatus,"OK")==0?clrLime:(g_sendStatus=="OFF"?clrSilver:clrOrange));
    SetVal("prop",g_propStatus,g_propStatus=="ACTIVE"?clrLime:(g_propStatus=="TARGET PASSED"?clrAqua:clrRed));

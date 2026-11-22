@@ -255,3 +255,31 @@ fresh as your EA or TwelveData. Treat it as a Stage-0 bias, not a signal:
 SELL fades at D1/W1 +2σ re-entries agree with the count, and the band-walk blocker stops
 you shorting into a wave-(2) or (4) rally that keeps walking the upper band. Setup
 guide for the database: `docs/NEON_SETUP.md`.
+
+## 12. AI sentiment, evidence sweeps, calendar backup (v4.3)
+
+**AI market sentiment** (`/sentiment/scan`, `/sentiment/XAUUSD`): Google News
+headlines from the last 2 days are scored by an LLM on NVIDIA's API (`NVIDIA_API_KEY`),
+returning a strict-JSON score from −1 to +1, a confidence and up to 3 drivers.
+Results are cached for 3h, run every 6h, and show up on swing cards. With
+`SENTIMENT_AUTO_BIAS=true`, a |score| ≥ 0.5 at confidence ≥ 0.6 sets a BUY_ONLY or
+SELL_ONLY lock, but only where your manual `MACRO_BIAS` doesn't already cover the
+symbol. It's a confluence input, never a trigger on its own.
+
+**Evidence** (`/swing/backtest/XAUUSD`, `/swing/sweep/XAUUSD`): this is the ±kσ
+re-entry fade on D1, entering at the next open, with stop first on same-bar ties and a
+cost of 0.05R per trade. The sweep runs 54 configs and chooses on the first 70% of the
+history (in-sample), then reports the last 30% (out-of-sample). **Pick by OOS.** A
+full sweep takes about 1s per symbol, so no GPU is needed. For many symbols on a
+compute box:
+`python -m backtest.bb_sweep --app <url> --token <BRIDGE_TOKEN> --symbols XAUUSD,BTCUSD --workers 8`
+(it reads your EA's broker bars through `/bridge/export` and also runs the lunar check).
+
+**Calendar backup:** the ForexFactory feed rate-limits cloud servers. When it failed,
+the code used to return a **June 2026 snapshot as if it were current**. Now the order
+is: 1h cache → ForexFactory → the EA's MT5 calendar (pushed every 6h, ≤24h old) →
+the last good fetch (≤7 days) → nothing. Stale data is never shown as current.
+Check it at `GET /bridge/calendar`.
+
+The EA (v4.3) sends its token in an `X-Bridge-Token` header, not in the URL, so the
+token never appears in request logs.

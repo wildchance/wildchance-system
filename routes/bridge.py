@@ -69,3 +69,39 @@ async def status():
     except Exception as e:
         feed = {"error": f"{type(e).__name__}: {e}"[:200]}
     return {"feed": feed, "accounts": list(_accounts.values())}
+
+
+@router.get("/export")
+async def export(symbol: str = Query(...), timeframe: str = Query("D1"),
+                 n: int = Query(3000, ge=10, le=20000), token: Optional[str] = Query(None),
+                 x_bridge_token: Optional[str] = Header(None),
+                 db: AsyncSession = Depends(get_db)):
+    """Broker bars oldest-first for offline research (backtest/bb_sweep.py on a compute box)."""
+    _auth(token or x_bridge_token)
+    rows = await broker_feed.recent(db, symbol, timeframe.upper(), n)
+    bars = [{"t": int(r.ts.replace(tzinfo=r.ts.tzinfo or dt.timezone.utc).timestamp()),
+             "o": r.open, "h": r.high, "l": r.low, "c": r.close, "v": r.volume}
+            for r in reversed(rows)]
+    return {"symbol": broker_feed.canon(symbol), "timeframe": timeframe.upper(),
+            "count": len(bars), "bars": bars}
+
+
+class CalendarIn(BaseModel):
+    events: List[Dict] = Field(default_factory=list)
+
+
+@router.post("/calendar")
+async def calendar(body: CalendarIn, token: Optional[str] = Query(None),
+                   x_bridge_token: Optional[str] = Header(None)):
+    """The EA's MT5 economic calendar (broker-grade, free) — backs up the ForexFactory feed.
+    events: [{t: unix UTC, ccy, event, impact: high|medium|low, actual, forecast, previous}]"""
+    _auth(token or x_bridge_token)
+    from wildchance import wildchance_scraper as wc
+    n = wc.set_ea_calendar(body.events)
+    return {"ok": True, "events": n}
+
+
+@router.get("/calendar")
+async def calendar_view():
+    from wildchance import wildchance_scraper as wc
+    return wc.calendar_status()

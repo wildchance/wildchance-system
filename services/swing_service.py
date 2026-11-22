@@ -25,11 +25,18 @@ def macro_bias() -> Dict[str, str]:
     """Stage-0 weekly direction locks from your own HTF analysis (COT, currency meter,
     Elliott-wave maps…). Env MACRO_BIAS='{"BTCUSD":"SELL_ONLY","XAUUSD":"BOTH"}'."""
     import json
-    try:
-        raw = json.loads(config("MACRO_BIAS", default="{}") or "{}")
-        return {str(k).upper().replace("/", ""): str(v).upper() for k, v in raw.items()}
+    out: Dict[str, str] = {}
+    try:                                    # AI sentiment locks (opt-in, strong reads only)
+        from services.ai_sentiment import cached_locks
+        out.update(cached_locks())
     except Exception:
-        return {}
+        pass
+    try:                                    # your manual locks always win
+        raw = json.loads(config("MACRO_BIAS", default="{}") or "{}")
+        out.update({str(k).upper().replace("/", ""): str(v).upper() for k, v in raw.items()})
+    except Exception:
+        pass
+    return out
 
 
 def apply_bias(row: Dict, bias: Optional[str]) -> Dict:
@@ -88,6 +95,13 @@ async def analyze(symbol: str, with_cbdr: bool = True) -> Dict:
         except Exception:
             pass
     setup = apply_bias(setup, macro_bias().get(display(symbol)))
+    try:                                    # cached AI sentiment as context (no API call here)
+        from services.ai_sentiment import _cache
+        s = _cache.get(display(symbol))
+        if s:
+            setup["sentiment"] = {k: s[k] for k in ("bias", "score", "confidence", "as_of")}
+    except Exception:
+        pass
     return {"symbol": display(symbol), "td_symbol": symbol, **setup,
             "bands": {tf: ({k: s[k] for k in ("z", "zone", "mid", "up1", "lo1", "up2", "lo2",
                                                 "walk_up", "walk_down", "squeeze")} if s else None)
@@ -119,6 +133,9 @@ def format_alert(r: Dict) -> str:
              f"TP1 (±1σ) {lv.get('tp1_dev1')}  ·  TP2 (mean) {lv.get('tp2_mean')}  ·  R:R {lv.get('rr_to_mean')}"]
     if r.get("triggers"):
         lines.append("Trigger: close back inside 2σ on " + "/".join(r["triggers"]))
+    if r.get("sentiment"):
+        se = r["sentiment"]
+        lines.append(f"AI sentiment: {se['bias']} ({se['score']:+.2f}, conf {se['confidence']:.0%})")
     if r.get("cbdr_confluence"):
         m = r["cbdr_confluence"][0]
         lines.append(f"CBDR {m['cbdr']} ≈ {m['band']} → limit {r.get('limit_entry')}")
