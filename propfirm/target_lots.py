@@ -35,6 +35,67 @@ def pip_value_per_lot(symbol: str, price: Optional[float] = None) -> Optional[fl
     return None
 
 
+def pip_size(symbol: str) -> Optional[float]:
+    s = symbol.upper().replace("/", "")
+    if s.startswith(("XAU", "GOLD")):
+        return 0.1
+    if len(s) >= 6 and s[3:6] == "JPY":
+        return 0.01
+    if len(s) >= 6 and s[:6].isalpha():
+        return 0.0001
+    return None
+
+
+def lot_for(balance: float, tp_pips: float, sl_pips: float, pv: float,
+            target_usd: Optional[float] = None, max_risk_pct: float = 0.5,
+            lot_step: float = 0.01, min_lot: float = 0.01) -> Dict:
+    """One rung: lot so ``tp_pips`` pays the target, capped so ``sl_pips`` risks ≤ cap."""
+    target = target_usd if target_usd else balance * TARGET_PCT
+    cap = math.floor(balance * max_risk_pct / 100 / (sl_pips * pv) / lot_step + 1e-9) * lot_step
+    want = max(min_lot, math.ceil(target / (tp_pips * pv) / lot_step - 1e-9) * lot_step)
+    use = round(min(want, cap), 2) if cap >= min_lot else 0.0
+    return {"lot": use, "profit": round(use * tp_pips * pv, 2), "risk": round(use * sl_pips * pv, 2),
+            "capped": want > cap}
+
+
+def card_lines(symbol: str, entry: float, stop: float, targets: List[Dict],
+               balances: Optional[List[float]] = None, max_risk_pct: float = 0.5) -> List[str]:
+    """Telegram lines: per account size, the lot for each target (owner's target method).
+    targets: [{"name": "TP1", "price": 1.0925}]. Empty list when the symbol isn't FX/gold."""
+    ps = pip_size(symbol)
+    pv = pip_value_per_lot(symbol, entry)
+    if not ps or not pv or not entry or not stop:
+        return []
+    sl_pips = abs(entry - stop) / ps
+    if sl_pips <= 0:
+        return []
+    bals = balances or card_balances()
+    out = [f"*Lots* (target ≈ {TARGET_PCT * 100:.2f}%/trade, SL {sl_pips:.1f} pips, risk cap {max_risk_pct}%):"]
+    for b in bals:
+        parts = []
+        for t in targets:
+            tp_pips = abs(float(t["price"]) - entry) / ps
+            if tp_pips <= 0:
+                continue
+            r = lot_for(b, tp_pips, sl_pips, pv, max_risk_pct=max_risk_pct)
+            flag = "*" if r["capped"] else ""
+            parts.append(f"{t.get('name', 'TP')} {r['lot']:.2f}{flag} (+${r['profit']:g}/−${r['risk']:g})")
+        if parts:
+            out.append(f"`{b / 1000:g}k`: " + " · ".join(parts))
+    if any("*" in l for l in out[1:]):
+        out.append("_* capped by the risk limit — pays less than the target_")
+    return out if len(out) > 1 else []
+
+
+def card_balances() -> List[float]:
+    from decouple import config
+    raw = config("LOT_CARD_BALANCES", default="2500,5000")
+    try:
+        return [float(x) for x in str(raw).split(",") if x.strip()] or [2500.0]
+    except ValueError:
+        return [2500.0]
+
+
 def ladder(balance: float, symbol: str = "EURUSD", sl_pips: float = 10.0,
            target_usd: Optional[float] = None, price: Optional[float] = None,
            pip_value: Optional[float] = None, max_risk_pct: float = 0.5,

@@ -155,6 +155,14 @@ def format_card(sig: dict) -> str:
         lines.append(f"Edge: {icon} {ef.get('bias')} ({ef.get('score'):+d})")
     s = sig["sizing"]
     lines += ["", f"Lot ≤ {s['max_lot']}  ·  tier {s['tier']}  ·  bal ${s['balance']}"]
+    try:                                      # owner's target-based FX lot ladder
+        from propfirm.target_lots import card_lines
+        ladder = card_lines(sig["symbol"], float(sig["entry"]), float(sig["stop_loss"]),
+                            [{"name": t["name"], "price": t["price"]} for t in sig["targets"]])
+        if ladder:
+            lines += [""] + ladder
+    except Exception:
+        pass
     g = sig["gate"]
     lines.append(("✅ GATE: " + g["reason"]) if g["allow"] else ("⛔ GATE: " + g["reason"]))
     from gold.signal import format_trend_lines

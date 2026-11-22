@@ -23,7 +23,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.40"
+#property version   "4.50"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -53,6 +53,12 @@ enum ENUM_FP_PRESET
 
 enum ENUM_MAX_REF { MAXREF_STATIC=0, MAXREF_TRAILING=1, MAXREF_EOD=2 };
 
+enum ENUM_SIZING_MODE
+  {
+   SIZING_TARGET = 0, // Target $: lot so the chosen TP pays the target (owner's sheet), capped by risk %
+   SIZING_RISK   = 1  // Risk %: lot so the stop loses InpRiskPct
+  };
+
 enum ENUM_LUNAR_SHIFT_MODE
   {
    LUNAR_OBSERVE_PAUSE = 0, // Pause entries in the observation window
@@ -72,6 +78,12 @@ input double   InpProfitTargetPct   = 8.0;    // CUSTOM only: target % (0 = off)
 input int      InpMinTradingDays    = 0;      // CUSTOM only: min trading days before the target counts
 input bool     InpFlattenAllOnBreach= true;   // On a guard hit close ALL account positions (not only this EA's)
 input double   InpRiskPct           = 0.50;   // Risk % of equity per trade (0.4-0.5 for challenges)
+input ENUM_SIZING_MODE InpSizingMode = SIZING_TARGET; // Lot sizing method
+input double   InpTargetPct         = 0.52;   // SIZING_TARGET: target per trade, % of initial balance ($13 on 2.5k)
+input double   InpTargetUSD         = 0;      // SIZING_TARGET: fixed $ target instead (0 = use %)
+input int      InpTargetTP          = 3;      // SIZING_TARGET: which TP must pay the target (1, 2 or 3)
+input double   InpFixedSLPips       = 0;      // 0 = structural stop; 10 = owner's sheet (100 points)
+input bool     InpUsePartials       = true;   // false = single TP (matches the sheet's math exactly)
 input int      InpMaxConcurrent     = 2;      // Max open trades for this magic across all charts
 input int      InpMaxSpreadPips     = 3;      // Skip entry if spread is wider (pips)
 input ulong    InpMagicNumber       = 408812; // Magic number (use the same one on every chart)
@@ -703,6 +715,7 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
    else if(InpMaxSLxATR>0 && risk > InpMaxSLxATR*atrN)         why = "SL TOO WIDE ("+DoubleToString(risk/atrN,1)+"xATR)";
    if(why != "") { g_newSignalTxt = "BLOCKED: "+why; Print("WildChance blocked ",_Symbol,": ",why); return; }
 
+   if(InpFixedSLPips > 0) { risk = InpFixedSLPips * pip; sl = isBuy ? entry-risk : entry+risk; }
    if(InpRandomizeSL) { sl += (isBuy?-1:1) * (1 + MathRand()%3) * pip; risk = MathAbs(entry-sl); }
    // Respect the broker's minimum stop distance
    double minStop = SymbolInfoInteger(_Symbol, SYMBOL_TRADE_STOPS_LEVEL) * _Point;
@@ -711,7 +724,9 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
    int d = isBuy ? 1 : -1;
    double riskPct = InpRiskPct;
    if(InpUseLunarEngine && g_inLunarObsWindow && InpLunarShiftMode==LUNAR_HALF_RISK) riskPct *= 0.5;
-   double lots = CalculateLotSize(risk, riskPct);
+   double tpR  = (InpTargetTP<=1) ? InpTP1R : (InpTargetTP==2 ? InpTP2R : InpTP3R);
+   double lots = (InpSizingMode == SIZING_TARGET) ? TargetLots(risk*tpR, risk, riskPct)
+                                                : CalculateLotSize(risk, riskPct);
    if(lots <= 0) { g_newSignalTxt = "BLOCKED: MIN LOT WOULD OVER-RISK"; return; }
 
    sl = NormalizeDouble(sl, _Digits);
@@ -727,7 +742,8 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
    g_tr.maxHoldSeconds = InpUseLunarEngine ? (isBuy?InpNewMoonHoldDays:InpFullMoonHoldDays)*86400 : InpMaxBarsInTrade*PeriodSeconds();
    g_tr.entry=posInfo.PriceOpen(); g_tr.sl=sl; g_tr.risk=MathAbs(g_tr.entry-sl);
    g_tr.tp1=tp1; g_tr.tp2=tp2; g_tr.tp3=tp3; g_tr.initLots=lots; g_tr.h1=false; g_tr.h2=false;
-   g_newSignalTxt = (isBuy?"LIVE BUY ":"LIVE SELL ")+setup+" "+DoubleToString(lots,2)+" lots";
+   g_newSignalTxt = (isBuy?"LIVE BUY ":"LIVE SELL ")+setup+" "+DoubleToString(lots,2)+" lots"+
+                    (InpSizingMode==SIZING_TARGET ? " (target TP"+IntegerToString(InpTargetTP)+")" : " (risk %)");
    if(InpDrawTradePlan) DrawPlan();
    if(InpAlertOnEntry) Alert("WildChance ",_Symbol," ",g_newSignalTxt," SL ",DoubleToString(sl,_Digits));
   }
@@ -764,7 +780,7 @@ void ManageLivePosition()
    double third = MathFloor((g_tr.initLots/3.0)/step)*step;
    if(!g_tr.h1 && ((buy && px>=g_tr.tp1) || (!buy && px<=g_tr.tp1)))
      {
-      if(third>=minLot && posInfo.Volume()-third>=minLot) trade.PositionClosePartial(g_tr.ticket, third);
+      if(InpUsePartials && third>=minLot && posInfo.Volume()-third>=minLot) trade.PositionClosePartial(g_tr.ticket, third);
       g_tr.h1 = true;
       if(InpBEAfterTP1 && trade.PositionModify(g_tr.ticket, NormalizeDouble(g_tr.entry,_Digits), g_tr.tp3))
          g_tr.sl = g_tr.entry;
@@ -772,7 +788,7 @@ void ManageLivePosition()
      }
    if(g_tr.h1 && !g_tr.h2 && ((buy && px>=g_tr.tp2) || (!buy && px<=g_tr.tp2)))
      {
-      if(posInfo.SelectByTicket(g_tr.ticket) && third>=minLot && posInfo.Volume()-third>=minLot)
+      if(InpUsePartials && posInfo.SelectByTicket(g_tr.ticket) && third>=minLot && posInfo.Volume()-third>=minLot)
          trade.PositionClosePartial(g_tr.ticket, third);
       g_tr.h2 = true;
       if(InpDrawTradePlan) DrawPlan();
@@ -792,6 +808,25 @@ double CalculateLotSize(double slDist, double riskPct)
    double lots = MathFloor((riskMoney/lossPerLot)/step)*step;
    if(lots < minLot) return 0;                    // SKIP: min lot would exceed the risk budget
    lots = MathMin(maxLot, lots);
+   int digits = (int)MathMax(0, MathRound(-MathLog10(step)));
+   return NormalizeDouble(lots, digits);
+  }
+
+// Owner's method: lot so a move of tpDist pays the target; never above the risk-% cap.
+double TargetLots(double tpDist, double slDist, double riskPct)
+  {
+   double tickSize  = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+   if(tpDist<=0 || tickSize<=0 || tickValue<=0) return 0;
+   double target = (InpTargetUSD > 0) ? InpTargetUSD : g_initialBalance * InpTargetPct / 100.0;
+   double perLot = (tpDist/tickSize)*tickValue;            // $ at TP for 1.00 lot (works for crosses)
+   double step   = SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
+   double minLot = SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN);
+   double want   = MathCeil((target/perLot)/step - 1e-9)*step;   // round UP: TP reaches the target
+   want = MathMax(minLot, want);
+   double cap = CalculateLotSize(slDist, riskPct);            // 0 when even min lot over-risks
+   if(cap <= 0) return 0;
+   double lots = MathMin(want, cap);
    int digits = (int)MathMax(0, MathRound(-MathLog10(step)));
    return NormalizeDouble(lots, digits);
   }
@@ -1248,7 +1283,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title","v4.4 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title","v4.5 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
