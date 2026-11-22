@@ -14,6 +14,9 @@ from database.db import init_db
 # TwelveData free plan = 8 requests/min: rate-limit + cache every call at the HTTP layer
 from services import td_limiter as _td_limiter
 _td_limiter.install()
+# every Telegram post is also stored for the members' web feed
+from services import signal_feed as _signal_feed
+_signal_feed.install()
 
 # The Telegram INBOUND bot (command webhook) pulls python-telegram-bot →
 # cryptography. That is an OPTIONAL integration: outbound alerts go out over plain
@@ -95,6 +98,9 @@ from routes.sentiment import router as sentiment_router
 from routes.derivs import router as derivs_router
 from routes.cron import router as cron_router
 from routes.zconfluence import router as zconfluence_router
+from routes.macro import router as macro_router
+from routes.billing import router as billing_router
+from routes.members import router as members_router
 from routes.bt_engines import router as bt_engines_router   # Bumblebee / Warthog backtests
 
 # Real-time streaming
@@ -177,13 +183,28 @@ except Exception as _saas_err:
     import logging as _lg
     _lg.getLogger("uvicorn.error").warning("SaaS gating not loaded: %s", _saas_err)
 
-@app.get("/")
+from fastapi.responses import FileResponse as _FileResponse
+
+
+@app.get("/", include_in_schema=False)
 async def home():
-    return {
-        "message": "Wildchance API is live 🚀",
-        "status": "Server running",
-        "real_time": "Polygon.io + Redis active"
-    }
+    """Public landing page (members website). API status moved to /status."""
+    return _FileResponse("static/site/index.html")
+
+
+@app.get("/pricing", include_in_schema=False)
+async def pricing_page():
+    return _FileResponse("static/site/pricing.html")
+
+
+@app.get("/members", include_in_schema=False)
+async def members_page():
+    return _FileResponse("static/site/members.html")
+
+
+@app.get("/status")
+async def status_json():
+    return {"message": "Wildchance API is live 🚀", "status": "Server running"}
 
 
 @app.get("/health")
@@ -295,6 +316,9 @@ app.include_router(derivs_router)
 app.include_router(cron_router)
 app.include_router(bt_engines_router)
 app.include_router(zconfluence_router)
+app.include_router(macro_router)
+app.include_router(billing_router)
+app.include_router(members_router)
 app.include_router(correlation_router)
 
 # Serve the static dashboards (EdgeFinder board at /static/dashboard/edgefinder.html).

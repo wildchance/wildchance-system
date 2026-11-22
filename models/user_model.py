@@ -21,4 +21,7 @@ class User(Base):
     stripe_customer_id = Column(String)
     active = Column(Boolean, default=True)
     calls_this_period = Column(Integer, default=0)              # simple usage meter
+    paid_until = Column(DateTime(timezone=True))                # subscription end (UTC)
+    provider = Column(String)                                   # paystack | stripe | manual
+    provider_ref = Column(String)                               # last payment / sub reference
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

@@ -92,7 +92,10 @@ async def webhook(email: str = Query(...), tier: str = Query(...),
     """Flip a user's tier on a verified billing event. Guard with BILLING_WEBHOOK_SECRET."""
     from decouple import config
     expected = config("BILLING_WEBHOOK_SECRET", default=None)
-    if expected and secret != expected:
+    if not expected:                       # was: unset secret = anyone could upgrade anyone
+        raise HTTPException(status_code=503, detail="billing disabled — set BILLING_WEBHOOK_SECRET")
+    import hmac
+    if not secret or not hmac.compare_digest(secret, expected):
         raise HTTPException(status_code=403, detail="bad webhook secret")
     if event == "canceled":
         return await svc.set_tier(db, email, "scout")

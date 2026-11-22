@@ -74,7 +74,8 @@ def levels(lean: str, last: float, mean: float, sd: float, z: float,
 
 
 def build(breaches: List[Dict], signals: List[Dict], cot_date: Optional[str],
-          weekly: Optional[Dict[str, Dict]] = None, now=None) -> List[Dict]:
+          weekly: Optional[Dict[str, Dict]] = None, now=None,
+          locks: Optional[Dict[str, str]] = None) -> List[Dict]:
     by_pair = {s.get("pair"): s for s in signals or []}
     weekly = weekly or {}
     out = []
@@ -85,6 +86,10 @@ def build(breaches: List[Dict], signals: List[Dict], cot_date: Optional[str],
         wread = weekly.get(b["symbol"])
         wv = tg.weekly_verdict(wread, b["lean"])
         g = grade(b["lean"], row, wv)
+        lock = (locks or {}).get(b["symbol"].replace("/", ""))
+        if lock and ((lock == "BUY_ONLY" and b["lean"] == "SELL") or
+                     (lock == "SELL_ONLY" and b["lean"] == "BUY")):
+            g = "X"                                    # against the Stage-0 macro lock
         lv = levels(b["lean"], float(b["last_close"]), float(b["mean"]), float(b["sd"]),
                     float(b["z"]), b["symbol"])
         if not lv:
@@ -147,7 +152,9 @@ async def scan(z_threshold: float = 2.0, notify: bool = False, max_age_s: int = 
     feed = await get_latest_feed() or {}
     fired = sorted({b["symbol"] for b in results if b.get("ok") and b.get("fired")})
     weekly = {sym: await tg.weekly_profile(sym) for sym in fired}
-    setups = build(results, feed.get("signals") or [], cot_latest(feed), weekly)
+    from services.swing_service import macro_bias
+    setups = build(results, feed.get("signals") or [], cot_latest(feed), weekly,
+                   locks=macro_bias())
     sent = []
     if notify:
         from services.realtime import alert_once

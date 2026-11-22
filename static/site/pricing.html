@@ -1,0 +1,24 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WildChance — Pricing</title><link rel="stylesheet" href="/static/site/style.css"></head><body><div class="wrap">
+<header><div class="logo"><a href="/" style="text-decoration:none;color:inherit">WILDCHANCE <span>CONGLOMERATE™</span></a></div>
+<nav><a href="/pricing">Pricing</a><a href="/members">Members</a></nav></header>
+<section class="hero" style="padding-bottom:10px"><h1>Choose your <b>plan</b></h1>
+<p>Pay with <b>M-Pesa or card</b> (Paystack, KES) or <b>international card</b> (Stripe, USD). Monthly access; cancel any time.</p>
+<p id="who" class="muted"></p></section>
+<div class="grid" id="tiers"></div>
+<div class="card" id="signup"><h3>New here?</h3><p>Create a free account first; your private key is your login.</p><br>
+<input id="email" type="email" placeholder="you@email.com"> <br><br><button class="btn" onclick="signup()">Create free account</button>
+<p id="msg" class="muted"></p></div>
+<div class="risk"><b>Risk warning.</b> Trading forex, gold, indices and CFDs carries a high risk of losing money. Signals are educational information, not personalised financial advice. Past results do not guarantee future results.</div>
+</div><script>
+const $=id=>document.getElementById(id);let KEY=null;try{KEY=localStorage.getItem('wc_key')}catch(e){}
+async function j(u,o={}){o.headers=Object.assign({},o.headers||{},KEY?{'X-API-Key':KEY}:{});const r=await fetch(u,o);let d={};try{d=await r.json()}catch(e){}if(!r.ok)throw new Error(d.detail||r.status);return d}
+async function load(){const d=await j('/saas/tiers');$('tiers').innerHTML=d.tiers.filter(t=>t.price_usd!==null).map(t=>`<div class="card tier"><h3>${t.name}</h3>
+<div class="price">${t.price_usd?'$'+t.price_usd:'Free'}<small>${t.price_usd?' / month':''}</small></div><p>${t.blurb||''}</p>
+${t.price_usd?`<button class="btn" onclick="pay('paystack','${t.key}')">M-Pesa / Card (KES)</button><button class="btn ghost" onclick="pay('stripe','${t.key}')">Card (USD)</button>`:''}</div>`).join('');
+if(KEY){try{const m=await j('/members/me');$('who').textContent=`Signed in as ${m.email} · current plan: ${m.tier}`;$('signup').style.display='none'}catch(e){}}}
+async function signup(){const e=$('email').value.trim();if(!e)return;try{const d=await j('/saas/signup?email='+encodeURIComponent(e),{method:'POST'});
+KEY=d.api_key;try{localStorage.setItem('wc_key',KEY)}catch(x){}$('msg').innerHTML=`Account created. <b>Save your key:</b> <code>${KEY}</code>`;load()}catch(x){$('msg').textContent='Sign-up failed: '+x.message}}
+async function pay(p,t){if(!KEY){$('msg').textContent='Create a free account (or log in on Members) first.';$('email').focus();return}
+try{const d=await j(`/billing/checkout?provider=${p}&tier=${t}`,{method:'POST'});location.href=d.url}catch(x){alert('Checkout unavailable: '+x.message)}}
+load();</script></body></html>
