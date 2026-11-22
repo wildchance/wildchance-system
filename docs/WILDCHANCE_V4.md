@@ -332,3 +332,21 @@ own time zone (UTC, New York or London), so daylight saving is handled by `zonei
   - the VPS bridge counts days it placed orders (`CHALLENGE_MIN_DAYS` overrides)
   - `/propfirm/challenge/guard?trading_days=` reports them
 * **Bridge auth is header-only:** `/bridge/*` ignores `?token=`, and only `X-Bridge-Token` is accepted (EA v4.3+ and `bb_sweep.py` already send it). `/cron/tick` still accepts both forms for cron-job.org.
+
+## 16. TwelveData rate limiter + cache (v4.7)
+
+Root cause of the gold 502s, seen in the Render log: `TwelveData error 429: You have
+run out of API credits for the current minute. 10 API credits were used, with the
+current limit being 8.` The free plan allows **8 requests/minute** (about 800/day) and
+bills **1 credit per symbol** in a batch request. The scans fired dozens at once.
+
+`services/td_limiter.py` is installed once at the HTTP layer, so it covers every
+TwelveData call, including future ones:
+* **Cache:** 1day/1week 12h, 4h 30m, 1h 10m, 15min 4m, /price 60s. Error responses are never cached.
+* **Limit:** at most `TD_RATE_PER_MIN` (default 7) credits per rolling minute. Callers queue; if the wait would exceed `TD_MAX_WAIT_S` (75s), the request fails fast with a local 429.
+* **Budget:** `TD_DAILY_LIMIT` (790) per UTC day.
+* `/health` → `twelvedata`: used_today, cache_hits_today, rejected_today, in_last_minute.
+
+Also: a failed price fetch keeps the **last real prices** (`price_stale`) instead of
+the hardcoded snapshot, and background cron calls may now run up to 15 minutes.
+The real fix for gold is still the EA broker feed (free, no limits).

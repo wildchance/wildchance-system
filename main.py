@@ -11,6 +11,9 @@ from core.signals import router as signals_router
 from core.trade import router as trade_router
 from core.webhook import router as webhook_router
 from database.db import init_db
+# TwelveData free plan = 8 requests/min: rate-limit + cache every call at the HTTP layer
+from services import td_limiter as _td_limiter
+_td_limiter.install()
 
 # The Telegram INBOUND bot (command webhook) pulls python-telegram-bot →
 # cryptography. That is an OPTIONAL integration: outbound alerts go out over plain
@@ -235,6 +238,7 @@ async def health_check():
         "twelvedata_key_set": bool(config("TWELVEDATA_API_KEY", default=None)),
         "warnings": warnings,
         "data": data,
+        "twelvedata": _td_limiter.status(),
         "telegram_bot": "enabled" if _TELEGRAM_BOT_OK else "disabled",
         "execution_mode": ("LIVE" if config("EXECUTION_ENABLED", default=False, cast=bool)
                            else "PAPER"),

@@ -73,8 +73,14 @@ def build_feed(tier: str, prev: dict | None) -> dict:
         feed["calendar"] = wc.fetch_calendar()
         feed["daily_updated"] = now
 
-    feed["prices"] = wc.fetch_prices()
-    feed["price_updated"] = now
+    prices = wc.fetch_prices()
+    if not wc.PRICE_STATUS.get("live", True) and feed.get("prices"):
+        # never swap real prices for the hardcoded snapshot — keep the last good ones
+        feed["price_stale"] = True
+    else:
+        feed["prices"] = prices
+        feed["price_updated"] = now
+        feed["price_stale"] = not wc.PRICE_STATUS.get("live", True)
 
     cot_by_code = feed.get("cot", {})
     retail = feed.get("retail") or wc.fetch_retail()

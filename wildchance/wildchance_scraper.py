@@ -419,6 +419,9 @@ def fetch_calendar():
 # ============================================================================
 # TIER 1 — 6H: live prices + sentiment delta
 # ============================================================================
+PRICE_STATUS = {"live": True}   # False → the last fetch fell back to PRICE_FALLBACK
+
+
 def fetch_prices():
     """
     Live prices from Twelve Data /price (batch). Returns {pair: float}.
@@ -433,23 +436,33 @@ def fetch_prices():
     import urllib.request, urllib.parse
     if not TWELVEDATA_KEY:
         print("[PRICE] TWELVEDATA_KEY not set — using fallback snapshot")
+        PRICE_STATUS["live"] = False
         return dict(PRICE_FALLBACK)
     symbols = list(WATCH.keys())
     url = ("https://api.twelvedata.com/price?symbol="
            + urllib.parse.quote(",".join(symbols))
            + "&apikey=" + TWELVEDATA_KEY)
     try:
+        from services.td_limiter import acquire_sync
+        if not acquire_sync(credits=len(symbols)):     # 1 credit per symbol in a batch
+            raise RuntimeError("local TwelveData limiter: budget/queue full")
+    except ImportError:
+        pass
+    try:
         with urllib.request.urlopen(url, timeout=30) as r:
             data = json.load(r)
     except Exception as e:
         print(f"[PRICE] Twelve Data fetch failed ({e}) — using fallback snapshot")
+        PRICE_STATUS["live"] = False
         return dict(PRICE_FALLBACK)
 
     # API-level error returned as 200 with a status field
     if isinstance(data, dict) and data.get("status") == "error":
         print(f"[PRICE] Twelve Data error: {data.get('message')} — using fallback")
+        PRICE_STATUS["live"] = False
         return dict(PRICE_FALLBACK)
 
+    PRICE_STATUS["live"] = True
     out = {}
     if len(symbols) == 1 and "price" in data:           # single-symbol shape
         out[symbols[0]] = float(data["price"])
