@@ -1,274 +1,50 @@
 name: scheduled-scans
 
-# Robust scheduling: each cron does ONE job, dispatched by github.event.schedule
-# (the cron expression that fired) — NOT by wall-clock hour, because GitHub's
-# free scheduler often delays runs by 10–60 min.
+# BACKUP clock only. The schedule itself lives in the app (services/cron_schedule.py,
+# DST-aware, de-duplicated). The primary clock is cron-job.org calling
+# GET /cron/tick every 5 minutes; this hourly run catches up anything it missed.
+# GitHub's own cron is best-effort (it went silent for hours after re-enabling),
+# so it must not be the only trigger.
 #
-# Required repo secret:  APP_BASE_URL   e.g. https://wildchance-system.onrender.com
-# Optional repo variable: USDJPY_ACCOUNT_SIZE
-#
-# All times UTC. Session setup digests fire at 05:00 / 09:00 / 17:00 / 21:00 UTC.
+# Required repo secrets:  APP_BASE_URL  (e.g. https://wildchance-system.onrender.com)
+#                         CRON_TOKEN    (same value as CRON_TOKEN in Render)
 
 on:
   schedule:
-    - cron: "0 5 * * *"         # USD/JPY scan + "Before New York" setup digest
-    - cron: "0 9 * * *"         # "New York" setup digest
-    - cron: "0 17 * * *"        # "After open" setup digest
-    - cron: "0 21 * * *"        # "Asian open" setup digest
-    - cron: "0 6 * * *"         # wildchance daily (retail + calendar + prices)
-    - cron: "0 0,12,18 * * *"   # wildchance 6h (prices + recompute signals)
-    - cron: "0 21 * * 5"        # wildchance weekly COT (Fri, after CFTC release)
-    - cron: "0 8 1 * *"         # monthly performance scorecard (1st of month, 08:00 UTC)
-    - cron: "0 * * * *"         # hourly intraday breach scan (1h z-score) + gold swing monitor
-    - cron: "0 22 * * 0"        # weekly review + Sunday/weekly-open gold swing + Asian gold CBDR
-    # DST-safe pairs: each local-time job is scheduled at BOTH possible UTC hours; the
-    # run converts its SCHEDULED slot to New York / London time and only the matching
-    # one acts (delay-proof). Minute :03 avoids GitHub's top-of-hour congestion.
-    - cron: "3 7 * * *"         # pre-London limits — 03:00 New York (EDT slot)
-    - cron: "3 8 * * *"         # pre-London limits — 03:00 New York (EST slot)
-    - cron: "0 2 * * 1-5"       # Asia accumulation — gold intrasession scan
-    - cron: "0 5 * * 1-5"       # CRT 1-5-9 confirmation — Asian session (01:00 range candle)
-    - cron: "0 17 * * 1-5"      # CRT 1-5-9 confirmation — New York session (13:00 range candle)
-    - cron: "55 20 * * 5"       # Friday pre-close read — 16:55 New York (EDT slot)
-    - cron: "55 21 * * 5"       # Friday pre-close read — 16:55 New York (EST slot)
-    - cron: "5 2 * * *"         # candle-range read after the 01:00 UTC candle closes
-    - cron: "5 14 * * *"        # candle-range read after the 13:00 UTC candle closes
-    - cron: "0 7 1 1,4,7,10 *"  # yearly Quarterly-Theory phase (start of each quarter)
-    - cron: "30 8 * * 1"        # Benner cycle phase (Mondays 08:30 UTC)
-    - cron: "30 6 * * *"        # EdgeFinder top-bias digest (after the 06:00 daily scrape)
-    - cron: "3 7 * * 1-5"       # GOLD scan — London open 08:00 London (BST slot)
-    - cron: "3 8 * * 1-5"       # GOLD scan — London open 08:00 London (GMT slot)
-    - cron: "3 13 * * 1-5"      # GOLD scan — New York open 09:00 NY (EDT slot)
-    - cron: "3 14 * * 1-5"      # GOLD scan — New York open 09:00 NY (EST slot)
-    - cron: "33 13 * * 1-5"     # GOLD intraday — NY-AM distribution 09:30 NY (EDT slot)
-    - cron: "33 14 * * 1-5"     # GOLD intraday — NY-AM distribution 09:30 NY (EST slot)
-    - cron: "3 4 * * *"         # New day 00:00 NY — 4H b2b + recon (EDT slot)
-    - cron: "3 5 * * *"         # New day 00:00 NY — 4H b2b + recon (EST slot)
-    - cron: "3 18 * * *"        # New CBDR 14:00 NY — 4H b2b + recon (EDT slot)
-    - cron: "3 19 * * *"        # New CBDR 14:00 NY — 4H b2b + recon (EST slot)
-  workflow_dispatch:             # manual run = full test (forces every digest)
+    - cron: "7 * * * *"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "Run one job now (name from /cron/jobs), or leave empty for a normal tick"
+        required: false
+        default: ""
 
 jobs:
-  scan:
+  tick:
     runs-on: ubuntu-latest
     permissions:
       actions: write   # keepalive step below re-enables this workflow
       contents: read
     steps:
       - name: Keepalive (stop GitHub's 60-day inactivity auto-disable)
-        # GitHub disables scheduled workflows after 60 days with no repo commits —
-        # that silently stopped every scan on 2026-10-02. Re-enabling via the API
-        # resets the inactivity timer without needing commits.
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/scheduled-scans.yml/enable" || echo "keepalive skipped"
 
-      - name: Trigger scans
+      - name: Tick the in-app scheduler
         env:
           BASE: ${{ secrets.APP_BASE_URL }}
-          ACCT: ${{ vars.USDJPY_ACCOUNT_SIZE }}
-          EXEC_TOKEN: ${{ secrets.EXECUTION_TOKEN }}
-          SCHED: ${{ github.event.schedule }}
-          MANUAL: ${{ github.event_name == 'workflow_dispatch' }}
+          TOKEN: ${{ secrets.CRON_TOKEN }}
+          JOB: ${{ github.event.inputs.job }}
         run: |
-          if [ -z "$BASE" ]; then echo "::error::APP_BASE_URL secret not set"; exit 1; fi
-          ACCT="${ACCT:-0}"
-
-          post () {  # post <path>
-            echo "POST $BASE$1"
-            code=$(curl -s -m 90 -o /tmp/body -w "%{http_code}" -X POST "$BASE$1") || true
-            echo "  -> HTTP $code"
-            head -c 500 /tmp/body; echo
-          }
-          # Local time of the SCHEDULED slot (not wall clock → immune to GitHub delays).
-          slot_local () {  # slot_local <IANA tz>  → hour in that zone, e.g. 9
-            set -f; set -- "$1" $SCHED; set +f      # -f: don't glob the cron "*"
-            local tz="$1" m="$2" h="$3" now slot
-            now=$(date -u +%s)
-            slot=$(date -u -d "$(date -u +%F) $h:$m" +%s)
-            [ "$slot" -gt "$((now + 3600))" ] && slot=$((slot - 86400))   # delayed past midnight
-            TZ="$tz" date -d "@$slot" +%-H
-          }
-          at_ny ()  { h=$(slot_local America/New_York); [ "$h" = "$1" ] || { echo "DST: slot is $h:xx New York, wanted $1 — other slot runs it"; return 1; }; }
-          at_ldn () { h=$(slot_local Europe/London);    [ "$h" = "$1" ] || { echo "DST: slot is $h:xx London, wanted $1 — other slot runs it"; return 1; }; }
-
-          get () {   # get <path>  (endpoints declared as GET — POSTing them returns 405)
-            echo "GET  $BASE$1"
-            code=$(curl -s -m 90 -o /tmp/body -w "%{http_code}" "$BASE$1") || true
-            echo "  -> HTTP $code"
-            head -c 500 /tmp/body; echo
-          }
-
-          if [ "$MANUAL" = "true" ]; then
-            echo "Manual run — usdjpy scan + refresh + forced digests"
-            post "/usdjpy/scan?account_size=$ACCT&notify=true"
-            post "/wildchance/scrape?tier=6h"
-            post "/alerts/session?label=Manual%20test&force=true"
-            post "/intraday/scan?force=true"
-            post "/scorecard/digest?force=true"
-            post "/scorecard/weekly?force=true"
-            post "/cbdr/alert/USD/JPY?window=prelondon"
-            post "/cbdr/limits/XAU/USD?window=prelondon&notify=true"
-            post "/candlerange/scan?force=true"
-            post "/candlerange/friday?force=true"
-            post "/candlerange/crt?session=ny&force=true"
-            post "/gold/prelondon?track=true"
-            get "/gold/sd-fade?track=true"
-            get "/gold/news"
-            post "/quarterly/alert/USD/JPY"
-            post "/autoalert/confluence?min_confidence=85"
-            post "/benner/alert"
-            post "/edgefinder/snapshot"
-            post "/edgefinder/digest?force=true"
-            post "/gold/scan?balance=5000&notify=true"
-            post "/gold/intraday?balance=5000&notify=true"
-            post "/cbdr/alert/XAU/USD?window=trade4"
-            post "/gold/monitor"
-            post "/gold/scorecard/digest?force=true"
-            post "/gold/zones/digest?touch_only=false"
-            post "/gold/recon?force=true"
-            post "/gold/retracement?deploy=true&force=true"
-            post "/gold/confirm?deploy=true"
-            post "/gold/stratops/deploy"
-            get "/swing/scan?notify=true"
-            exit 0
+          if [ -z "$BASE" ] || [ -z "$TOKEN" ]; then
+            echo "::error::set repo secrets APP_BASE_URL and CRON_TOKEN"; exit 1
           fi
-
-          echo "Triggered by schedule: '$SCHED'"
-          case "$SCHED" in
-            "0 5 * * *")
-              post "/usdjpy/scan?account_size=$ACCT&notify=true"
-              post "/wildchance/scrape?tier=6h"
-              post "/alerts/session?label=Before%20New%20York"
-              ;;
-            "0 9 * * *")
-              post "/wildchance/scrape?tier=6h"
-              post "/alerts/session?label=New%20York"
-              ;;
-            "0 17 * * *")
-              post "/wildchance/scrape?tier=6h"
-              post "/alerts/session?label=After%20open"
-              ;;
-            "0 21 * * *")
-              post "/wildchance/scrape?tier=6h"
-              post "/alerts/session?label=Asian%20open"
-              ;;
-            "0 6 * * *")
-              post "/wildchance/scrape?tier=daily"
-              get "/gold/news"        # refresh the tier-1 news calendar daily
-              post "/gold/dxy/flip"    # alert if DXY flipped the gold-long lock state
-              post "/gold/kingdom-report?notify=true"   # daily 14-branch report → Telegram
-              ;;
-            "0 0,12,18 * * *")
-              post "/wildchance/scrape?tier=6h"
-              post "/autoalert/confluence?min_confidence=85"
-              get "/sentiment/scan"              # AI headline sentiment (NVIDIA) → cache / auto-bias
-              get "/swing/scan?notify=true"      # HTF Bollinger ±2σ fades (backup when no EA feed)
-              ;;
-            "0 21 * * 5")
-              post "/wildchance/scrape?tier=weekly"
-              post "/gold/regime/refresh"    # pull live FRED + CFTC gold COT
-              post "/gold/dxy/flip"          # weekly DXY-flip check (RBUSBIS refreshed)
-              ;;
-            "0 8 1 * *")        post "/scorecard/digest" ;;
-            "0 * * * *")
-              post "/intraday/scan"
-              if [ -n "$EXEC_TOKEN" ]; then
-                post "/execution/reconcile?token=$EXEC_TOKEN"   # MT5 bridge drift guard (live only)
-              fi
-              post "/gold/monitor"     # trail/close tracked gold swings (TP/SL/time-stop)
-              post "/gold/zones/digest?touch_only=true"   # alert only when price hits a zone
-              post "/gold/recon?armed_only=true"          # drone sweep — alert on armed board
-              post "/gold/retracement"                    # 3-state read — ping only on a flip
-              post "/gold/confirm?deploy=true"            # take the sweep-and-reject on the M15
-              post "/gold/levels/refresh?interval=4h"     # auto-detect today's OB/swing/target structure
-              post "/gold/alerter/scan?notify=true"       # ARMED Optimus setup → VAULTUM-gated card (fresh levels)
-              ;;
-            "0 22 * * 0")
-              # Weekly review + the Sunday/weekly-open gold swing (the edge: buy the
-              # discount pullback) + the Asian-hours gold CBDR box + gold scorecard.
-              post "/scorecard/weekly"
-              post "/gold/scan?balance=5000&notify=true"
-              post "/cbdr/alert/XAU/USD?window=trade4"
-              post "/gold/monitor"
-              post "/gold/scorecard/digest"
-              post "/gold/stratops/fit"      # weekly P3 refit of the tier factors
-              ;;
-            "3 7 * * *"|"3 8 * * *")
-              at_ny 3 || exit 0
-              # Pre-London CBDR at 03:00 ET year-round (summer 07:00 UTC / winter
-              # 08:00 UTC; window closes 02:45 ET). FX get the box + SD levels; gold
-              # gets the limit plan (buy −1SD, sell +1/+3SD, 1–1.5SD grey zone).
-              post "/cbdr/alert/USD/JPY?window=prelondon"
-              post "/cbdr/alert/EUR/USD?window=prelondon"
-              post "/cbdr/alert/GBP/USD?window=prelondon"
-              post "/cbdr/limits/XAU/USD?window=prelondon&notify=true"
-              post "/gold/prelondon?track=true&execute=true"    # arm tracked + enqueue MT5 limits
-              post "/gold/zones/digest?touch_only=false"        # full buy/sell-limit plan at pre-London
-              ;;
-            "0 2 * * 1-5")
-              # Asia accumulation window — gold intrasession scan + STRATOPS paper deploy
-              post "/gold/intraday?balance=5000&notify=true"
-              post "/gold/stratops/deploy"
-              ;;
-            "0 5 * * 1-5")
-              # CRT 1-5-9 — Asian confirmation (01:00 range candle → 05:00 entry)
-              post "/candlerange/crt?session=asia&execute=true"
-              ;;
-            "0 17 * * 1-5")
-              # CRT 1-5-9 — New York confirmation (13:00 range candle → 17:00 entry)
-              post "/candlerange/crt?session=ny&execute=true"
-              ;;
-            "55 20 * * 5"|"55 21 * * 5")
-              at_ny 16 || exit 0
-              # Friday pre-close — Monday-gap anticipation (the reliable candle read)
-              post "/candlerange/friday"
-              ;;
-            "5 2 * * *")        post "/candlerange/scan" ;;
-            "5 14 * * *")       post "/candlerange/scan" ;;
-            "0 7 1 1,4,7,10 *")
-              # Yearly Quarterly-Theory phase + box for the key set
-              post "/quarterly/alert/USD/JPY"
-              post "/quarterly/alert/EUR/USD"
-              post "/quarterly/alert/XAU/USD"
-              post "/quarterly/alert/NAS100"
-              ;;
-            "30 8 * * 1")       post "/benner/alert" ;;
-            "30 6 * * *")
-              post "/edgefinder/snapshot"
-              post "/edgefinder/digest"
-              ;;
-            "3 7 * * 1-5"|"3 8 * * 1-5")
-              at_ldn 8 || exit 0
-              post "/gold/options/refresh"    # pull live options walls (no-op if no feed)
-              post "/gold/scan?balance=5000&notify=true"
-              post "/gold/intraday?balance=5000&notify=true"
-              ;;
-            "3 13 * * 1-5"|"3 14 * * 1-5")
-              at_ny 9 || exit 0
-              post "/gold/options/refresh"    # pull live options walls (no-op if no feed)
-              post "/gold/scan?balance=5000&notify=true"
-              post "/gold/intraday?balance=5000&notify=true"
-              post "/gold/zones/digest?touch_only=false"        # full buy/sell-limit plan at NY open
-              post "/gold/stratops/deploy"                      # includes sniper-stack candidates
-              ;;
-            "33 13 * * 1-5"|"33 14 * * 1-5")
-              at_ny 9 || exit 0
-              post "/gold/intraday?balance=5000&require_distribution=true&notify=true" ;;
-            "3 4 * * *"|"3 5 * * *")
-              at_ny 0 || exit 0
-              post "/gold/recon?force=true"
-              post "/gold/retracement?deploy=true"
-              get "/swing/scan?notify=true"      # new trading day → HTF Bollinger swing read
-              ;;
-            "3 18 * * *"|"3 19 * * *")
-              at_ny 14 || exit 0
-              # New-trading-day boundaries (Asian 00:00 / NY 14:00 UTC-4): the 4H
-              # b2b bomber + full recon board for swing confluence + the retracement
-              # state (paper-deploy SELL-the-OTE on a fresh flip).
-              post "/gold/recon?force=true"
-              post "/gold/retracement?deploy=true"
-              get "/swing/scan?notify=true"      # new trading day → HTF Bollinger swing read
-              ;;
-            *) echo "no action for schedule '$SCHED'" ;;
-          esac
+          if [ -n "$JOB" ]; then url="$BASE/cron/run?job=$JOB"; else url="$BASE/cron/tick"; fi
+          # first call may wake a sleeping Render instance (~1 min)
+          code=$(curl -s -m 120 -o /tmp/body -w "%{http_code}" -H "X-Cron-Token: $TOKEN" "$url") || true
+          echo "GET $url -> HTTP $code"; cat /tmp/body; echo
+          [ "$code" = "200" ] || { echo "::error::tick failed (HTTP $code)"; exit 1; }
+          sleep 60
+          echo "--- /cron/status (last tick) ---"
+          curl -s -m 60 "$BASE/cron/status" | head -c 3000; echo
