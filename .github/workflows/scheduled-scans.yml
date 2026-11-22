@@ -71,6 +71,12 @@ jobs:
             echo "  -> HTTP $code"
             head -c 500 /tmp/body; echo
           }
+          get () {   # get <path>  (endpoints declared as GET — POSTing them returns 405)
+            echo "GET  $BASE$1"
+            code=$(curl -s -m 90 -o /tmp/body -w "%{http_code}" "$BASE$1") || true
+            echo "  -> HTTP $code"
+            head -c 500 /tmp/body; echo
+          }
 
           if [ "$MANUAL" = "true" ]; then
             echo "Manual run — usdjpy scan + refresh + forced digests"
@@ -86,8 +92,8 @@ jobs:
             post "/candlerange/friday?force=true"
             post "/candlerange/crt?session=ny&force=true"
             post "/gold/prelondon?track=true"
-            post "/gold/sd-fade?track=true"
-            post "/gold/news"
+            get "/gold/sd-fade?track=true"
+            get "/gold/news"
             post "/quarterly/alert/USD/JPY"
             post "/autoalert/confluence?min_confidence=85"
             post "/benner/alert"
@@ -128,7 +134,7 @@ jobs:
               ;;
             "0 6 * * *")
               post "/wildchance/scrape?tier=daily"
-              post "/gold/news"        # refresh the tier-1 news calendar daily
+              get "/gold/news"        # refresh the tier-1 news calendar daily
               post "/gold/dxy/flip"    # alert if DXY flipped the gold-long lock state
               post "/gold/kingdom-report?notify=true"   # daily 14-branch report → Telegram
               ;;

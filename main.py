@@ -192,14 +192,22 @@ async def health_check():
     wired = routes_total > 100
 
     db_ok = None
+    db_backend = None
     try:
         from database.db import engine
         from sqlalchemy import text
+        db_backend = engine.dialect.name             # "postgresql" | "sqlite"
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         db_ok = True
     except Exception:
         db_ok = False
+    warnings = []
+    if db_backend == "sqlite":
+        warnings.append("DATABASE_URL missing/invalid → local SQLite: data is WIPED on every "
+                        "deploy/restart. Set DATABASE_URL to Neon (docs/NEON_SETUP.md).")
+    if not config("TWELVEDATA_API_KEY", default=None):
+        warnings.append("TWELVEDATA_API_KEY not set — only the EA broker feed can supply bars.")
 
     healthy = wired and (db_ok is not False)
     return {
@@ -208,6 +216,9 @@ async def health_check():
         "routes_total": routes_total,
         "gold_routes": gold_routes,
         "db_reachable": db_ok,
+        "db_backend": db_backend,
+        "twelvedata_key_set": bool(config("TWELVEDATA_API_KEY", default=None)),
+        "warnings": warnings,
         "telegram_bot": "enabled" if _TELEGRAM_BOT_OK else "disabled",
         "execution_mode": ("LIVE" if config("EXECUTION_ENABLED", default=False, cast=bool)
                            else "PAPER"),
