@@ -153,8 +153,6 @@ def format_card(sig: dict) -> str:
     if ef and ef.get("status"):
         icon = {"confirms": "✅", "diverges": "⚠️", "neutral": "➖"}.get(ef["status"], "➖")
         lines.append(f"Edge: {icon} {ef.get('bias')} ({ef.get('score'):+d})")
-    s = sig["sizing"]
-    lines += ["", f"Lot ≤ {s['max_lot']}  ·  tier {s['tier']}  ·  bal ${s['balance']}"]
     try:                                      # owner's target-based FX lot ladder
         from propfirm.target_lots import card_lines
         ladder = card_lines(sig["symbol"], float(sig["entry"]), float(sig["stop_loss"]),

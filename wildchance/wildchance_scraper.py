@@ -490,6 +490,9 @@ def base_code(pair):
          "USD/CAD": "CAD", "AUD/USD": "AUD", "USD/CHF": "CHF", "XAU/USD": "XAU"}
     return m.get(pair)
 
+NO_COT_CONF_CAP = 80   # below autoalert's 85: retail alone can't fire a top-grade card
+
+
 def evaluate(pair, price, retail, cot_by_code):
     rl = retail["long_pct"]; rs = retail["short_pct"]
     extreme = max(rl, rs)
@@ -507,7 +510,10 @@ def evaluate(pair, price, retail, cot_by_code):
         verdict = "LONG" if contrarian > 0 else "SHORT"
         conf = int(50 + (extreme - 50) * 1.6 + (abs(c["rank"] - 0.5) * 40 if c else 0))
     conf = max(8, min(94, conf))
+    if not c:                        # retail-only read: never "top grade" without COT
+        conf = min(conf, NO_COT_CONF_CAP)
     return {"pair": pair, "price": price, "retail_long": rl, "retail_extreme": extreme,
+            "cot_missing": not c,
             "contrarian": "long" if contrarian > 0 else "short",
             "cot_net": c["net"] if c else None, "cot_dwk": c["dwk"] if c else None,
             "cot_rank": round(c["rank"], 2) if c else None,

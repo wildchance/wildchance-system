@@ -58,8 +58,18 @@ async def scan(symbols: Optional[List[str]] = None,
         b["symbol"] = ins.symbol
         b["source"] = source
         b["ok"] = True
+        win = closes[-window:]
+        if len(win) == window:                         # band stats for trade levels
+            m = sum(win) / window
+            b["mean"] = round(m, 6)
+            b["sd"] = round((sum((x - m) ** 2 for x in win) / (window - 1)) ** 0.5, 6)
         results.append(b)
+    import time as _t
+    LAST_SCAN.update(t=_t.time(), z=z_threshold, window=window, results=results)
     return results
+
+
+LAST_SCAN: dict = {"t": 0.0, "z": None, "window": None, "results": []}
 
 
 def fresh_breaches(results: List[dict]) -> List[dict]:
