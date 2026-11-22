@@ -162,6 +162,7 @@ jobs:
             "0 0,12,18 * * *")
               post "/wildchance/scrape?tier=6h"
               post "/autoalert/confluence?min_confidence=85"
+              get "/sentiment/scan"              # AI headline sentiment (NVIDIA) → cache / auto-bias
               get "/swing/scan?notify=true"      # HTF Bollinger ±2σ fades (backup when no EA feed)
               ;;
             "0 21 * * 5")

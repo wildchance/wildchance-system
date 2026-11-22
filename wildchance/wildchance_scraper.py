@@ -314,31 +314,66 @@ def _num(v):
     except ValueError:
         return None
 
+# Calendar state. The ForexFactory/FairEconomy JSON rate-limits cloud IPs; previously
+# a failure silently returned CALENDAR_FALLBACK (a June 2026 snapshot) as if it were
+# this week — so the news guard checked the wrong week. Now: cache good fetches,
+# fall back to the EA-pushed MT5 calendar, then to the last good fetch (≤7 days),
+# and otherwise return [] (stale data is never presented as current).
+_CAL_TTL = 3600
+_cal_cache = {"events": None, "t": 0.0, "source": None}
+_ea_cal = {"events": [], "t": 0.0}
+
+
+def set_ea_calendar(raw_events):
+    """Store the MT5 calendar pushed by the EA (normalised to the feed's shape)."""
+    import datetime as _dt
+    import time as _time
+    out = []
+    for e in raw_events or []:
+        try:
+            when = _dt.datetime.fromtimestamp(int(e["t"]), tz=_dt.timezone.utc)
+        except (KeyError, TypeError, ValueError):
+            continue
+        out.append({"date": when.strftime("%Y-%m-%d"), "time_utc": when.strftime("%H:%M"),
+                    "ccy": str(e.get("ccy", "")).upper(), "event": str(e.get("event", "")),
+                    "actual": _num(e.get("actual")), "forecast": _num(e.get("forecast")),
+                    "previous": _num(e.get("previous")),
+                    "impact": str(e.get("impact", "")).lower(), "source": "mt5"})
+    _ea_cal["events"], _ea_cal["t"] = out, _time.time()
+    return len(out)
+
+
+def calendar_status():
+    import time as _time
+    now = _time.time()
+    return {"feed_cached": _cal_cache["events"] is not None,
+            "feed_age_min": round((now - _cal_cache["t"]) / 60, 1) if _cal_cache["t"] else None,
+            "feed_source": _cal_cache["source"],
+            "ea_events": len(_ea_cal["events"]),
+            "ea_age_min": round((now - _ea_cal["t"]) / 60, 1) if _ea_cal["t"] else None,
+            "high_impact_next": [e for e in _ea_cal["events"] if e["impact"] == "high"][:15]}
+
+
 def fetch_calendar():
     """
-    Parseable economic calendar from FairEconomy's public ForexFactory feed:
-      https://nfs.faireconomy.media/ff_calendar_thisweek.json
-    This mirrors the ForexFactory calendar as JSON (no scraping of the HTML page).
-    Normalizes each event into {date, ccy, event, actual, forecast, previous, impact}
-    with numeric actual/forecast/previous so score_nfp() can compute surprises.
-    Falls back to CALENDAR_FALLBACK (this week's prints) on any error.
+    This week's economic calendar, normalised to {date, ccy, event, actual, forecast,
+    previous, impact}. Order: fresh cache (1h) → FairEconomy ForexFactory JSON →
+    EA-pushed MT5 calendar (≤24h old) → last good feed fetch (≤7 days) → [].
 
     Note: jobs prints like '172K' are normalized to 172 (thousands) to match the
     snapshot scale the NFP scorer expects.
     """
+    import time as _time
     import urllib.request
+    now = _time.time()
+    if _cal_cache["events"] is not None and now - _cal_cache["t"] < _CAL_TTL:
+        return [dict(e) for e in _cal_cache["events"]]
     url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "wildchance-engine/1.0"})
         with urllib.request.urlopen(req, timeout=30) as r:
             raw = json.load(r)
-    except Exception as e:
-        print(f"[CAL] calendar fetch failed ({e}) — using fallback snapshot")
-        return [dict(e) for e in CALENDAR_FALLBACK]
-
-    events = []
-    for it in raw:
-        events.append({
+        events = [{
             "date": (it.get("date", "") or "")[:10],
             "ccy": it.get("country", ""),       # feed uses "country" for the currency code
             "event": it.get("title", ""),
@@ -346,13 +381,23 @@ def fetch_calendar():
             "forecast": _num(it.get("forecast")),
             "previous": _num(it.get("previous")),
             "impact": (it.get("impact", "") or "").lower(),
-        })
-    if not events:
-        print("[CAL] calendar returned 0 events — using fallback snapshot")
-        return [dict(e) for e in CALENDAR_FALLBACK]
-    highs = sum(1 for e in events if e["impact"] in ("high", "red"))
-    print(f"[CAL] faireconomy: {len(events)} events ({highs} high-impact)")
-    return events
+        } for it in raw]
+        if events:
+            _cal_cache.update(events=events, t=now, source="forexfactory")
+            highs = sum(1 for e in events if e["impact"] in ("high", "red"))
+            print(f"[CAL] faireconomy: {len(events)} events ({highs} high-impact)")
+            return [dict(e) for e in events]
+        print("[CAL] calendar returned 0 events")
+    except Exception as e:
+        print(f"[CAL] ForexFactory feed failed ({e})")
+    if _ea_cal["events"] and now - _ea_cal["t"] < 24 * 3600:
+        print(f"[CAL] using EA/MT5 calendar ({len(_ea_cal['events'])} events)")
+        return [dict(e) for e in _ea_cal["events"]]
+    if _cal_cache["events"] is not None and now - _cal_cache["t"] < 7 * 86400:
+        print("[CAL] using last good ForexFactory fetch")
+        return [dict(e) for e in _cal_cache["events"]]
+    print("[CAL] no calendar source available — returning none (not stale data)")
+    return []
 
 
 # ============================================================================
