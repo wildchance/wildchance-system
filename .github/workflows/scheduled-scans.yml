@@ -42,7 +42,18 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write   # keepalive step below re-enables this workflow
+      contents: read
     steps:
+      - name: Keepalive (stop GitHub's 60-day inactivity auto-disable)
+        # GitHub disables scheduled workflows after 60 days with no repo commits —
+        # that silently stopped every scan on 2026-10-02. Re-enabling via the API
+        # resets the inactivity timer without needing commits.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/scheduled-scans.yml/enable" || echo "keepalive skipped"
+
       - name: Trigger scans
         env:
           BASE: ${{ secrets.APP_BASE_URL }}
