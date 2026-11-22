@@ -296,3 +296,27 @@ token never appears in request logs.
 
 Gold, FX and index options open interest (CME, OCC) has no free API. Those assets get
 the exact expiry dates; open interest is only live for BTC and ETH.
+
+## 14. In-app scheduler: `/cron/tick` (v4.5)
+
+GitHub's cron went silent for hours after re-enabling, so it's now only a backup.
+The whole schedule (25 jobs) lives in `services/cron_schedule.py`. Each job declares its
+own time zone (UTC, New York or London), so daylight saving is handled by `zoneinfo`.
+
+* **Primary clock:** cron-job.org (free) calls `GET /cron/tick` every 5 minutes with
+  the header `X-Cron-Token`. That also keeps Render's free instance awake (it sleeps
+  after 15 minutes without requests).
+* **Backup clock:** GitHub Actions at :07 every hour calls the same endpoint.
+* **No double runs:** each executed slot is stored in `cron_runs` (unique key) in Neon,
+  so overlapping ticks or restarts never run a job twice, and a missed tick is caught
+  up within 70 minutes.
+* **Loud outages:** if ≥60% of a tick's calls fail, Telegram gets one warning per 6 hours.
+* **Inspect:** `/cron/jobs` (schedule plus next run in UTC), `/cron/status` (last ticks
+  with HTTP codes). Run one job manually: `/cron/run?job=ny_open_0900` (with the token).
+
+### cron-job.org setup (2 minutes)
+1. Sign up at cron-job.org → **Create cronjob**.
+2. URL: `https://wildchance-system.onrender.com/cron/tick`
+3. Schedule: **every 5 minutes**.
+4. Advanced → **Headers**: `X-Cron-Token` = your `CRON_TOKEN`.
+5. Save. Its history should show `200` and `"accepted": true`.

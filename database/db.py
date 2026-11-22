@@ -131,6 +131,7 @@ async def init_db():
     import models.gold_position_model
     import models.user_model                 # SaaS users (auth + tier)
     import models.broker_bar_model           # EA-pushed broker OHLC (free feed)
+    import models.cron_model                 # /cron/tick slot claims
     async with engine.begin() as conn:
         # create_all only — never drop. The forward test accumulates months of
         # data; dropping on startup would silently wipe it. create_all is

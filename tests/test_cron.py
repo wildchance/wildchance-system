@@ -1,0 +1,93 @@
+"""In-app scheduler: DST-aware slots, de-dup, catch-up, /cron/tick auth + execution."""
+
+import datetime as dt
+
+from services import cron_schedule as cs
+
+U = dt.timezone.utc
+
+
+def _job(name):
+    return [j for j in cs.jobs() if j.name == name][0]
+
+
+def test_ny_job_follows_dst():
+    j = _job("ny_open_0900")
+    winter = cs.slots(j, dt.datetime(2026, 11, 23, 14, 5, tzinfo=U), 10)   # EST: 14:00 UTC
+    summer = cs.slots(j, dt.datetime(2026, 7, 15, 13, 5, tzinfo=U), 10)    # EDT: 13:00 UTC
+    assert winter == [dt.datetime(2026, 11, 23, 14, 0, tzinfo=U)]
+    assert summer == [dt.datetime(2026, 7, 15, 13, 0, tzinfo=U)]
+    assert cs.slots(j, dt.datetime(2026, 11, 23, 13, 5, tzinfo=U), 10) == []  # wrong hour in winter
+    assert cs.slots(j, dt.datetime(2026, 11, 22, 14, 5, tzinfo=U), 10) == []  # Sunday
+
+
+def test_london_and_gap_weeks():
+    j = _job("london_open_0800")
+    # 2026-03-10: US already on EDT, UK still GMT → London 08:00 = 08:00 UTC
+    assert cs.slots(j, dt.datetime(2026, 3, 10, 8, 2, tzinfo=U), 10)
+    assert cs.slots(_job("prelondon_0300ny"), dt.datetime(2026, 3, 10, 7, 2, tzinfo=U), 10)
+
+
+def test_utc_filters():
+    assert cs.slots(_job("monthly_scorecard"), dt.datetime(2026, 12, 1, 8, 1, tzinfo=U), 10)
+    assert not cs.slots(_job("monthly_scorecard"), dt.datetime(2026, 12, 2, 8, 1, tzinfo=U), 10)
+    assert cs.slots(_job("weekly_cot_fri"), dt.datetime(2026, 11, 27, 21, 1, tzinfo=U), 10)
+    assert not cs.slots(_job("weekly_cot_fri"), dt.datetime(2026, 11, 26, 21, 1, tzinfo=U), 10)
+    assert len(cs.slots(_job("hourly"), dt.datetime(2026, 11, 23, 10, 30, tzinfo=U), 70)) == 1
+    assert len(cs.slots(_job("hourly"), dt.datetime(2026, 11, 23, 10, 30, tzinfo=U), 100)) == 2
+
+
+def test_due_dedups_and_catches_up():
+    now = dt.datetime(2026, 11, 23, 9, 1, tzinfo=U)               # 09:00 UTC digest + hourly
+    keys = [k for k, _ in cs.due(now, lookback_min=5)]
+    assert "digest_ny@2026-11-23T09:00Z" in keys and "hourly@2026-11-23T09:00Z" in keys
+    assert cs.due(now, done=keys, lookback_min=5) == []
+    late = dt.datetime(2026, 11, 23, 9, 50, tzinfo=U)               # missed tick → caught up
+    assert "digest_ny@2026-11-23T09:00Z" in [k for k, _ in cs.due(late)]
+
+
+def test_every_workflow_call_is_ported():
+    paths = {p for j in cs.jobs() for _, p in j.calls}
+    for must in ("/cbdr/limits/XAU/USD?window=prelondon&notify=true", "/candlerange/friday",
+                 "/gold/alerter/scan?notify=true", "/sentiment/scan", "/swing/scan?notify=true",
+                 "/benner/alert", "/quarterly/alert/NAS100", "/gold/stratops/fit"):
+        assert must in paths
+    assert len(cs.jobs()) == 25
+    assert cs.redact("/execution/reconcile?token=abc&x=1") == "/execution/reconcile?token=***&x=1"
+
+
+def test_tick_endpoint(monkeypatch):
+    import asyncio
+    from fastapi.testclient import TestClient
+    import routes.cron as rc
+    from main import app
+    monkeypatch.setattr(rc, "TOKEN", "ct")
+    called = []
+
+    async def fake_calls(calls):
+        called.extend(calls)
+        return [{"call": f"{m} {p}", "code": 502, "detail": "no data"} for m, p in calls]
+
+    async def yes(slot):
+        return True
+    alerts = []
+
+    async def fake_alert(key, text, ttl_hours=None):
+        alerts.append(key)
+        return True
+    import services.realtime as rt
+    monkeypatch.setattr(rc, "_call_all", fake_calls)
+    monkeypatch.setattr(rc, "_claim", yes)
+    monkeypatch.setattr(rt, "alert_once", fake_alert)
+    monkeypatch.setattr(rc.cs, "due", lambda now: [("hourly@x", _job("hourly"))])
+    c = TestClient(app)
+    assert c.get("/cron/tick").status_code == 403
+    r = c.get("/cron/tick", headers={"X-Cron-Token": "ct"}).json()
+    assert r["accepted"] and r["due"] == ["hourly@x"]
+    assert len(called) == len(_job("hourly").calls)                 # ran in background
+    assert alerts == ["cron-outage"]                                # ≥60% failed → loud
+    st = c.get("/cron/status").json()
+    assert st["ticks"][0]["jobs"][0]["slot"] == "hourly@x"
+    assert c.get("/cron/run?job=nope&token=ct").status_code == 404
+    jobs = c.get("/cron/jobs").json()["jobs"]
+    assert len(jobs) == 25 and all(j["next_utc"] for j in jobs)
