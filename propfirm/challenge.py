@@ -53,6 +53,7 @@ PRESETS: Dict[str, Dict] = {
                    "min_days": 4, "daily_ref": "balance at day start", "verified": False},
 }
 for _k, _p in PRESETS.items():
+    _p.setdefault("min_days_kind", "profitable" if _k == "fundingpips_zero" else "trading")
     _p.setdefault("daily_ref", "max(balance,equity) at day start")
     _p.setdefault("verified", _k.startswith("fundingpips"))
 DEFAULT_PRESET = "fundingpips_2step_8"
@@ -92,7 +93,8 @@ def guard_lines(initial_balance: float, day_start_balance: float,
 def equity_guard(equity: float, initial_balance: float, day_start_balance: float,
                  day_start_equity: float, phase: int = 1, preset: str = DEFAULT_PRESET,
                  daily_buffer: float = DAILY_BUFFER, max_buffer: float = MAX_BUFFER,
-                 lock_on_target: bool = True, peak_equity: Optional[float] = None) -> Dict:
+                 lock_on_target: bool = True, peak_equity: Optional[float] = None,
+                 trading_days: Optional[int] = None) -> Dict:
     """THE kill-switch verdict for the current equity.
 
     phase: 1 / 2 = evaluation phases; 0 = FUNDED (no target lock).
@@ -112,9 +114,20 @@ def equity_guard(equity: float, initial_balance: float, day_start_balance: float
     elif equity <= lines["guard_daily_floor"]:
         out.update(action="DAILY_LOCK", reason="daily-loss guard hit — flatten, resume next day")
     elif lock_on_target and target is not None and equity >= target:
-        out.update(action="TARGET_LOCK", reason="phase target reached — flatten and stop")
+        need = max(0, int(p.get("min_days") or 0) - int(trading_days or 0)) \
+            if p.get("min_days_kind") == "trading" and trading_days is not None else 0
+        if need:
+            out.update(action="TARGET_MIN_DAYS", days_needed=need,
+                       reason=f"target reached but {need} more trading day(s) required — "
+                              "profits locked; place one minimal trade per day to qualify")
+        else:
+            out.update(action="TARGET_LOCK", reason="phase target reached — flatten and stop")
     else:
         out.update(action="TRADE", reason="within limits")
+    if trading_days is not None:
+        out["min_days"] = {"required": p.get("min_days"), "kind": p.get("min_days_kind"),
+                           "have": trading_days,
+                           "remaining": max(0, int(p.get("min_days") or 0) - int(trading_days))}
     out["daily_room"] = round(equity - lines["guard_daily_floor"], 2)
     out["max_room"] = round(equity - lines["guard_max_floor"], 2)
     return out

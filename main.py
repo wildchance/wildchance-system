@@ -213,7 +213,17 @@ async def health_check():
     if not config("TWELVEDATA_API_KEY", default=None):
         warnings.append("TWELVEDATA_API_KEY not set — only the EA broker feed can supply bars.")
 
-    healthy = wired and (db_ok is not False)
+    try:
+        from services.freshness import gold_status
+        data = await gold_status()
+    except Exception as e:
+        data = {"status": "UNKNOWN", "error": str(e)[:120]}
+    if data.get("status") == "STALE":
+        warnings.append(f"Gold prices are STALE ({data.get('age_min')} min old) while the market "
+                        "is open — signals are blind. Check the EA feed / TwelveData.")
+    # NB: still HTTP 200 — a non-200 here could make Render restart the service on a
+    # data outage. Monitors (GitHub backup run) read "status" instead.
+    healthy = wired and (db_ok is not False) and data.get("status") != "STALE"
     return {
         "status": "healthy" if healthy else "degraded",
         "wired": wired,
@@ -223,6 +233,7 @@ async def health_check():
         "db_backend": db_backend,
         "twelvedata_key_set": bool(config("TWELVEDATA_API_KEY", default=None)),
         "warnings": warnings,
+        "data": data,
         "telegram_bot": "enabled" if _TELEGRAM_BOT_OK else "disabled",
         "execution_mode": ("LIVE" if config("EXECUTION_ENABLED", default=False, cast=bool)
                            else "PAPER"),

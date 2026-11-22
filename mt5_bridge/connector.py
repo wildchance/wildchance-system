@@ -156,6 +156,13 @@ def place(o):
         print(f"  order {o['id']} rejected: {getattr(res, 'retcode', '?')} {mt5.last_error()}")
         return "rejected", None, None
     print(f"  order {o['id']} placed: ticket {res.order} @ {res.price}")
+    try:                                       # count this server day toward min trading days
+        t = mt5.symbol_info_tick(sym)
+        day = _dt.datetime.utcfromtimestamp(t.time).strftime("%Y-%m-%d") if t else \
+            _dt.datetime.utcnow().strftime("%Y-%m-%d")
+        print(f"  trading days: {GUARD.record_trade(day)}/{GUARD.min_days}")
+    except Exception:
+        pass
     return "filled" if not is_limit else "sent", res.order, res.price
 
 
@@ -204,6 +211,9 @@ def loop():
                 if verdict["action"] != last_action:
                     flatten(verdict["action"])        # once per lock, not every poll
                     print(f"GUARD {verdict}")
+                    if verdict["action"] == "TARGET_MIN_DAYS":
+                        print(f"  TARGET HIT — need {verdict['min_days'] - verdict['trading_days']} more "
+                              "trading day(s): place ONE minimal (0.01) trade per day manually.")
                 last_action = verdict["action"]
                 time.sleep(POLL_SECONDS)
                 continue                             # pull NO new orders while locked

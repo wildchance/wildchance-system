@@ -48,3 +48,17 @@ jobs:
           sleep 60
           echo "--- /cron/status (last tick) ---"
           curl -s -m 60 "$BASE/cron/status" | head -c 3000; echo
+
+      - name: Health + data freshness (fails red → GitHub emails you)
+        env:
+          BASE: ${{ secrets.APP_BASE_URL }}
+        run: |
+          body=$(curl -s -m 60 "$BASE/health")
+          echo "$body"
+          status=$(echo "$body" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status'))")
+          data=$(echo "$body" | python3 -c "import json,sys; print((json.load(sys.stdin).get('data') or {}).get('status'))")
+          echo "health=$status data=$data"
+          if [ "$status" != "healthy" ]; then
+            echo "::error::App DEGRADED (data=$data) — see warnings above. Signals are blind until fixed."
+            exit 1
+          fi

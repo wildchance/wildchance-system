@@ -98,6 +98,7 @@ async def time_series(params: dict) -> dict:
                                         int(params.get("outputsize", 60)),
                                         params.get("timezone") or "UTC")
         if b:
+            _fresh(params["symbol"], "broker")
             return b
     except Exception:
         pass
@@ -107,7 +108,17 @@ async def time_series(params: dict) -> dict:
         data = (await client.get("https://api.twelvedata.com/time_series",
                                  params={**params, "apikey": TWELVEDATA_KEY})).json()
     _td_error(data)
+    if isinstance(data, dict) and data.get("values"):
+        _fresh(params["symbol"], "twelvedata")
     return data
+
+
+def _fresh(symbol: str, source: str) -> None:
+    try:
+        from services.freshness import record
+        record(symbol, source)
+    except Exception:
+        pass
 
 
 def normalize_symbol(symbol: str) -> str:

@@ -320,3 +320,15 @@ own time zone (UTC, New York or London), so daylight saving is handled by `zonei
 3. Schedule: **every 5 minutes**.
 4. Advanced → **Headers**: `X-Cron-Token` = your `CRON_TOKEN`.
 5. Save. Its history should show `200` and `"accepted": true`.
+
+## 15. Data-freshness guard, minimum trading days, header-only bridge (v4.6)
+
+* **Freshness:** `/health` → `data.status` is `OK`, `STALE`, `CLOSED` (weekend: Fri 17:00 → Sun 17:00 NY) or `UNKNOWN` (first 75 min after boot). STALE means the newest gold price (EA broker bars or the last successful fetch) is older than `DATA_STALE_MIN` (default 120) while the market is open. When that happens:
+  - `/health` says **degraded** (still HTTP 200, so Render won't restart the service over a data outage)
+  - every cron tick sends a Telegram 🔴 warning (once per 3h)
+  - the hourly GitHub backup run **fails red**, and GitHub emails you
+* **Minimum trading days:** if the target is hit before the plan's minimum days (2-Step Standard 3, Flex 1), the guard returns `TARGET_MIN_DAYS`: profits stay locked and strategy trades stay blocked, and you place **one minimal (0.01) trade per remaining day manually**. That's not automated, because some firms penalise very short placeholder trades. Zero's "7 profitable days" is a payout rule, so it's tracked and shown but doesn't lock anything. Where it lives:
+  - the EA counts days from the account's deal history (HUD row "TRADING DAYS")
+  - the VPS bridge counts days it placed orders (`CHALLENGE_MIN_DAYS` overrides)
+  - `/propfirm/challenge/guard?trading_days=` reports them
+* **Bridge auth is header-only:** `/bridge/*` ignores `?token=`, and only `X-Bridge-Token` is accepted (EA v4.3+ and `bb_sweep.py` already send it). `/cron/tick` still accepts both forms for cron-job.org.

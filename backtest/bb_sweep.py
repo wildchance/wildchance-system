@@ -28,9 +28,10 @@ from backtest.bb_engine import sweep
 
 
 def load_app(app: str, token: str, symbol: str, tf: str, n: int):
-    q = urllib.parse.urlencode({"symbol": symbol, "timeframe": tf, "n": n, "token": token})
+    q = urllib.parse.urlencode({"symbol": symbol, "timeframe": tf, "n": n})
     req = urllib.request.Request(f"{app.rstrip('/')}/bridge/export?{q}",
-                                 headers={"User-Agent": "wildchance-sweep"})
+                                 headers={"User-Agent": "wildchance-sweep",
+                                          "X-Bridge-Token": token})
     with urllib.request.urlopen(req, timeout=60) as r:
         rows = json.load(r)["bars"]
     return [(b["t"], b["o"], b["h"], b["l"], b["c"]) for b in rows]
