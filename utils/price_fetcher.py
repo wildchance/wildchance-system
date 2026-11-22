@@ -18,7 +18,9 @@ from utils.logger import logger
 # Config
 TWELVEDATA_KEY = config("TWELVEDATA_API_KEY", default=None)
 REDIS_URL = config("REDIS_URL", default=None)   # None → cache disabled, fallbacks only
-EXCHANGERATE_HOST_KEY = config("EXCHANGERATE_HOST_KEY", default=None)
+# Accept both spellings — Render had EXCHANGERATEHOST_KEY, the code read EXCHANGERATE_HOST_KEY.
+EXCHANGERATE_HOST_KEY = (config("EXCHANGERATE_HOST_KEY", default=None)
+                         or config("EXCHANGERATEHOST_KEY", default=None))
 
 BASE_URL_TWELVE = "https://api.twelvedata.com/price"
 BASE_URL_FRANKFURTER = "https://api.frankfurter.app/latest"

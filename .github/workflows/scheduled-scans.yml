@@ -42,7 +42,18 @@ on:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    permissions:
+      actions: write   # keepalive step below re-enables this workflow
+      contents: read
     steps:
+      - name: Keepalive (stop GitHub's 60-day inactivity auto-disable)
+        # GitHub disables scheduled workflows after 60 days with no repo commits —
+        # that silently stopped every scan on 2026-10-02. Re-enabling via the API
+        # resets the inactivity timer without needing commits.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/scheduled-scans.yml/enable" || echo "keepalive skipped"
+
       - name: Trigger scans
         env:
           BASE: ${{ secrets.APP_BASE_URL }}
@@ -57,6 +68,12 @@ jobs:
           post () {  # post <path>
             echo "POST $BASE$1"
             code=$(curl -s -m 90 -o /tmp/body -w "%{http_code}" -X POST "$BASE$1") || true
+            echo "  -> HTTP $code"
+            head -c 500 /tmp/body; echo
+          }
+          get () {   # get <path>  (endpoints declared as GET — POSTing them returns 405)
+            echo "GET  $BASE$1"
+            code=$(curl -s -m 90 -o /tmp/body -w "%{http_code}" "$BASE$1") || true
             echo "  -> HTTP $code"
             head -c 500 /tmp/body; echo
           }
@@ -75,8 +92,8 @@ jobs:
             post "/candlerange/friday?force=true"
             post "/candlerange/crt?session=ny&force=true"
             post "/gold/prelondon?track=true"
-            post "/gold/sd-fade?track=true"
-            post "/gold/news"
+            get "/gold/sd-fade?track=true"
+            get "/gold/news"
             post "/quarterly/alert/USD/JPY"
             post "/autoalert/confluence?min_confidence=85"
             post "/benner/alert"
@@ -92,6 +109,7 @@ jobs:
             post "/gold/retracement?deploy=true&force=true"
             post "/gold/confirm?deploy=true"
             post "/gold/stratops/deploy"
+            post "/swing/scan?notify=true"
             exit 0
           fi
 
@@ -116,13 +134,14 @@ jobs:
               ;;
             "0 6 * * *")
               post "/wildchance/scrape?tier=daily"
-              post "/gold/news"        # refresh the tier-1 news calendar daily
+              get "/gold/news"        # refresh the tier-1 news calendar daily
               post "/gold/dxy/flip"    # alert if DXY flipped the gold-long lock state
               post "/gold/kingdom-report?notify=true"   # daily 14-branch report → Telegram
               ;;
             "0 0,12,18 * * *")
               post "/wildchance/scrape?tier=6h"
               post "/autoalert/confluence?min_confidence=85"
+              post "/swing/scan?notify=true"      # HTF Bollinger ±2σ fades (backup when no EA feed)
               ;;
             "0 21 * * 5")
               post "/wildchance/scrape?tier=weekly"
@@ -214,6 +233,7 @@ jobs:
               # state (paper-deploy SELL-the-OTE on a fresh flip).
               post "/gold/recon?force=true"
               post "/gold/retracement?deploy=true"
+              post "/swing/scan?notify=true"      # new trading day → HTF Bollinger swing read
               ;;
             *) echo "no action for schedule '$SCHED'" ;;
           esac

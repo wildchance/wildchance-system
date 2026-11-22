@@ -78,3 +78,38 @@ async def grid(balance: float = Query(2500.0),
     Body: [{"id": "...", "session": "trade1", "risk_usd": 1.5, "symbol": "EUR/USD"}]
     """
     return pf.grid_state(_now(), balance, open_trades, tier=tier)
+
+
+# --- challenge mode (FundingPips / FTMO evaluations) -------------------------------
+from propfirm import challenge as ch  # noqa: E402
+
+
+@router.get("/challenge/presets")
+async def challenge_presets():
+    """Firm rule presets. Rules change — verify on the firm's site."""
+    return {"default": ch.DEFAULT_PRESET, "presets": ch.PRESETS,
+            "guard_buffers": {"daily": ch.DAILY_BUFFER, "max": ch.MAX_BUFFER}}
+
+
+@router.get("/challenge/plan")
+async def challenge_plan(balance: float = Query(10000.0),
+                         preset: str = Query(ch.DEFAULT_PRESET),
+                         risk_pct: float = Query(0.5, gt=0, le=5),
+                         avg_r: float = Query(1.8, gt=0),
+                         win_rate: float = Query(0.45, ge=0, le=1),
+                         max_concurrent: int = Query(3, ge=1, le=20)):
+    return ch.challenge_plan(balance, preset, risk_pct, avg_r, win_rate, max_concurrent)
+
+
+@router.get("/challenge/guard")
+async def challenge_guard(equity: float = Query(...),
+                          initial_balance: float = Query(...),
+                          day_start_balance: float = Query(...),
+                          day_start_equity: Optional[float] = Query(None),
+                          phase: int = Query(1, ge=0, le=2, description="0 = funded"),
+                          preset: str = Query(ch.DEFAULT_PRESET),
+                          peak_equity: Optional[float] = Query(None, description="trailing presets")):
+    """The same kill-switch the VPS bridge and the EA run, for a dashboard/what-if."""
+    return ch.equity_guard(equity, initial_balance, day_start_balance,
+                           day_start_equity if day_start_equity is not None else day_start_balance,
+                           phase, preset, peak_equity=peak_equity)

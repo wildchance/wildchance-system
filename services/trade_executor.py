@@ -63,6 +63,30 @@ FLEET_ENABLED = _env_bool("FLEET_ENABLED", False)
 PORTFOLIO_VAR_GATE_ENABLED = _env_bool("PORTFOLIO_VAR_GATE_ENABLED", False)
 PORTFOLIO_EQUITY_USD = _env_num("PORTFOLIO_EQUITY_USD", 0.0)
 PORTFOLIO_VAR_LIMIT_PCT = _env_num("PORTFOLIO_VAR_LIMIT_PCT", 5.0)
+# WildChance v4 lunar overlay — ON (owner's decision). A signal against the active
+# half-cycle (New→Full = BUY-only, Full→New = SELL-only) is BLOCKED from the broker
+# queue (still tracked/alerted). Lunar phase is not an established edge: check
+# GET /lunar/backtest per symbol and set LUNAR_GATE_ENABLED=false where it fails.
+LUNAR_GATE_ENABLED = _env_bool("LUNAR_GATE_ENABLED", True)
+LUNAR_OBS_HOURS = _env_num("LUNAR_OBS_HOURS", 24.0)
+LUNAR_PAUSE_IN_OBS = _env_bool("LUNAR_PAUSE_IN_OBS", False)
+
+
+def lunar_gate(sig: dict) -> dict:
+    """Lunar verdict for a signal. Fail-open (disabled / unknown side / error → approved)."""
+    if not LUNAR_GATE_ENABLED:
+        return {"approved": True, "reason": "lunar gate disabled"}
+    try:
+        from lunar.engine import evaluate_alignment
+        side = str(sig.get("signal") or sig.get("side") or "").upper()
+        if side not in ("BUY", "SELL", "LONG", "SHORT"):
+            return {"approved": True, "reason": "no side on signal"}
+        v = evaluate_alignment(side, observation_hours=LUNAR_OBS_HOURS,
+                               pause_during_observation=LUNAR_PAUSE_IN_OBS)
+        return {"approved": v["allowed"], "reason": v["reason"],
+                "phase": v["lunar"]["phase"]}
+    except Exception:
+        return {"approved": True, "reason": "lunar gate error — fail-open"}
 
 # --- strategy → account routing (5 accounts, DIFFERENT setups) ---------------------
 # DIFFERENT from FLEET (which copies ONE trade to all accounts). With routing ON, each
@@ -459,6 +483,9 @@ async def maybe_enqueue(db: AsyncSession, sig: dict, source: str = "gold") -> Op
     gate = await var_gate(db, sig, source)
     if not gate.get("approved", True):
         return {"blocked": True, "risk_gate": gate}       # portfolio VaR over budget
+    lgate = lunar_gate(sig)
+    if not lgate.get("approved", True):
+        return {"blocked": True, "lunar_gate": lgate}     # against the lunar half-cycle
     try:
         if FLEET_ENABLED:
             orders = build_fleet_orders(sig, source)

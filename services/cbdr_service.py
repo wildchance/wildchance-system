@@ -56,23 +56,19 @@ async def fetch_cbdr_window(symbol: str, window: str = "cbdr",
     the current week's Monday session (the CBDR that sets the weekly deviation
     basis for the Seek & Destroy fade), falling back to latest if not present.
     """
-    if not TWELVEDATA_KEY:
-        return None
     win: Optional[Window] = WINDOWS.get(window)
     if win is None:
         return None
-
-    url = "https://api.twelvedata.com/time_series"
     params = {
         "symbol": symbol,
         "interval": win.interval,
         "outputsize": _OUTPUTSIZE.get(win.interval, 72),
         "timezone": win.tz,
-        "apikey": TWELVEDATA_KEY,
     }
     try:
-        async with httpx.AsyncClient(timeout=12) as client:
-            data = (await client.get(url, params=params)).json()
+        # Broker bars pushed by the EA first (free, real-time), TwelveData fallback.
+        from services.ohlc_service import time_series
+        data = await time_series(params)
     except Exception:
         return None
 
