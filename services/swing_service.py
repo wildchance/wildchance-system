@@ -139,6 +139,15 @@ def format_alert(r: Dict) -> str:
              f"Zones: " + ", ".join(f"{k} {v}" for k, v in (r.get('zones') or {}).items()),
              f"Entry {lv.get('entry')}  ·  SL {lv.get('stop')}",
              f"TP1 (±1σ) {lv.get('tp1_dev1')}  ·  TP2 (mean) {lv.get('tp2_mean')}  ·  R:R {lv.get('rr_to_mean')}"]
+    try:                                      # owner's target-based lot ladder
+        from propfirm.target_lots import card_lines
+        lad = card_lines(r["symbol"], float(lv["entry"]), float(lv["stop"]),
+                         [{"name": "TP1", "price": lv["tp1_dev1"]},
+                          {"name": "TP2", "price": lv["tp2_mean"]}])
+        if lad:
+            lines += lad
+    except Exception:
+        pass
     if r.get("triggers"):
         lines.append("Trigger: close back inside 2σ on " + "/".join(r["triggers"]))
     if r.get("sentiment"):

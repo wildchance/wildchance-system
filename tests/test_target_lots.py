@@ -42,3 +42,29 @@ def test_route():
     from main import app
     r = TestClient(app).get("/propfirm/lots?balance=2500&max_risk_pct=1").json()
     assert [x["lot"] for x in r["rungs"]][:3] == [0.10, 0.07, 0.05]
+
+
+def test_card_lines_eurusd_first_signal():
+    from propfirm.target_lots import card_lines
+    # the first live signal: SELL limit 1.09701, SL 1.09801 (10 pips), TP 1.09246 (45.5 pips)
+    lines = card_lines("EUR/USD", 1.09701, 1.09801, [{"name": "TP", "price": 1.09246}],
+                       balances=[2500, 5000])
+    assert lines[0].startswith("*Lots*") and "SL 10.0 pips" in lines[0]
+    assert "`2.5k`: TP 0.03 (+$13.65/−$3)" in lines[1]
+    assert "`5k`: TP 0.06" in lines[2]
+    assert card_lines("US500", 6000, 5950, [{"name": "TP", "price": 6100}]) == []   # not FX
+
+
+def test_card_lines_jpy_and_cap():
+    from propfirm.target_lots import card_lines
+    lines = card_lines("USD/JPY", 150.0, 150.1, [{"name": "TP1", "price": 149.87}], balances=[2500])
+    assert "SL 10.0 pips" in lines[0] and "`2.5k`: TP1" in lines[1]
+    tight = card_lines("EURUSD", 1.1, 1.1002, [{"name": "TP", "price": 1.0998}], balances=[2500])
+    assert "*" in tight[1] and tight[-1].startswith("_*")          # 2-pip TP → capped
+
+
+def test_signal_engine_card_includes_ladder():
+    from services.signal_engine import build_manual, format_card
+    sig = build_manual("EUR/USD", "short", 1.09701, 1.09801, [1.09246], balance=2500)
+    card = format_card(sig)
+    assert "*Lots*" in card and "`2.5k`" in card
