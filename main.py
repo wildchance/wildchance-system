@@ -184,6 +184,17 @@ except Exception as _saas_err:
     _lg.getLogger("uvicorn.error").warning("SaaS gating not loaded: %s", _saas_err)
 
 from fastapi.responses import FileResponse as _FileResponse
+from fastapi.responses import JSONResponse as _JSONResponse
+
+
+@app.middleware("http")
+async def _access_gate(request, call_next):
+    """Operator-only unless public (services/access.py)."""
+    from services.access import allowed
+    if not allowed(request.url.path, request.headers, request.query_params):
+        return _JSONResponse({"detail": "operator token required (X-Ops-Token or ?token=)"},
+                             status_code=401)
+    return await call_next(request)
 
 
 @app.get("/", include_in_schema=False)

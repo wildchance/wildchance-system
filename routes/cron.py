@@ -54,7 +54,9 @@ async def _call_all(calls, now: Optional[dt.datetime] = None) -> List[Dict]:
     out = []
     now = now or dt.datetime.now(dt.timezone.utc)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://app", timeout=900) as c:
+    from services.access import INTERNAL_TOKEN
+    async with httpx.AsyncClient(transport=transport, base_url="http://app", timeout=900,
+                                 headers={"X-Internal-Token": INTERNAL_TOKEN}) as c:
         for method, path in calls:
             held = cs.hold_reason(path, now)
             if held:                                   # central trade gate (owner's rules)
