@@ -3,9 +3,15 @@
 The 1h z-score breach says *where* price is stretched; the weekly confluence (COT
 positioning + Myfxbook retail, contrarian) says *which way* the bigger flow leans.
 
-  A  CONFLUENCE  z lean == confluence verdict (LONG/SHORT, conf ≥ 70)  → full card
-  B  Z-ONLY      no directional confluence (FLAT / WATCH / missing)     → full card, half size
-  X  CONFLICT    z lean opposite the confluence verdict                 → no trade (flagged)
+  A  CONFLUENCE  z lean == confluence verdict (conf ≥ 70) AND COT agrees (not missing)
+                 AND the ICT weekly profile confirms                    → alert (default)
+  B  PARTIAL     no conflict, but something is missing (COT absent, weekly neutral)
+                                                                        → listed, not sent
+  X  CONFLICT    z lean opposite the confluence verdict, COT, or the weekly profile
+                                                                        → no trade
+Every alert also passes services.trade_gate: no trades while the CBDR box forms
+(14:00–20:00 NY) or in the thin Sunday open, stop ≥ the owner's 10 pips (gold $3),
+furthest target ≥ 1.3R. ZC_NOTIFY_GRADES (default "A") chooses what is sent.
 
 Levels from the 1h window (mean m, sd s), z = current stretch:
   entry = last close · stop = one more σ beyond the extreme (m ± (|z|+1)s → risk = 1σ)
@@ -18,22 +24,43 @@ from __future__ import annotations
 import time
 from typing import Dict, List, Optional
 
+from decouple import config
+
+from services import trade_gate as tg
+
 MIN_CONF_A = 70
+NOTIFY_GRADES = set(str(config("ZC_NOTIFY_GRADES", default="A")).replace(" ", "").split(","))
 _PAIR = {"XAU/USD": "XAU/USD"}
 
 
-def grade(lean: str, conf_row: Optional[Dict]) -> str:
-    v = (conf_row or {}).get("verdict")
-    if v in ("LONG", "SHORT") and (conf_row.get("confidence") or 0) >= MIN_CONF_A:
-        return "A" if (v == "LONG") == (lean == "BUY") else "X"
+def cot_missing(row: Optional[Dict]) -> bool:
+    return bool(row) and (bool(row.get("cot_missing")) or row.get("cot_net") is None)
+
+
+def grade(lean: str, conf_row: Optional[Dict], weekly: str = "neutral") -> str:
+    """A only when EVERYTHING agrees; X on any opposition; B otherwise."""
+    row = conf_row or {}
+    v = row.get("verdict")
+    want = "LONG" if lean == "BUY" else "SHORT"
+    strong = v in ("LONG", "SHORT") and (row.get("confidence") or 0) >= MIN_CONF_A
+    if (strong and v != want) or weekly == "diverges":
+        return "X"
+    if strong and not cot_missing(row) and row.get("cot_agrees") is False:
+        return "X"                                   # COT present and opposing
+    if strong and v == want and not cot_missing(row) and row.get("cot_agrees") \
+            and weekly == "confirms":
+        return "A"
     return "B"
 
 
-def levels(lean: str, last: float, mean: float, sd: float, z: float) -> Optional[Dict]:
+def levels(lean: str, last: float, mean: float, sd: float, z: float,
+           symbol: str = "") -> Optional[Dict]:
     if not sd or sd <= 0:
         return None
     sgn = -1 if lean == "SELL" else 1                  # SELL: price above mean, target down
     stop = mean - sgn * (abs(z) + 1) * sd
+    if symbol:                                         # never a noise stop (owner: ≥ 10 pips)
+        stop = tg.widen_stop(symbol, lean, last, stop)
     tp1 = mean - sgn * sd
     tp2 = mean
     risk = abs(last - stop)
@@ -46,38 +73,55 @@ def levels(lean: str, last: float, mean: float, sd: float, z: float) -> Optional
             "r_tp1": rr(tp1), "r_tp2": rr(tp2)}
 
 
-def build(breaches: List[Dict], signals: List[Dict], cot_date: Optional[str]) -> List[Dict]:
+def build(breaches: List[Dict], signals: List[Dict], cot_date: Optional[str],
+          weekly: Optional[Dict[str, Dict]] = None, now=None) -> List[Dict]:
     by_pair = {s.get("pair"): s for s in signals or []}
+    weekly = weekly or {}
     out = []
     for b in breaches:
         if not (b.get("ok") and b.get("fired") and b.get("lean") and b.get("sd")):
             continue
         row = by_pair.get(b["symbol"])
-        g = grade(b["lean"], row)
-        lv = levels(b["lean"], float(b["last_close"]), float(b["mean"]), float(b["sd"]), float(b["z"]))
+        wread = weekly.get(b["symbol"])
+        wv = tg.weekly_verdict(wread, b["lean"])
+        g = grade(b["lean"], row, wv)
+        lv = levels(b["lean"], float(b["last_close"]), float(b["mean"]), float(b["sd"]),
+                    float(b["z"]), b["symbol"])
         if not lv:
             continue
+        gate = tg.evaluate(b["symbol"], b["lean"], lv["entry"], lv["stop"],
+                           [lv["tp1"], lv["tp2"]], weekly=wread, now=now)
         out.append({"symbol": b["symbol"], "lean": b["lean"], "z": b["z"], "fresh": b.get("fresh"),
-                    "grade": g, "levels": lv,
+                    "grade": g, "levels": lv, "gate": gate,
+                    "weekly": {"verdict": wv, **({k: wread.get(k) for k in ("bias", "profile", "reason")}
+                                                if wread else {})},
                     "confluence": ({k: row.get(k) for k in ("verdict", "confidence", "cot_agrees",
-                                                             "cot_missing", "retail_long")}
-                                   if row else None),
+                                                             "retail_long")}
+                                   | {"cot_missing": cot_missing(row)} if row else None),
                     "cot_as_of": cot_date})
-    out.sort(key=lambda r: ("AXB".index(r["grade"]) if r["grade"] in "AXB" else 9, -abs(r["z"])))
+    out.sort(key=lambda r: ("ABX".index(r["grade"]), -abs(r["z"])))
     return out
+
+
+def sendable(r: Dict) -> bool:
+    return r["grade"] in NOTIFY_GRADES and r["gate"]["allow"]
 
 
 def card(r: Dict) -> str:
     from propfirm.target_lots import card_lines
     lv, c = r["levels"], r.get("confluence") or {}
     arrow = "🔴 SELL" if r["lean"] == "SELL" else "🟢 BUY"
-    tag = {"A": "🅰️ Z + COT/retail CONFLUENCE", "B": "🅱️ Z-score only (half size)"}[r["grade"]]
+    tag = {"A": "🅰️ Z + COT + retail + weekly profile ALIGNED",
+           "B": "🅱️ partial confluence (half size)", "X": "✖️ conflict"}[r["grade"]]
     lines = [f"⚡ *Z-setup — {r['symbol']}* {arrow}", tag,
              f"z {r['z']:+.2f} (1h){' · fresh' if r.get('fresh') else ''}"]
     if c:
         cot = "COT missing" if c.get("cot_missing") else \
             f"COT {'agrees' if c.get('cot_agrees') else 'disagrees'} (as of {r.get('cot_as_of') or '?'})"
         lines.append(f"Confluence: {c.get('verdict')} conf {c.get('confidence')} · retail {c.get('retail_long')}%L · {cot}")
+    w = r.get("weekly") or {}
+    if w.get("bias"):
+        lines.append(f"Weekly profile: {w['bias']} ({w.get('profile')}) → {w.get('verdict')}")
     lines += ["", f"Entry: `{lv['entry']}`", f"Stop:  `{lv['stop']}`  (1σ beyond the extreme)"]
     tps = []
     if lv["tp1"] is not None:
@@ -101,15 +145,19 @@ async def scan(z_threshold: float = 2.0, notify: bool = False, max_age_s: int = 
     else:
         results = await isvc.scan(z_threshold=z_threshold)
     feed = await get_latest_feed() or {}
-    setups = build(results, feed.get("signals") or [], cot_latest(feed))
+    fired = sorted({b["symbol"] for b in results if b.get("ok") and b.get("fired")})
+    weekly = {sym: await tg.weekly_profile(sym) for sym in fired}
+    setups = build(results, feed.get("signals") or [], cot_latest(feed), weekly)
     sent = []
     if notify:
         from services.realtime import alert_once
         day = time.strftime("%Y-%m-%d", time.gmtime())
         for r in setups:
-            if r["grade"] in ("A", "B") and await alert_once(
+            if sendable(r) and await alert_once(
                     f"z:{r['symbol']}:{r['lean']}:{day}", card(r), ttl_hours=12):
                 sent.append(r["symbol"])
     return {"z_threshold": z_threshold, "cot_as_of": cot_latest(feed),
-            "setups": setups, "notified": sent,
+            "notify_grades": sorted(NOTIFY_GRADES), "setups": setups, "notified": sent,
+            "held": [{"symbol": r["symbol"], "grade": r["grade"], "why": r["gate"]["reasons"]}
+                     for r in setups if not sendable(r)],
             "conflicts": [r["symbol"] for r in setups if r["grade"] == "X"]}
