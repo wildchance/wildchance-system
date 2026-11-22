@@ -283,3 +283,16 @@ Check it at `GET /bridge/calendar`.
 
 The EA (v4.3) sends its token in an `X-Bridge-Token` header, not in the URL, so the
 token never appears in request logs.
+
+## 13. Polymarket, Myfxbook and options expiry (v4.4)
+
+| Source | Endpoint | How |
+|---|---|---|
+| Polymarket | `/sentiment/polymarket` | Free Gamma API. Macro and asset questions → a rule table (Fed cut ⇒ USD−, gold+, indices+…); the NVIDIA model classifies questions the rules don't match. Signal = (P(yes)−0.5)·2, weighted by log volume |
+| Myfxbook | inside `/sentiment/scan` | Official API (your `MYFXBOOK_*` creds), cached 6h (logins are throttled). Read **contrarian**: 70% long ⇒ −0.67. On failure it now returns **neutral, flagged stale**; it used to return a June snapshot as current |
+| Composite | `/sentiment/composite/XAUUSD` | news 0.4 + Polymarket 0.3 + retail 0.3. An auto-lock needs \|composite\| ≥ 0.5 **and** ≥2 agreeing sources (with `SENTIMENT_AUTO_BIAS=true`; manual `MACRO_BIAS` wins) |
+| Expiry calendar | `/options/expiry` | Exact dates: US equity monthly/quarterly (3rd Fri), CME gold OG (4th last business day of the prior month), CME FX (2nd Fri before 3rd Wed), Deribit weekly/monthly/quarterly. Swing cards get an `[EXPIRY]` note within ±1 day. Exchange holidays aren't applied |
+| BTC/ETH options | `/options/btc`, `/options/eth` | Deribit public API: per expiry, max pain, call/put walls (largest OI strikes), put/call ratio, max pain vs spot |
+
+Gold, FX and index options open interest (CME, OCC) has no free API. Those assets get
+the exact expiry dates; open interest is only live for BTC and ETH.

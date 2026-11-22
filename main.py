@@ -89,6 +89,7 @@ from routes.lunar import router as lunar_router
 from routes.swing import router as swing_router
 from routes.bridge import router as bridge_router
 from routes.sentiment import router as sentiment_router
+from routes.derivs import router as derivs_router
 
 # Real-time streaming
 from services.polygon_stream import polygon_stream
@@ -272,6 +273,7 @@ app.include_router(lunar_router)
 app.include_router(swing_router)
 app.include_router(bridge_router)
 app.include_router(sentiment_router)
+app.include_router(derivs_router)
 app.include_router(correlation_router)
 
 # Serve the static dashboards (EdgeFinder board at /static/dashboard/edgefinder.html).

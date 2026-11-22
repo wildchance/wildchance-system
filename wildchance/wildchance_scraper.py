@@ -217,24 +217,46 @@ def fetch_gold_cot():
     print(f"[COT] XAU (gold, {GOLD_COT_COHORT}): {len(series)} weeks, "
           f"latest {series[-1]['d']} net={series[-1]['lev']}")
     return {"XAU": series}
+_retail_cache = {"data": None, "t": 0.0}
+_RETAIL_TTL = 6 * 3600            # myfxbook throttles repeated logins — reuse a good read
+
+
+def _neutral_retail():
+    """No live/recent data → NEUTRAL 50/50 flagged stale (never a June snapshot passed
+    off as current, which would bias every contrarian read)."""
+    return {p: {"long_pct": 50, "short_pct": 50, "stale": True} for p in WATCH}
+
+
+def retail_status():
+    import time as _time
+    t = _retail_cache["t"]
+    return {"cached": _retail_cache["data"] is not None,
+            "age_min": round((_time.time() - t) / 60, 1) if t else None}
+
+
 def fetch_retail():
     """
-    myfxbook Community Outlook via the official API.
-      1. login.json(email,password)            -> session token
-      2. get-community-outlook.json(session)    -> per-symbol long/short %
-      3. logout.json(session)                   -> release the session
+    myfxbook Community Outlook via the official API (login → outlook → logout).
+    Order: 6h cache → live API → last good read (≤3 days, flagged stale) → neutral.
     Maps myfxbook symbol names (EURUSD, XAUUSD, ...) to our WATCH pairs.
-    Falls back to RETAIL_FALLBACK if creds are missing or any call fails,
-    so the engine never starves.
 
     NOTE: the iframe/<script> widgets you copied are display-only — JS can't read
     cross-domain iframe content — so this API path is what actually feeds signals.
     """
-    if not (MYFXBOOK_EMAIL and MYFXBOOK_PASSWORD):
-        print("[RETAIL] MYFXBOOK_EMAIL/PASSWORD not set — using fallback snapshot")
-        return {k: dict(v) for k, v in RETAIL_FALLBACK.items()}
-
+    import time as _time
     import urllib.request, urllib.parse
+    now = _time.time()
+    if _retail_cache["data"] is not None and now - _retail_cache["t"] < _RETAIL_TTL:
+        return {k: dict(v) for k, v in _retail_cache["data"].items()}
+
+    def _fallback(why):
+        print(f"[RETAIL] {why}")
+        if _retail_cache["data"] is not None and now - _retail_cache["t"] < 3 * 86400:
+            return {k: dict(v, stale=True) for k, v in _retail_cache["data"].items()}
+        return _neutral_retail()
+
+    if not (MYFXBOOK_EMAIL and MYFXBOOK_PASSWORD):
+        return _fallback("MYFXBOOK_EMAIL/PASSWORD not set — neutral")
     base = "https://www.myfxbook.com/api"
 
     def _get(path, params):
@@ -246,35 +268,29 @@ def fetch_retail():
     try:
         login = _get("login.json", {"email": MYFXBOOK_EMAIL, "password": MYFXBOOK_PASSWORD})
         if login.get("error"):
-            print(f"[RETAIL] login failed: {login.get('message')} — using fallback")
-            return {k: dict(v) for k, v in RETAIL_FALLBACK.items()}
+            return _fallback(f"login failed: {login.get('message')}")
         session = login["session"]
-
         data = _get("get-community-outlook.json", {"session": session})
         if data.get("error"):
-            print(f"[RETAIL] outlook failed: {data.get('message')} — using fallback")
-            return {k: dict(v) for k, v in RETAIL_FALLBACK.items()}
-
-        # map "EURUSD" -> "EUR/USD" for our watchlist
-        want = {p.replace("/", ""): p for p in WATCH}  # {'EURUSD':'EUR/USD', 'XAUUSD':'XAU/USD', ...}
+            return _fallback(f"outlook failed: {data.get('message')}")
+        want = {p.replace("/", ""): p for p in WATCH}
         out = {}
         for sym in data.get("symbols", []):
-            raw = sym.get("name", "")
-            pair = want.get(raw)
+            pair = want.get(sym.get("name", ""))
             if not pair:
                 continue
             lp = round(float(sym.get("longPercentage", 0)))
             sp = round(float(sym.get("shortPercentage", 100 - lp)))
             out[pair] = {"long_pct": lp, "short_pct": sp}
-        # backfill any watchlist pair myfxbook didn't return
-        for p in WATCH:
-            out.setdefault(p, dict(RETAIL_FALLBACK[p]))
-        live = sum(1 for p in WATCH if out[p] != RETAIL_FALLBACK.get(p))
-        print(f"[RETAIL] myfxbook: {len(out)} pairs ({live} live)")
-        return out
+        if not out:
+            return _fallback("outlook returned no watchlist symbols")
+        for p in WATCH:                                   # missing pair → neutral, flagged
+            out.setdefault(p, {"long_pct": 50, "short_pct": 50, "stale": True})
+        _retail_cache.update(data=out, t=now)
+        print(f"[RETAIL] myfxbook: {len(out)} pairs live")
+        return {k: dict(v) for k, v in out.items()}
     except Exception as e:
-        print(f"[RETAIL] myfxbook error ({e}) — using fallback snapshot")
-        return {k: dict(v) for k, v in RETAIL_FALLBACK.items()}
+        return _fallback(f"myfxbook error ({e})")
     finally:
         if session:
             try:

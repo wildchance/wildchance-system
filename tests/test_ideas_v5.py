@@ -18,20 +18,23 @@ def test_parse_verdict_and_locks():
     assert "XAUUSD" in msgs[1]["content"] and "JSON" in msgs[0]["content"]
 
 
-def test_auto_locks_opt_in_and_manual_wins(monkeypatch):
+def test_auto_locks_need_two_sources_and_manual_wins(monkeypatch):
     import time
-    from services import ai_sentiment as ai
+    from services import ai_sentiment as ai, polymarket_service as pm
     from services import swing_service as sw
     ai._cache.clear()
-    ai._cache["BTCUSD"] = {"lock": "BUY_ONLY", "_t": time.time()}
-    ai._cache["XAUUSD"] = {"lock": "SELL_ONLY", "_t": time.time()}
+    ai._cache["XAUUSD"] = {"score": -0.8, "confidence": 0.9, "_t": time.time()}
+    ai._cache["BTCUSD"] = {"score": 0.9, "confidence": 0.9, "_t": time.time()}
+    monkeypatch.setattr(pm, "_cache", {"t": time.time(), "data": {"assets": {
+        "XAUUSD": {"score": -0.6, "markets": 3}}}})
     monkeypatch.setattr(ai, "AUTO_BIAS", False)
-    assert ai.cached_locks() == {}
-    monkeypatch.setattr(ai, "AUTO_BIAS", True)
     monkeypatch.setattr(sw, "config", lambda k, default=None: '{"BTCUSD":"SELL_ONLY"}'
                         if k == "MACRO_BIAS" else default)
+    assert "XAUUSD" not in sw.macro_bias()                 # auto-bias off
+    monkeypatch.setattr(ai, "AUTO_BIAS", True)
     locks = sw.macro_bias()
-    assert locks["BTCUSD"] == "SELL_ONLY" and locks["XAUUSD"] == "SELL_ONLY"
+    assert locks["XAUUSD"] == "SELL_ONLY"                  # news + Polymarket agree
+    assert locks["BTCUSD"] == "SELL_ONLY"                  # manual beats news-only BUY read
     ai._cache.clear()
 
 
