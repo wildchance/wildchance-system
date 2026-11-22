@@ -8,7 +8,11 @@
 //|   - Prop guard: daily + max equity kill-switch, PERSISTED across  |
 //|     terminal restarts (GlobalVariables), phase-target lock         |
 //|   - ADX [CHOP-TRAP] filter, MQL5 economic-calendar news pause      |
-//|   - Optional lunar overlay (Meeus true New/Full Moon, no API)       |
+//|   - Lunar overlay (Meeus true New/Full Moon, no API) - ON          |
+//|   - FundingPips plan picker (Std/Flex/Pro/1-Step/LABS/Zero), with  |
+//|     trailing (Zero) and end-of-day (LABS001) max-loss modes         |
+//|   - HTF Bollinger +-1/+-2 sigma confluence for M/W reversals        |
+//|   - Pushes broker bars + account snapshot to the app (/bridge)     |
 //|   - Risk sizing that SKIPS (never rounds up) when min lot over-    |
 //|     risks; auto filling mode; 1/3-1/3-1/3 R ladder + BE after TP1  |
 //|                                                                    |
@@ -18,7 +22,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.10"
+#property version   "4.20"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -33,6 +37,21 @@ enum ENUM_MACRO_BIAS
    MACRO_SELL_ONLY = 2  // COT / currency-meter lock: SELL only
   };
 
+enum ENUM_FP_PRESET
+  {
+   FP_CUSTOM        = 0, // Custom (use the % inputs below as-is)
+   FP_2STEP_STD_5   = 1, // FundingPips 2-Step Standard 8%/5%, 5% daily, 10% static
+   FP_2STEP_STD_3   = 2, // FundingPips 2-Step Standard 8%/5%, 3% daily, 10% static
+   FP_2STEP_FLEX    = 3, // FundingPips 2-Step Flex 10%/8%, 4% daily, 12% static
+   FP_2STEP_PRO     = 4, // FundingPips 2-Step Pro 6%/6%, 3% daily, 6% static
+   FP_1STEP_3       = 5, // FundingPips 1-Step Flex 12%, 3% daily, 12% static
+   FP_1STEP_2       = 6, // FundingPips 1-Step Flex 12%, 2% daily, 12% static
+   FP_1STEP_LABS    = 7, // FundingPips 1-Step LABS001 5%, 1% daily, 3% EOD max
+   FP_ZERO          = 8  // FundingPips Zero: no target, 3% daily, 5% trailing max
+  };
+
+enum ENUM_MAX_REF { MAXREF_STATIC=0, MAXREF_TRAILING=1, MAXREF_EOD=2 };
+
 enum ENUM_LUNAR_SHIFT_MODE
   {
    LUNAR_OBSERVE_PAUSE = 0, // Pause entries in the observation window
@@ -40,11 +59,15 @@ enum ENUM_LUNAR_SHIFT_MODE
   };
 
 //----------------------------------------------------------------- inputs
-input group "=== 1. PROP CHALLENGE GUARD (FundingPips 2-Step defaults) ==="
-input double   InpInitialBalance    = 0;      // Challenge starting balance (0 = capture once & persist)
-input double   InpDailyLossLimitPct = 3.5;    // Our daily stop, % of initial (firm: 5%)
-input double   InpMaxLossLimitPct   = 8.0;    // Our max-loss stop, % of initial (firm: 10%)
-input double   InpProfitTargetPct   = 8.0;    // Phase target % (8 = P1, 5 = P2, 0 = off)
+input group "=== 1. PROP CHALLENGE GUARD (FundingPips) ==="
+input ENUM_FP_PRESET InpPreset      = FP_2STEP_STD_5; // Account plan (sets daily/max/target/max type)
+input int      InpPhase             = 1;      // 1 / 2 = evaluation phase, 0 = funded (no target lock)
+input double   InpDailyBufferPct    = 70;     // Stop at this % of the firm's daily limit (5% -> 3.5%)
+input double   InpMaxBufferPct      = 80;     // Stop at this % of the firm's max loss (10% -> 8%)
+input double   InpInitialBalance    = 0;      // Account starting balance (0 = capture once & persist)
+input double   InpDailyLossLimitPct = 3.5;    // CUSTOM only: our daily stop, % of initial
+input double   InpMaxLossLimitPct   = 8.0;    // CUSTOM only: our max-loss stop, % of initial
+input double   InpProfitTargetPct   = 8.0;    // CUSTOM only: target % (0 = off)
 input bool     InpFlattenAllOnBreach= true;   // On a guard hit close ALL account positions (not only this EA's)
 input double   InpRiskPct           = 0.50;   // Risk % of equity per trade (0.4-0.5 for challenges)
 input int      InpMaxConcurrent     = 2;      // Max open trades for this magic across all charts
@@ -52,8 +75,8 @@ input int      InpMaxSpreadPips     = 3;      // Skip entry if spread is wider (
 input ulong    InpMagicNumber       = 408812; // Magic number (use the same one on every chart)
 input bool     InpRandomizeSL       = false;  // Widen SL by a random 1-3 pips (fill diversity only)
 
-input group "=== 2. LUNAR OVERLAY (unproven edge - backtest before enabling) ==="
-input bool     InpUseLunarEngine    = false;  // New Moon->Full: BUY only | Full->New: SELL only
+input group "=== 2. LUNAR OVERLAY (ON - verify with GET /lunar/backtest on your symbols) ==="
+input bool     InpUseLunarEngine    = true;   // New Moon->Full: BUY only | Full->New: SELL only
 input int      InpLunarObsHours     = 24;     // Observation window +/- hours around New/Full Moon
 input ENUM_LUNAR_SHIFT_MODE InpLunarShiftMode = LUNAR_HALF_RISK;
 input int      InpNewMoonHoldDays   = 14;     // Max hold for lunar longs (days)
@@ -113,7 +136,22 @@ input bool     InpDrawTradePlan     = true;
 input bool     InpAlertOnEntry      = true;
 input double   InpPipSize           = 0;      // 0 = auto
 
-input group "=== 7. HUD ==="
+input group "=== 7. BOLLINGER HTF EXTREMES (mean-reversion confluence) ==="
+input bool     InpUseBBConfluence   = true;   // +2 M/W score when HTF price is beyond +-1 sigma the reversal way
+input bool     InpRequireBBStretch  = false;  // Block M/W unless an HTF is stretched (|z| >= 1) the right way
+input int      InpBBPeriod          = 20;
+input ENUM_TIMEFRAMES InpBBTF1      = PERIOD_H4;
+input ENUM_TIMEFRAMES InpBBTF2      = PERIOD_D1;
+
+input group "=== 8. SEND DATA TO THE APP (EA -> /bridge) ==="
+input bool     InpSendData          = true;   // Push closed bars + account snapshot to the app
+input string   InpAppUrl            = "https://your-app.onrender.com"; // Add it in Tools > Options > Expert Advisors > WebRequest
+input string   InpBridgeToken       = "";     // = BRIDGE_TOKEN (or EXECUTION_TOKEN) in the app env
+input string   InpAppSymbol         = "";     // Name to send (blank = chart symbol; app strips suffixes)
+input string   InpSendTFs           = "M15,H1,H4,D1,W1";
+input int      InpInitialBars       = 300;    // First push per timeframe; afterwards the last 3 bars
+
+input group "=== 9. HUD ==="
 input ENUM_BASE_CORNER InpCorner    = CORNER_LEFT_UPPER;
 input int      InpFontSize          = 9;
 input int      InpXOffset           = 10;
@@ -130,6 +168,19 @@ double   g_initialBalance = 0;
 double   g_dayRef         = 0;
 double   g_dailyFloor     = 0, g_maxFloor = 0, g_targetEq = 0;
 string   g_propStatus     = "ACTIVE";
+double   g_dailyPct = 3.5, g_maxPct = 8.0, g_targetPct = 8.0;   // effective guard lines (% of initial)
+int      g_maxRef = MAXREF_STATIC;
+string   g_presetName = "CUSTOM";
+
+//----------------------------------------------------------------- bollinger + data push state
+int      hBB1=INVALID_HANDLE, hBB2=INVALID_HANDLE;
+double   g_bbZ1=0, g_bbZ2=0;
+string   g_bbStr="-";
+ENUM_TIMEFRAMES g_sendTF[];
+datetime g_sentBar[];
+bool     g_sentInit[];
+datetime g_lastAcctPush=0;
+string   g_sendStatus="OFF";
 
 //----------------------------------------------------------------- lunar state
 double   g_lunarAgeDays = 0;
@@ -176,7 +227,14 @@ int OnInit()
    trade.SetTypeFillingBySymbol(_Symbol);          // FOK/IOC/RETURN per broker
 
    g_gvp = "WC4_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + "_";
+   ApplyPreset();
    LoadGuardState();
+   if(InpUseBBConfluence || InpRequireBBStretch)
+     {
+      hBB1 = iBands(_Symbol, InpBBTF1, InpBBPeriod, 0, 2.0, PRICE_CLOSE);
+      hBB2 = iBands(_Symbol, InpBBTF2, InpBBPeriod, 0, 2.0, PRICE_CLOSE);
+     }
+   SetupSendTFs();
 
    hFast = iMA(_Symbol, _Period, InpEmaFast, 0, MODE_EMA, PRICE_CLOSE);
    hSlow = iMA(_Symbol, _Period, InpEmaSlow, 0, MODE_EMA, PRICE_CLOSE);
@@ -204,12 +262,16 @@ void OnDeinit(const int reason)
   {
    EventKillTimer();
    ObjectsDeleteAll(0, OBJ_PREFIX);
-   int hs[9]; hs[0]=hFast; hs[1]=hSlow; hs[2]=hMid; hs[3]=hLong; hs[4]=hATR;
-   hs[5]=hRSI; hs[6]=hADX; hs[7]=hD1F; hs[8]=hD1S;
-   for(int i=0;i<9;i++) if(hs[i]!=INVALID_HANDLE) IndicatorRelease(hs[i]);
+   int hs[11]; hs[0]=hFast; hs[1]=hSlow; hs[2]=hMid; hs[3]=hLong; hs[4]=hATR;
+   hs[5]=hRSI; hs[6]=hADX; hs[7]=hD1F; hs[8]=hD1S; hs[9]=hBB1; hs[10]=hBB2;
+   for(int i=0;i<11;i++) if(hs[i]!=INVALID_HANDLE) IndicatorRelease(hs[i]);
   }
 
-void OnTimer() { CheckPropGuard(); }
+void OnTimer()
+  {
+   CheckPropGuard();
+   if(InpSendData && !MQLInfoInteger(MQL_TESTER)) PushData();
+  }
 
 void OnTick()
   {
@@ -233,6 +295,35 @@ void OnTick()
 //+------------------------------------------------------------------+
 double GVGet(string k, double def) { return GlobalVariableCheck(g_gvp+k) ? GlobalVariableGet(g_gvp+k) : def; }
 void   GVSet(string k, double v)   { GlobalVariableSet(g_gvp+k, v); }
+
+// firm limits -> our guard lines (% of initial), buffered; CUSTOM uses the raw inputs
+void ApplyPreset()
+  {
+   double d=0, m=0, t1=0, t2=0; int ref=MAXREF_STATIC; string nm="CUSTOM";
+   switch(InpPreset)
+     {
+      case FP_2STEP_STD_5: d=5; m=10; t1=8;  t2=5; nm="FP 2-Step Std 5%";   break;
+      case FP_2STEP_STD_3: d=3; m=10; t1=8;  t2=5; nm="FP 2-Step Std 3%";   break;
+      case FP_2STEP_FLEX:  d=4; m=12; t1=10; t2=8; nm="FP 2-Step Flex";     break;
+      case FP_2STEP_PRO:   d=3; m=6;  t1=6;  t2=6; nm="FP 2-Step Pro";      break;
+      case FP_1STEP_3:     d=3; m=12; t1=12; t2=0; nm="FP 1-Step 3%";       break;
+      case FP_1STEP_2:     d=2; m=12; t1=12; t2=0; nm="FP 1-Step 2%";       break;
+      case FP_1STEP_LABS:  d=1; m=3;  t1=5;  t2=0; ref=MAXREF_EOD; nm="FP LABS001"; break;
+      case FP_ZERO:        d=3; m=5;  t1=0;  t2=0; ref=MAXREF_TRAILING; nm="FP Zero"; break;
+      default: break;
+     }
+   if(InpPreset == FP_CUSTOM)
+     { g_dailyPct=InpDailyLossLimitPct; g_maxPct=InpMaxLossLimitPct; g_targetPct=InpProfitTargetPct; }
+   else
+     {
+      g_dailyPct  = d * InpDailyBufferPct / 100.0;
+      g_maxPct    = m * InpMaxBufferPct / 100.0;
+      g_targetPct = (InpPhase<=0) ? 0 : (InpPhase==1 ? t1 : t2);
+     }
+   g_maxRef = ref; g_presetName = nm;
+   if(InpRiskPct > g_dailyPct)
+      Print("WildChance WARNING: risk/trade ",InpRiskPct,"% exceeds the daily guard ",g_dailyPct,"%");
+  }
 
 void LoadGuardState()
   {
@@ -262,9 +353,15 @@ bool CheckPropGuard()
       g_dayRef = MathMax(bal, eq);                  // FundingPips: higher of balance/equity
       GVSet("dayref", g_dayRef);
      }
-   g_dailyFloor = g_dayRef - g_initialBalance * InpDailyLossLimitPct / 100.0;
-   g_maxFloor   = g_initialBalance * (1.0 - InpMaxLossLimitPct / 100.0);
-   g_targetEq   = (InpProfitTargetPct > 0) ? g_initialBalance * (1.0 + InpProfitTargetPct / 100.0) : 0;
+   // high-water marks for trailing (peak equity) and EOD (peak day-start value) max loss
+   if(eq > GVGet("peakeq", 0))      GVSet("peakeq", eq);
+   if(g_dayRef > GVGet("peakeod", 0)) GVSet("peakeod", g_dayRef);
+   double maxBase = g_initialBalance;
+   if(g_maxRef == MAXREF_TRAILING) maxBase = MathMax(g_initialBalance, GVGet("peakeq", g_initialBalance));
+   if(g_maxRef == MAXREF_EOD)      maxBase = MathMax(g_initialBalance, GVGet("peakeod", g_initialBalance));
+   g_dailyFloor = g_dayRef - g_initialBalance * g_dailyPct / 100.0;
+   g_maxFloor   = maxBase  - g_initialBalance * g_maxPct / 100.0;
+   g_targetEq   = (g_targetPct > 0) ? g_initialBalance * (1.0 + g_targetPct / 100.0) : 0;
 
    if(GVGet("maxlock", 0) > 0 || eq <= g_maxFloor)
      {
@@ -380,8 +477,34 @@ bool IsHighImpactNewsWindow()
 //+------------------------------------------------------------------+
 int BarsBetween(datetime a, datetime b) { return (int)MathAbs((double)(b - a)) / PeriodSeconds(); }
 
+void UpdateBB()
+  {
+   g_bbZ1 = BBZ(hBB1); g_bbZ2 = BBZ(hBB2);
+   g_bbStr = (hBB1==INVALID_HANDLE) ? "OFF" :
+             StringFormat("%s z%+.1f | %s z%+.1f", EnumToString(InpBBTF1), g_bbZ1, EnumToString(InpBBTF2), g_bbZ2);
+   StringReplace(g_bbStr, "PERIOD_", "");
+  }
+
+// live price position inside the HTF band: z = (price - mid) / sigma ; sigma = (upper - mid) / 2
+double BBZ(int h)
+  {
+   if(h==INVALID_HANDLE) return 0;
+   double mid[1], up[1];
+   if(CopyBuffer(h,0,0,1,mid)!=1 || CopyBuffer(h,1,0,1,up)!=1) return 0;
+   double sd = (up[0]-mid[0])/2.0;
+   return (sd>0) ? (SymbolInfoDouble(_Symbol,SYMBOL_BID)-mid[0])/sd : 0;
+  }
+
+// HTF stretched the reversal way: M (sell) needs z >= +1, W (buy) needs z <= -1
+bool BBStretched(bool forSell)
+  {
+   if(hBB1==INVALID_HANDLE) return false;
+   return forSell ? (g_bbZ1>=1 || g_bbZ2>=1) : (g_bbZ1<=-1 || g_bbZ2<=-1);
+  }
+
 void EvaluatePipeline(bool warmup, bool canTrade)
   {
+   UpdateBB();
    const int bars = 1000;
    MqlRates rates[];
    ArraySetAsSeries(rates, false);
@@ -517,6 +640,7 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
    else if(InpUseLunarEngine && ((isBuy && g_lunarAllowedDir<0) || (!isBuy && g_lunarAllowedDir>0))) why = "LUNAR MISMATCH";
    else if(InpUseLunarEngine && g_inLunarObsWindow && InpLunarShiftMode==LUNAR_OBSERVE_PAUSE)        why = "LUNAR OBSERVATION";
    else if(mwSig && InpRequireSweepOrLoc && g_location=="N/A" && !RecentHunt(isBuy, time[n]))      why = "NO SWEEP / LOCATION";
+   else if(mwSig && InpRequireBBStretch && !BBStretched(!isBuy))  why = "HTF BB NOT STRETCHED";
    else if(idSig && InpRequireBiasAlign && ((isBuy && StringFind(g_sessionBias,"BEARISH")>=0) || (!isBuy && StringFind(g_sessionBias,"BULLISH")>=0))) why = "AGAINST SESSION BIAS";
    else if(InpRequireTDI && ((isBuy && g_tdiPrice<g_tdiSignal) || (!isBuy && g_tdiPrice>g_tdiSignal))) why = "TDI DISAGREES";
    else if(idSig && InpID50MaxTrendDay>0 && g_trendDayAge>InpID50MaxTrendDay) why = "D1 TREND DAY "+IntegerToString(g_trendDayAge);
@@ -745,6 +869,7 @@ int ScoreCandidate(int level,string dir,bool wantBull,bool atLoc,bool huntNearby
    if((wantBull && dir=="Bearish") || (!wantBull && dir=="Bullish")) score+=MathMin(level,3);
    if(atLoc) score+=2;
    if(huntNearby && (n-pivotIdx)<=InpHuntWindowMult*2) score+=2;
+   if(InpUseBBConfluence && BBStretched(!isW)) score+=2;     // HTF Bollinger extreme confluence
    score+=1;
    for(int i=n; i>n-InpConfirmLookback && i>=1; i--)
       if((isW && close[i]>close[i-1]) || (!isW && close[i]<close[i-1])) { score+=1; break; }
@@ -859,7 +984,102 @@ void BuildSignal()
   }
 
 //+------------------------------------------------------------------+
-//| 8. CHART PLAN + HUD                                              |
+//| 8. DATA PUSH  EA -> app /bridge (broker bars = free real-time feed) |
+//+------------------------------------------------------------------+
+ENUM_TIMEFRAMES TfFromStr(string t)
+  {
+   if(t=="M15") return PERIOD_M15; if(t=="H1") return PERIOD_H1; if(t=="H4") return PERIOD_H4;
+   if(t=="D1")  return PERIOD_D1;  if(t=="W1") return PERIOD_W1;
+   return PERIOD_CURRENT;
+  }
+string TfName(ENUM_TIMEFRAMES tf)
+  {
+   switch(tf){ case PERIOD_M15: return "M15"; case PERIOD_H1: return "H1"; case PERIOD_H4: return "H4";
+               case PERIOD_D1: return "D1"; case PERIOD_W1: return "W1"; default: return ""; }
+  }
+
+void SetupSendTFs()
+  {
+   string parts[]; int n = StringSplit(InpSendTFs, ',', parts);
+   ArrayResize(g_sendTF,0); ArrayResize(g_sentBar,0); ArrayResize(g_sentInit,0);
+   for(int i=0;i<n;i++)
+     {
+      string t=parts[i]; StringTrimLeft(t); StringTrimRight(t); StringToUpper(t);
+      ENUM_TIMEFRAMES tf=TfFromStr(t);
+      if(tf==PERIOD_CURRENT) continue;
+      int k=ArraySize(g_sendTF);
+      ArrayResize(g_sendTF,k+1); ArrayResize(g_sentBar,k+1); ArrayResize(g_sentInit,k+1);
+      g_sendTF[k]=tf; g_sentBar[k]=0; g_sentInit[k]=false;
+     }
+   g_sendStatus = InpSendData ? "WAITING" : "OFF";
+  }
+
+// broker server time -> UTC (offset rounded to 15 min)
+long ServerToUtcOffset()
+  {
+   long off = (long)(TimeTradeServer() - TimeGMT());
+   return (long)MathRound(off/900.0)*900;
+  }
+
+bool PostJson(string path, string body)
+  {
+   string url = InpAppUrl; if(StringSubstr(url, StringLen(url)-1)=="/") url = StringSubstr(url,0,StringLen(url)-1);
+   url += path + "?token=" + InpBridgeToken;
+   char data[], result[]; string resHeaders;
+   StringToCharArray(body, data, 0, StringLen(body), CP_UTF8);
+   ResetLastError();
+   int code = WebRequest("POST", url, "Content-Type: application/json\r\n", 5000, data, result, resHeaders);
+   if(code == -1)
+     {
+      g_sendStatus = "ERR "+IntegerToString(GetLastError())+" (allow URL in Options)";
+      return false;
+     }
+   g_sendStatus = (code==200) ? "OK "+TimeToString(TimeCurrent(),TIME_MINUTES) : "HTTP "+IntegerToString(code);
+   return code==200;
+  }
+
+void PushData()
+  {
+   string sym = (InpAppSymbol!="") ? InpAppSymbol : _Symbol;
+   long off = ServerToUtcOffset();
+   for(int k=0;k<ArraySize(g_sendTF);k++)
+     {
+      datetime last = iTime(_Symbol, g_sendTF[k], 1);           // newest CLOSED bar
+      if(last==0 || last==g_sentBar[k]) continue;
+      int count = g_sentInit[k] ? 3 : InpInitialBars;
+      MqlRates r[]; ArraySetAsSeries(r,false);
+      int got = CopyRates(_Symbol, g_sendTF[k], 1, count, r);
+      if(got<=0) continue;
+      string js = "{\"symbol\":\""+sym+"\",\"timeframe\":\""+TfName(g_sendTF[k])+"\",\"bars\":[";
+      for(int i=0;i<got;i++)
+        {
+         if(i>0) js += ",";
+         js += "{\"t\":" + IntegerToString((long)r[i].time - off) +
+               ",\"o\":" + DoubleToString(r[i].open,_Digits) + ",\"h\":" + DoubleToString(r[i].high,_Digits) +
+               ",\"l\":" + DoubleToString(r[i].low,_Digits)  + ",\"c\":" + DoubleToString(r[i].close,_Digits) +
+               ",\"v\":" + IntegerToString(r[i].tick_volume) + "}";
+        }
+      js += "]}";
+      if(PostJson("/bridge/bars", js)) { g_sentBar[k]=last; g_sentInit[k]=true; }
+      else break;                                               // retry next timer tick
+     }
+   if(TimeCurrent() - g_lastAcctPush >= 60)
+     {
+      g_lastAcctPush = TimeCurrent();
+      string js = StringFormat("{\"login\":%I64d,\"symbol\":\"%s\",\"preset\":\"%s\",\"phase\":%d,"
+                               "\"balance\":%.2f,\"equity\":%.2f,\"initial\":%.2f,\"guard\":\"%s\","
+                               "\"daily_floor\":%.2f,\"max_floor\":%.2f,\"target\":%.2f,"
+                               "\"open_positions\":%d,\"lunar\":\"%s\",\"bb\":\"%s\"}",
+                               AccountInfoInteger(ACCOUNT_LOGIN), sym, g_presetName, InpPhase,
+                               AccountInfoDouble(ACCOUNT_BALANCE), AccountInfoDouble(ACCOUNT_EQUITY),
+                               g_initialBalance, g_propStatus, g_dailyFloor, g_maxFloor, g_targetEq,
+                               CountMagicPositions(), g_lunarPhaseName, g_bbStr);
+      PostJson("/bridge/account", js);
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| 9. CHART PLAN + HUD                                              |
 //+------------------------------------------------------------------+
 void PlanLine(string nm,double price,color clr,datetime t1,datetime t2,bool solid)
   {
@@ -882,9 +1102,9 @@ void DrawPlan()
   }
 void ClearPlan() { ObjectsDeleteAll(0, OBJ_PREFIX+"plan_"); }
 
-string g_rowKeys[]   = {"title","prop","room","lunar","news","session","bias","state","phase","align",
+string g_rowKeys[]   = {"title","prop","room","lunar","bb","feed","news","session","bias","state","phase","align",
                         "id50","pattern","location","hunt","quality","adr","tdi","trendday","signal","gate","trade"};
-string g_rowLabels[] = {"WILDCHANCE PROP EA","PROP GUARD","DAILY / MAX ROOM","LUNAR","NEWS GUARD","SESSION",
+string g_rowLabels[] = {"WILDCHANCE PROP EA","PROP GUARD","DAILY / MAX ROOM","LUNAR","BOLLINGER HTF","APP FEED","NEWS GUARD","SESSION",
                         "SESSION BIAS","MARKET / ADX","CYCLE PHASE","EMA ALIGN","ID50","PATTERN","LOCATION",
                         "STOP HUNT","QUALITY","ADR USED","TDI","D1 TREND","SIGNAL","EXECUTION GATE","POSITION"};
 
@@ -929,7 +1149,9 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title","v4.1  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title","v4.2 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("bb",g_bbStr,(MathAbs(g_bbZ1)>=2||MathAbs(g_bbZ2)>=2)?clrOrange:((MathAbs(g_bbZ1)>=1||MathAbs(g_bbZ2)>=1)?clrYellow:clrSilver));
+   SetVal("feed",g_sendStatus,StringFind(g_sendStatus,"OK")==0?clrLime:(g_sendStatus=="OFF"?clrSilver:clrOrange));
    SetVal("prop",g_propStatus,g_propStatus=="ACTIVE"?clrLime:(g_propStatus=="TARGET PASSED"?clrAqua:clrRed));
    SetVal("room",DoubleToString(eq-g_dailyFloor,0)+" / "+DoubleToString(eq-g_maxFloor,0),
           (eq-g_dailyFloor) < g_initialBalance*0.01 ? clrOrange : clrLime);

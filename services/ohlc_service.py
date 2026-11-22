@@ -90,6 +90,26 @@ async def _yahoo_ohlc(symbol: str, interval: str, outputsize: int) -> List[Dated
 DatedOHLC = Tuple[dt.date, float, float, float, float]
 
 
+async def time_series(params: dict) -> dict:
+    """Broker feed (EA-pushed, free, real-time) first; TwelveData when it's absent/stale."""
+    try:
+        from services import broker_feed
+        b = await broker_feed.td_values(params["symbol"], params["interval"],
+                                        int(params.get("outputsize", 60)),
+                                        params.get("timezone") or "UTC")
+        if b:
+            return b
+    except Exception:
+        pass
+    if not TWELVEDATA_KEY:
+        return {}
+    async with httpx.AsyncClient(timeout=15) as client:
+        data = (await client.get("https://api.twelvedata.com/time_series",
+                                 params={**params, "apikey": TWELVEDATA_KEY})).json()
+    _td_error(data)
+    return data
+
+
 def normalize_symbol(symbol: str) -> str:
     """EURUSD → EUR/USD; XAUUSD → XAU/USD; already-slashed passes through."""
     s = (symbol or "").upper().strip()
@@ -110,20 +130,13 @@ async def fetch_ohlc(symbol: str, interval: str = "1day",
 
 
 async def _fetch_ohlc_td(symbol: str, interval: str, outputsize: int) -> List[DatedOHLC]:
-    if not TWELVEDATA_KEY:
-        return []
     params = {
         "symbol": normalize_symbol(symbol),
         "interval": interval,
         "outputsize": max(1, min(int(outputsize), 5000)),
-        "apikey": TWELVEDATA_KEY,
     }
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            r = await client.get("https://api.twelvedata.com/time_series",
-                                 params=params)
-            data = r.json()
-        _td_error(data)
+        data = await time_series(params)
         values = data.get("values") or []
         out: List[DatedOHLC] = []
         for v in values:
@@ -149,16 +162,11 @@ async def fetch_hourly_raw(symbol: str, timezone: str = "UTC",
     (1am / 7am) in the chart's timezone (e.g. America/New_York), so this keeps it.
     Returns [{date, hour, open, high, low, close}]. Empty on any failure.
     """
-    if not TWELVEDATA_KEY:
-        return []
     params = {"symbol": normalize_symbol(symbol), "interval": "1h",
               "outputsize": max(1, min(int(outputsize), 5000)),
-              "timezone": timezone, "apikey": TWELVEDATA_KEY}
+              "timezone": timezone}
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            data = (await client.get("https://api.twelvedata.com/time_series",
-                                     params=params)).json()
-        _td_error(data)
+        data = await time_series(params)
         out: List[dict] = []
         for v in data.get("values") or []:
             ts = v.get("datetime", "")
@@ -190,16 +198,11 @@ async def fetch_ohlc_raw(symbol: str, interval: str = "4h", outputsize: int = 30
     the 4H b2b bomber can sequence candles and read session anchors. Returns
     [{time, open, high, low, close}]. Empty on any failure.
     """
-    if not TWELVEDATA_KEY:
-        return []
     params = {"symbol": normalize_symbol(symbol), "interval": interval,
               "outputsize": max(1, min(int(outputsize), 5000)),
-              "timezone": timezone, "apikey": TWELVEDATA_KEY}
+              "timezone": timezone}
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            data = (await client.get("https://api.twelvedata.com/time_series",
-                                     params=params)).json()
-        _td_error(data)
+        data = await time_series(params)
         out: List[dict] = []
         for v in data.get("values") or []:
             ts = v.get("datetime", "")

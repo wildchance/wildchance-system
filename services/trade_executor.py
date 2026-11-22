@@ -63,10 +63,11 @@ FLEET_ENABLED = _env_bool("FLEET_ENABLED", False)
 PORTFOLIO_VAR_GATE_ENABLED = _env_bool("PORTFOLIO_VAR_GATE_ENABLED", False)
 PORTFOLIO_EQUITY_USD = _env_num("PORTFOLIO_EQUITY_USD", 0.0)
 PORTFOLIO_VAR_LIMIT_PCT = _env_num("PORTFOLIO_VAR_LIMIT_PCT", 5.0)
-# WildChance v4 lunar overlay. OFF by default: lunar phase is an UNPROVEN edge — run
-# GET /lunar/backtest first. When on, a signal against the active half-cycle (New→Full
-# = BUY-only, Full→New = SELL-only) is BLOCKED from the broker queue (still tracked).
-LUNAR_GATE_ENABLED = _env_bool("LUNAR_GATE_ENABLED", False)
+# WildChance v4 lunar overlay — ON (owner's decision). A signal against the active
+# half-cycle (New→Full = BUY-only, Full→New = SELL-only) is BLOCKED from the broker
+# queue (still tracked/alerted). Lunar phase is not an established edge: check
+# GET /lunar/backtest per symbol and set LUNAR_GATE_ENABLED=false where it fails.
+LUNAR_GATE_ENABLED = _env_bool("LUNAR_GATE_ENABLED", True)
 LUNAR_OBS_HOURS = _env_num("LUNAR_OBS_HOURS", 24.0)
 LUNAR_PAUSE_IN_OBS = _env_bool("LUNAR_PAUSE_IN_OBS", False)
 

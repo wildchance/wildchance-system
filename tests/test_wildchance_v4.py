@@ -192,3 +192,62 @@ def test_twelvedata_error_is_logged(caplog):
     with caplog.at_level(logging.WARNING, logger="uvicorn.error"):
         oh._td_error({"status": "error", "code": 429, "message": "run out of API credits"})
     assert "run out of API credits" in caplog.text
+
+
+# --- FundingPips presets = the official plan pages (user screenshots 2026-11-22) -----
+def test_fundingpips_presets_match_official_plans():
+    P = ch.PRESETS
+    def chk(k, targets, daily, mx, ref, days):
+        p = P[k]
+        assert (p["targets"], p["daily_loss"], p["max_loss"], p["max_ref"], p["min_days"]) == \
+            (targets, daily, mx, ref, days), k
+    chk("fundingpips_2step_8", [0.08, 0.05], 0.05, 0.10, "static", 3)
+    chk("fundingpips_2step_8_d3", [0.08, 0.05], 0.03, 0.10, "static", 3)
+    chk("fundingpips_2step_flex", [0.10, 0.08], 0.04, 0.12, "static", 1)
+    chk("fundingpips_2step_pro", [0.06, 0.06], 0.03, 0.06, "static", 0)
+    chk("fundingpips_1step", [0.12], 0.03, 0.12, "static", 0)
+    chk("fundingpips_1step_d2", [0.12], 0.02, 0.12, "static", 0)
+    chk("fundingpips_1step_labs", [0.05], 0.01, 0.03, "eod", 0)
+    chk("fundingpips_zero", [], 0.03, 0.05, "trailing", 7)
+    assert "fundingpips_2step_10" not in P          # not a real plan
+    from mt5_bridge.equity_guard import PRESETS as BP
+    for k, (d, m, ref, t) in BP.items():            # bridge mirror == app table
+        assert (P[k]["daily_loss"], P[k]["max_loss"], P[k]["max_ref"], P[k]["targets"]) == (d, m, ref, t), k
+
+
+def test_labs_eod_guard_and_tight_risk_warning():
+    g = ch.equity_guard(10200, 10000, 10300, 10300, phase=1,
+                        preset="fundingpips_1step_labs", peak_equity=10300)
+    # EOD high 10300 − 3%×10000×0.8 = 10060 ; daily 10300 − 1%×10000×0.7 = 10230 → daily lock
+    assert g["guard_max_floor"] == 10060.0 and g["action"] == "DAILY_LOCK"
+    plan = ch.challenge_plan(10000, "fundingpips_1step_labs", risk_pct=0.5)
+    assert plan["losers_to_daily_guard"] == 1 and plan["warnings"]
+
+
+def test_bridge_eod_and_trailing(tmp_path):
+    from mt5_bridge.equity_guard import EquityGuard
+    g = EquityGuard(initial_balance=10000, daily_loss=0.01, max_loss=0.03, target=0,
+                    trailing_max="eod", state_file=str(tmp_path / "e.json"))
+    g.check(10000, 10000, "D1")
+    g.check(10500, 10500, "D2")                      # EOD high 10500 → floor 10260
+    assert g.check(10500, 10250, "D2")["max_floor"] == 10260.0
+    z = EquityGuard(initial_balance=10000, daily_loss=0.03, max_loss=0.05, target=0,
+                    trailing_max=True, state_file=str(tmp_path / "z.json"))
+    z.check(10000, 10800, "D1")                      # intraday peak counts for trailing
+    assert z.check(10000, 10500, "D1")["max_floor"] == 10400.0
+
+
+def test_lunar_gate_blocks_counter_phase_signal(monkeypatch):
+    import services.trade_executor as te
+    from lunar import engine as lu
+    monkeypatch.setattr(te, "LUNAR_GATE_ENABLED", True)
+    waxing = lu.true_phase(330) + dt.timedelta(days=5)
+    real = lu.evaluate_alignment
+    monkeypatch.setattr(lu, "evaluate_alignment",
+                        lambda d, dt=None, **kw: real(d, waxing, **kw))
+    assert te.lunar_gate({"signal": "LONG"})["approved"]
+    v = te.lunar_gate({"signal": "SHORT"})
+    assert not v["approved"] and "MISMATCH" in v["reason"]
+    assert te.lunar_gate({"signal": None})["approved"]          # no side → fail-open
+    monkeypatch.setattr(te, "LUNAR_GATE_ENABLED", False)
+    assert te.lunar_gate({"signal": "SHORT"})["approved"]

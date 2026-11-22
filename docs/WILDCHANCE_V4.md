@@ -57,11 +57,23 @@ One rule set lives in three places, and they all use the same numbers:
 
 ## 3. Prop-firm calibration (FundingPips as the base account)
 
-Defaults (`fundingpips_2step_8`): Phase 1 target 8%, Phase 2 target 5%, daily loss 5%
-(from the higher of start-of-day balance or equity), max loss 10%, 3 minimum trading days.
-**These are from third-party summaries. Confirm them on fundingpips.com before trading.**
-Other presets: `fundingpips_2step_10`, `fundingpips_2step_pro` (the daily figure is
-unverified), `ftmo_2step`.
+Presets come **from the FundingPips plan pages** (screenshots, 2026-11-22). Pick one
+with `?preset=` in the API, `CHALLENGE_PRESET` on the VPS bridge, or `InpPreset` in the EA.
+
+| Preset | Plan | Targets | Daily | Max loss | Min days |
+|---|---|---|---|---|---|
+| `fundingpips_2step_8` (default) | 2-Step Standard | 8% / 5% | 5% | 10% static | 3 |
+| `fundingpips_2step_8_d3` | 2-Step Standard (3% option) | 8% / 5% | 3% | 10% static | 3 |
+| `fundingpips_2step_flex` | 2-Step Flex | 10% / 8% | 4% | 12% static | 1 |
+| `fundingpips_2step_pro` | 2-Step Pro | 6% / 6% | 3% | 6% static | 0 |
+| `fundingpips_1step` | 1-Step Flex | 12% | 3% | 12% static | 0 |
+| `fundingpips_1step_d2` | 1-Step Flex (2% option) | 12% | 2% | 12% static | 0 |
+| `fundingpips_1step_labs` | 1-Step LABS001 Daily Rewards | 5% | **1%** | 3% end-of-day | 0 |
+| `fundingpips_zero` | Zero (instant) | — | 3% | **5% trailing** | 7 profitable days |
+
+Our guard stops at 70% of the daily limit and 80% of the max loss. `phase=0` means
+funded, with no target lock. **LABS001 and Zero are tight:** at 0.5% risk, one loser
+reaches LABS's 0.7% daily guard. Use 0.2–0.25% there (`/propfirm/challenge/plan` warns).
 
 | Setting | Value | Why |
 |---|---|---|
@@ -81,19 +93,19 @@ per-session budgeting. The challenge module sits on top of them.
 
 ---
 
-## 4. Lunar overlay: what it is and isn't
+## 4. Lunar overlay (ON by your decision)
 
 * Phase times use Meeus' true New/Full Moon (accurate to minutes, no API). They are
   checked against two published reference New Moons, 6 Jan 2000 18:14 UTC and
   Meeus' 1977 worked example (see `tests/test_wildchance_v4.py`). The naive
   29.53-day formula in the draft was off by up to about 14 hours.
-* **There is no established evidence that moon phase predicts price direction.** It is
-  wired in as an **optional** gate that defaults OFF (`LUNAR_GATE_ENABLED=false`,
-  EA `InpUseLunarEngine=false`).
-* Before switching it on, run `GET /lunar/backtest?symbol=XAU/USD&hold_days=14`. It
-  compares New-Moon longs and Full-Moon shorts with an "any day" baseline and gives a
-  t-stat. On a random walk it correctly says "NO EVIDENCE". Enable it only on a
-  positive result, and then forward-test on demo.
+* **ON by default** now (`LUNAR_GATE_ENABLED=true`, EA `InpUseLunarEngine=true`).
+  Signals against the half-cycle are kept out of the broker queue but still tracked.
+* There is no established evidence that moon phase predicts direction, so check each
+  symbol with `GET /lunar/backtest?symbol=XAU/USD&hold_days=14` (and BTC/USD,
+  WTI/USD…). It compares New-Moon longs and Full-Moon shorts with an "any day"
+  baseline and gives a t-stat. Where it says "NO EVIDENCE", turn the gate off for that
+  account or EA instance.
 * Treating the observation window as a **risk reducer** (half size around syzygy) is
   the defensible use, even without a directional edge.
 
@@ -188,3 +200,58 @@ curl -s -X POST "$APP/pipeline/audit" -H 'content-type: application/json' -d '{
 
 Weekly calibration: `POST /pipeline/calibration` with `[{"prob":0.6,"won":true,"r":1.8}, …]`
 returns the Brier score (lower is better; 0.25 is a coin flip), win rate and expectancy.
+
+---
+
+## 9. Swing mean-reversion: HTF Bollinger ±1σ / ±2σ (`/swing`)
+
+Universe: XAUUSD, XAGUSD, BTCUSD, USOIL, US500, NAS100, US30 and the FX majors and
+crosses (`SWING_UNIVERSE` to change it).
+
+| Read | Meaning | Action |
+|---|---|---|
+| inside ±1σ | CORE, fair value | nothing |
+| 1σ–2σ | STRETCHED | watch |
+| beyond ±2σ | EXTREME | fade candidate |
+| close back inside 2σ (H4 or D1) | RE-ENTRY trigger | **ENTRY** |
+| 4 of the last 5 closes beyond 1σ | BAND WALK, a trend | **TREND: don't fade** |
+| bandwidth in its lowest decile | SQUEEZE | breakout risk, don't fade |
+| CBDR ±SD level within 0.25×ATR of a ±1σ/±2σ band | two methods agree | **LIMIT** at the shared price, +2 score |
+
+Weights: W1 3, D1 2, H4 1. Stop goes beyond the 3-day D1 extreme plus 0.25 ATR.
+TP1 = D1 ±1σ, TP2 = the D1 mean. Swing fades go into the pipeline's RANGE tier
+(`/swing/pipeline`), so they get half size and prop caps automatically.
+**Stage-0 macro lock:** `MACRO_BIAS={"BTCUSD":"SELL_ONLY"}` demotes fades against your
+HTF map (for example BUY-the-dip on BTC while the expanded-flat count points to
+17–27K) to WATCH.
+
+In the EA, `InpUseBBConfluence` adds +2 to an M/W score when H4 or D1 price is beyond
+±1σ in the reversal direction. `InpRequireBBStretch` makes that mandatory.
+
+## 10. Real-time: the EA is the data feed
+
+```
+MT5 EA ──(every closed bar: M15 H1 H4 D1 W1 + account each 60s)──► POST /bridge/bars
+        broker_bars table ──► ohlc_service / cbdr_service read it FIRST (TwelveData = fallback)
+        └─► services/realtime.on_bars:
+              H4/D1 bar → swing read → Telegram on ENTRY/LIMIT (deduped 12h)
+              M15/H1 bar → CBDR ≥2.5SD extension + HTF Bollinger stretched → exhaustion alert
+```
+
+EA setup: **Tools → Options → Expert Advisors → Allow WebRequest for listed URL** → add
+your app URL. Set `InpAppUrl` and `InpBridgeToken` (= `BRIDGE_TOKEN`). Run one EA per
+symbol chart (same magic). The HUD row **APP FEED** shows `OK hh:mm` or the error.
+Check `GET /bridge/status` for bar counts and freshness per symbol/timeframe.
+Bars older than 4 bar-lengths (60h over weekends) are ignored, so a stopped EA can't
+feed stale prices.
+
+## 11. Third-party BTC chart (KingOfTheCharts expanded flat)
+
+It counts a large zig-zag correction from about 126K with wave (A) −52.53%, an expanded-flat (B), and a
+5-wave (C) projected to **17K–27K** by about Feb 2027. I can't check it against live
+prices here: this container has no market-data access, and the app's feed is only as
+fresh as your EA or TwelveData. Treat it as a Stage-0 bias, not a signal:
+`MACRO_BIAS={"BTCUSD":"SELL_ONLY"}` and let `/swing/BTCUSD` time the entries. Bollinger
+SELL fades at D1/W1 +2σ re-entries agree with the count, and the band-walk blocker stops
+you shorting into a wave-(2) or (4) rally that keeps walking the upper band. Setup
+guide for the database: `docs/NEON_SETUP.md`.
