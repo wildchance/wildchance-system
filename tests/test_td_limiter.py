@@ -86,3 +86,15 @@ def test_health_reports_limiter():
     from main import app
     h = TestClient(app).get("/health").json()
     assert h["twelvedata"]["rate_per_min"] >= 1 and "used_today" in h["twelvedata"]
+
+
+def test_any_twelvedata_path_marks_gold_fresh():
+    from services import freshness
+    freshness.LAST_OK.clear()
+    tl.record_fresh("https://api.twelvedata.com/price?symbol=XAU/USD,EUR/USD&apikey=k",
+                    b'{"XAU/USD": {"price": "3540.1"}, "EUR/USD": {"status": "error"}}')
+    assert "XAUUSD" in freshness.LAST_OK and "EURUSD" not in freshness.LAST_OK
+    freshness.LAST_OK.clear()
+    tl.record_fresh("https://api.twelvedata.com/price?symbol=XAU/USD", b'{"price": "3540"}')
+    assert freshness.LAST_OK["XAUUSD"]["source"] == "twelvedata"
+    freshness.LAST_OK.clear()

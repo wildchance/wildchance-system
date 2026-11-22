@@ -131,6 +131,24 @@ def _ok_payload(body: bytes) -> bool:
     return isinstance(d, dict) and d.get("status") != "error" and ("values" in d or "price" in d)
 
 
+def record_fresh(url: str, body: bytes) -> None:
+    """Tell the freshness guard which symbols just returned REAL (non-cached) data —
+    every TwelveData path (series, /price, batches) passes here, not only ohlc_service.
+    For a batch, only symbols whose own entry is valid count."""
+    try:
+        from services.freshness import record
+        syms = [x.strip() for x in dict(parse_qsl(urlsplit(url).query)).get("symbol", "").split(",")
+                if x.strip()]
+        d = json.loads(body)
+        for sym in syms:
+            node = d.get(sym) if len(syms) > 1 else d
+            if isinstance(node, dict) and node.get("status") != "error" and \
+                    ("price" in node or "values" in node):
+                record(sym, "twelvedata")
+    except Exception:
+        pass
+
+
 def install() -> None:
     """Wrap httpx.AsyncClient.send once (idempotent)."""
     if _installed["done"]:
@@ -154,6 +172,7 @@ def install() -> None:
         raw = await resp.aread()
         if resp.status_code == 200 and _ok_payload(raw):
             cache_put(key, raw)
+            record_fresh(str(request.url), raw)
         return resp
 
     httpx.AsyncClient.send = send
