@@ -1,0 +1,24 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WildChance — Members</title><link rel="stylesheet" href="/static/site/style.css"></head><body><div class="wrap">
+<header><div class="logo"><a href="/" style="text-decoration:none;color:inherit">WILDCHANCE <span>CONGLOMERATE™</span></a></div>
+<nav><a href="/pricing">Pricing</a><a href="#" onclick="logout()">Log out</a></nav></header>
+<div id="login" class="card" style="margin-top:28px"><h3>Member login</h3><p>Paste your private key (shown when you signed up).</p><br>
+<input id="key" placeholder="your key"> <br><br><button class="btn" onclick="login()">Log in</button> <a class="btn ghost" href="/pricing">Get a key</a><p id="lmsg" class="bad"></p></div>
+<div id="app" style="display:none">
+<section class="hero" style="padding:34px 0 8px"><h1>Members <b>dashboard</b></h1><p id="status" class="muted"></p><p id="tg"></p></section>
+<div class="card"><h3>Macro brief</h3><p id="brief" class="muted" style="white-space:pre-wrap">Loading…</p></div>
+<div class="card feed" style="margin-top:16px"><h3>Latest signals</h3><div id="feed" class="muted">Loading…</div></div></div>
+<div class="risk"><b>Risk warning.</b> Signals are educational information, not personalised financial advice. Size every trade so a stop-out is affordable; past results do not guarantee future results.</div>
+</div><script>
+const $=id=>document.getElementById(id);let KEY=null;try{KEY=localStorage.getItem('wc_key')}catch(e){}
+async function j(u){const r=await fetch(u,{headers:KEY?{'X-API-Key':KEY}:{}});let d={};try{d=await r.json()}catch(e){}if(!r.ok)throw new Error(d.detail||r.status);return d}
+function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+async function show(){try{const m=await j('/members/me');$('login').style.display='none';$('app').style.display='block';
+$('status').innerHTML=`${m.email} · plan <b>${m.tier}</b>`+(m.paid_until?` · active until ${m.paid_until.slice(0,10)}`:'')+(location.search.includes('paid=1')?' · <span class="ok">payment received — thank you!</span>':'');
+$('tg').innerHTML=m.telegram_invite?`<a class="btn" href="${m.telegram_invite}" target="_blank" rel="noopener">Join the private Telegram</a>`:(m.paid?'':'<a class="btn" href="/pricing">Upgrade for full signals</a>');
+j('/macro/brief').then(b=>$('brief').textContent=b.brief||'—').catch(()=>$('brief').textContent='Unavailable');
+const f=await j('/members/feed');$('feed').innerHTML=f.signals.length?f.signals.map(s=>`<div class="sig"><span class="tag">${s.kind}</span><span class="muted">${(s.at||'').replace('T',' ').slice(0,16)} UTC</span>\n${esc(s.text)}</div>`).join(''):'No signals yet: alerts appear here as they are sent.'}
+catch(e){$('login').style.display='block';$('app').style.display='none';if(KEY)$('lmsg').textContent='Key not recognised.'}}
+function login(){KEY=$('key').value.trim();try{localStorage.setItem('wc_key',KEY)}catch(e){}show()}
+function logout(){try{localStorage.removeItem('wc_key')}catch(e){}KEY=null;location.href='/'}
+if(KEY)show();</script></body></html>

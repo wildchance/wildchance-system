@@ -1,0 +1,20 @@
+:root{--bg:#07070a;--card:#111117;--line:#26262f;--gold:#d4a637;--gold2:#f3d27a;--text:#ececf1;--mute:#9a9aa8;--red:#e5484d;--green:#3fb950}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font:16px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+a{color:var(--gold2)}.wrap{max-width:1040px;margin:0 auto;padding:0 18px}
+header{display:flex;justify-content:space-between;align-items:center;padding:18px 0;border-bottom:1px solid var(--line)}
+.logo{font-weight:800;letter-spacing:.06em;color:var(--gold)}.logo span{color:var(--text)}
+nav a{margin-left:18px;text-decoration:none;color:var(--text);opacity:.85}nav a:hover{opacity:1;color:var(--gold2)}
+.hero{padding:64px 0 40px}.hero h1{font-size:clamp(30px,5vw,52px);line-height:1.1;margin:0 0 14px}
+.hero h1 b{color:var(--gold)}.hero p{color:var(--mute);max-width:640px;font-size:18px}
+.btn{display:inline-block;padding:12px 20px;border-radius:10px;background:var(--gold);color:#111;font-weight:700;text-decoration:none;border:0;cursor:pointer;font-size:15px}
+.btn.ghost{background:transparent;color:var(--gold2);border:1px solid var(--gold)}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));margin:28px 0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px}
+.card h3{margin:0 0 6px;color:var(--gold2)}.card p{margin:0;color:var(--mute)}
+.price{font-size:34px;font-weight:800}.price small{font-size:14px;color:var(--mute);font-weight:400}
+.tier ul{padding-left:18px;color:var(--mute)}.tier .btn{margin:6px 6px 0 0}
+.feed .sig{white-space:pre-wrap;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;background:#0c0c11;border:1px solid var(--line);border-radius:10px;padding:12px;margin:10px 0}
+.tag{display:inline-block;font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid var(--gold);color:var(--gold2);margin-right:6px}
+input{background:#0c0c11;border:1px solid var(--line);color:var(--text);border-radius:10px;padding:11px 12px;font-size:15px;width:100%;max-width:420px}
+.risk{font-size:13px;color:var(--mute);border-top:1px solid var(--line);margin-top:48px;padding:22px 0 40px}
+.muted{color:var(--mute)}.ok{color:var(--green)}.bad{color:var(--red)}

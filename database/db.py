@@ -117,6 +117,10 @@ _GOLD_POSITION_MIGRATIONS = [
     "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS be_price DOUBLE PRECISION",
     "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS be_after VARCHAR",
     "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS be_done INTEGER DEFAULT 0",
+    # Member subscriptions (website billing).
+    "ALTER TABLE saas_users ADD COLUMN IF NOT EXISTS paid_until TIMESTAMPTZ",
+    "ALTER TABLE saas_users ADD COLUMN IF NOT EXISTS provider VARCHAR",
+    "ALTER TABLE saas_users ADD COLUMN IF NOT EXISTS provider_ref VARCHAR",
 ]
 
 
@@ -132,6 +136,7 @@ async def init_db():
     import models.user_model                 # SaaS users (auth + tier)
     import models.broker_bar_model           # EA-pushed broker OHLC (free feed)
     import models.cron_model                 # /cron/tick slot claims
+    import models.signal_feed_model          # members' signal feed
     async with engine.begin() as conn:
         # create_all only — never drop. The forward test accumulates months of
         # data; dropping on startup would silently wipe it. create_all is

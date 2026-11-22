@@ -64,6 +64,7 @@ def jobs() -> List[Job]:
             (P, "/alerts/session?label=Asian%20open"))),
         Job("daily_0600", UTC, (6,), 0, ((P, "/wildchance/scrape?tier=daily"), (G, "/gold/news"),
             (G, "/macro/dashboard?force=true"), (G, "/macro/brief?force=true"),
+            (G, "/billing/expire"),
             (P, "/gold/dxy/flip"), (P, "/gold/kingdom-report?notify=true"))),
         Job("six_hourly", UTC, (0, 12, 18), 0, ((P, "/wildchance/scrape?tier=6h"),
             (P, "/autoalert/confluence?min_confidence=85"), (G, "/sentiment/scan"),
