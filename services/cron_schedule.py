@@ -43,7 +43,7 @@ def _acct() -> str:
 
 def jobs() -> List[Job]:
     """The schedule (ported 1:1 from .github/workflows/scheduled-scans.yml)."""
-    hourly = [(P, "/intraday/scan"), (P, "/gold/monitor"),
+    hourly = [(P, "/intraday/scan"), (G, "/zconfluence/scan?notify=true"), (P, "/gold/monitor"),
               (P, "/gold/zones/digest?touch_only=true"), (P, "/gold/recon?armed_only=true"),
               (P, "/gold/retracement"), (P, "/gold/confirm?deploy=true"),
               (P, "/gold/levels/refresh?interval=4h"), (P, "/gold/alerter/scan?notify=true")]

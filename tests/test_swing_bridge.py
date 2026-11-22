@@ -154,9 +154,10 @@ def test_realtime_td_symbol_mapping():
 
 def test_macro_bias_demotes_counter_trend_fade(monkeypatch):
     from services import swing_service as sw
-    monkeypatch.setenv("MACRO_BIAS", '{"BTCUSD": "SELL_ONLY"}')
-    import importlib, decouple
-    importlib.reload(decouple); importlib.reload(sw)
+    import services.ai_sentiment as ai
+    monkeypatch.setattr(ai, "AUTO_BIAS", False)
+    monkeypatch.setattr(sw, "config", lambda k, default=None:
+                        '{"BTCUSD": "SELL_ONLY"}' if k == "MACRO_BIAS" else default)
     assert sw.macro_bias() == {"BTCUSD": "SELL_ONLY"}
     row = sw.apply_bias({"side": "BUY", "status": "ENTRY", "blockers": []}, "SELL_ONLY")
     assert row["status"] == "WATCH" and "against macro bias SELL_ONLY" in row["blockers"]

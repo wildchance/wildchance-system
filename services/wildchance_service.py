@@ -32,6 +32,25 @@ def _now() -> str:
     return dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+COT_MAX_AGE_DAYS = 10   # Tuesday report, released Friday → next one lands within 10 days
+
+
+def cot_latest(feed: dict) -> str | None:
+    dates = [ser[-1]["d"] for ser in (feed.get("cot") or {}).values() if ser]
+    return max(dates) if dates else None
+
+
+def cot_stale(feed: dict, today=None) -> bool:
+    """No COT, or newest report > COT_MAX_AGE_DAYS old → refetch in ANY tier
+    (the weekly job alone left COT empty for weeks after the October outage)."""
+    import datetime as _dt
+    latest = cot_latest(feed)
+    if not latest:
+        return True
+    today = today or _dt.date.today()
+    return (today - _dt.date.fromisoformat(latest[:10])).days > COT_MAX_AGE_DAYS
+
+
 def build_feed(tier: str, prev: dict | None) -> dict:
     """Build the feed dict for a tier, merging onto the previous feed.
 
@@ -44,7 +63,7 @@ def build_feed(tier: str, prev: dict | None) -> dict:
     feed = dict(prev or {})
     now = _now()
 
-    if tier == "weekly":
+    if tier == "weekly" or cot_stale(feed):
         cot = wc.fetch_cot()
         cot.update(wc.fetch_gold_cot())
         feed["cot"] = cot

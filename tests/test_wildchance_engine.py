@@ -82,11 +82,11 @@ def test_evaluate_flat_inside_band():
 
 
 def test_evaluate_contrarian_short_without_cot():
-    # Crowd heavily long, no COT to confirm -> contrarian SHORT (matches the
-    # XAU/USD line from the audit smoke run: SHORT, conf 86).
+    # Crowd heavily long, no COT to confirm -> contrarian SHORT. Retail-only reads are
+    # capped at NO_COT_CONF_CAP (80, below autoalert's 85) — was 86 before the cap.
     sig = evaluate("XAU/USD", 4325.0, {"long_pct": 73, "short_pct": 27}, {})
     assert sig["verdict"] == "SHORT"
-    assert sig["confidence"] == 86
+    assert sig["confidence"] == 80 and sig["cot_missing"] is True
     assert sig["cot_net"] is None
 
 
