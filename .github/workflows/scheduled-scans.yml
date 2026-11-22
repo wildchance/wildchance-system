@@ -21,22 +21,31 @@ on:
     - cron: "0 8 1 * *"         # monthly performance scorecard (1st of month, 08:00 UTC)
     - cron: "0 * * * *"         # hourly intraday breach scan (1h z-score) + gold swing monitor
     - cron: "0 22 * * 0"        # weekly review + Sunday/weekly-open gold swing + Asian gold CBDR
-    - cron: "0 7 * 3-10 *"      # pre-London limits — summer (EDT): 07:00 UTC = 03:00 ET
-    - cron: "0 8 * 11,12,1,2 *" # pre-London limits — winter (EST): 08:00 UTC = 03:00 ET
+    # DST-safe pairs: each local-time job is scheduled at BOTH possible UTC hours; the
+    # run converts its SCHEDULED slot to New York / London time and only the matching
+    # one acts (delay-proof). Minute :03 avoids GitHub's top-of-hour congestion.
+    - cron: "3 7 * * *"         # pre-London limits — 03:00 New York (EDT slot)
+    - cron: "3 8 * * *"         # pre-London limits — 03:00 New York (EST slot)
     - cron: "0 2 * * 1-5"       # Asia accumulation — gold intrasession scan
     - cron: "0 5 * * 1-5"       # CRT 1-5-9 confirmation — Asian session (01:00 range candle)
     - cron: "0 17 * * 1-5"      # CRT 1-5-9 confirmation — New York session (13:00 range candle)
-    - cron: "55 20 * * 5"       # Friday pre-close 1h read — Monday-gap anticipation
+    - cron: "55 20 * * 5"       # Friday pre-close read — 16:55 New York (EDT slot)
+    - cron: "55 21 * * 5"       # Friday pre-close read — 16:55 New York (EST slot)
     - cron: "5 2 * * *"         # candle-range read after the 01:00 UTC candle closes
     - cron: "5 14 * * *"        # candle-range read after the 13:00 UTC candle closes
     - cron: "0 7 1 1,4,7,10 *"  # yearly Quarterly-Theory phase (start of each quarter)
     - cron: "30 8 * * 1"        # Benner cycle phase (Mondays 08:30 UTC)
     - cron: "30 6 * * *"        # EdgeFinder top-bias digest (after the 06:00 daily scrape)
-    - cron: "0 7 * * 1-5"       # GOLD scan + intraday — London open Q2 (weekdays)
-    - cron: "0 13 * * 1-5"      # GOLD scan + intraday — New York open Q3 (weekdays)
-    - cron: "30 13 * * 1-5"     # GOLD intraday — NY-AM distribution window (weekdays)
-    - cron: "0 4 * * *"         # Asian 00:00 (UTC-4) new day — 4H b2b + recon swing check
-    - cron: "0 18 * * *"        # NY 14:00 (UTC-4) new CBDR — 4H b2b + recon swing check
+    - cron: "3 7 * * 1-5"       # GOLD scan — London open 08:00 London (BST slot)
+    - cron: "3 8 * * 1-5"       # GOLD scan — London open 08:00 London (GMT slot)
+    - cron: "3 13 * * 1-5"      # GOLD scan — New York open 09:00 NY (EDT slot)
+    - cron: "3 14 * * 1-5"      # GOLD scan — New York open 09:00 NY (EST slot)
+    - cron: "33 13 * * 1-5"     # GOLD intraday — NY-AM distribution 09:30 NY (EDT slot)
+    - cron: "33 14 * * 1-5"     # GOLD intraday — NY-AM distribution 09:30 NY (EST slot)
+    - cron: "3 4 * * *"         # New day 00:00 NY — 4H b2b + recon (EDT slot)
+    - cron: "3 5 * * *"         # New day 00:00 NY — 4H b2b + recon (EST slot)
+    - cron: "3 18 * * *"        # New CBDR 14:00 NY — 4H b2b + recon (EDT slot)
+    - cron: "3 19 * * *"        # New CBDR 14:00 NY — 4H b2b + recon (EST slot)
   workflow_dispatch:             # manual run = full test (forces every digest)
 
 jobs:
@@ -71,6 +80,18 @@ jobs:
             echo "  -> HTTP $code"
             head -c 500 /tmp/body; echo
           }
+          # Local time of the SCHEDULED slot (not wall clock → immune to GitHub delays).
+          slot_local () {  # slot_local <IANA tz>  → hour in that zone, e.g. 9
+            set -f; set -- "$1" $SCHED; set +f      # -f: don't glob the cron "*"
+            local tz="$1" m="$2" h="$3" now slot
+            now=$(date -u +%s)
+            slot=$(date -u -d "$(date -u +%F) $h:$m" +%s)
+            [ "$slot" -gt "$((now + 3600))" ] && slot=$((slot - 86400))   # delayed past midnight
+            TZ="$tz" date -d "@$slot" +%-H
+          }
+          at_ny ()  { h=$(slot_local America/New_York); [ "$h" = "$1" ] || { echo "DST: slot is $h:xx New York, wanted $1 — other slot runs it"; return 1; }; }
+          at_ldn () { h=$(slot_local Europe/London);    [ "$h" = "$1" ] || { echo "DST: slot is $h:xx London, wanted $1 — other slot runs it"; return 1; }; }
+
           get () {   # get <path>  (endpoints declared as GET — POSTing them returns 405)
             echo "GET  $BASE$1"
             code=$(curl -s -m 90 -o /tmp/body -w "%{http_code}" "$BASE$1") || true
@@ -172,7 +193,8 @@ jobs:
               post "/gold/scorecard/digest"
               post "/gold/stratops/fit"      # weekly P3 refit of the tier factors
               ;;
-            "0 7 * 3-10 *"|"0 8 * 11,12,1,2 *")
+            "3 7 * * *"|"3 8 * * *")
+              at_ny 3 || exit 0
               # Pre-London CBDR at 03:00 ET year-round (summer 07:00 UTC / winter
               # 08:00 UTC; window closes 02:45 ET). FX get the box + SD levels; gold
               # gets the limit plan (buy −1SD, sell +1/+3SD, 1–1.5SD grey zone).
@@ -196,7 +218,8 @@ jobs:
               # CRT 1-5-9 — New York confirmation (13:00 range candle → 17:00 entry)
               post "/candlerange/crt?session=ny&execute=true"
               ;;
-            "55 20 * * 5")
+            "55 20 * * 5"|"55 21 * * 5")
+              at_ny 16 || exit 0
               # Friday pre-close — Monday-gap anticipation (the reliable candle read)
               post "/candlerange/friday"
               ;;
@@ -214,20 +237,31 @@ jobs:
               post "/edgefinder/snapshot"
               post "/edgefinder/digest"
               ;;
-            "0 7 * * 1-5")
+            "3 7 * * 1-5"|"3 8 * * 1-5")
+              at_ldn 8 || exit 0
               post "/gold/options/refresh"    # pull live options walls (no-op if no feed)
               post "/gold/scan?balance=5000&notify=true"
               post "/gold/intraday?balance=5000&notify=true"
               ;;
-            "0 13 * * 1-5")
+            "3 13 * * 1-5"|"3 14 * * 1-5")
+              at_ny 9 || exit 0
               post "/gold/options/refresh"    # pull live options walls (no-op if no feed)
               post "/gold/scan?balance=5000&notify=true"
               post "/gold/intraday?balance=5000&notify=true"
               post "/gold/zones/digest?touch_only=false"        # full buy/sell-limit plan at NY open
               post "/gold/stratops/deploy"                      # includes sniper-stack candidates
               ;;
-            "30 13 * * 1-5")    post "/gold/intraday?balance=5000&require_distribution=true&notify=true" ;;
-            "0 4 * * *"|"0 18 * * *")
+            "33 13 * * 1-5"|"33 14 * * 1-5")
+              at_ny 9 || exit 0
+              post "/gold/intraday?balance=5000&require_distribution=true&notify=true" ;;
+            "3 4 * * *"|"3 5 * * *")
+              at_ny 0 || exit 0
+              post "/gold/recon?force=true"
+              post "/gold/retracement?deploy=true"
+              get "/swing/scan?notify=true"      # new trading day → HTF Bollinger swing read
+              ;;
+            "3 18 * * *"|"3 19 * * *")
+              at_ny 14 || exit 0
               # New-trading-day boundaries (Asian 00:00 / NY 14:00 UTC-4): the 4H
               # b2b bomber + full recon board for swing confluence + the retracement
               # state (paper-deploy SELL-the-OTE on a fresh flip).
