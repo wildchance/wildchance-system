@@ -83,6 +83,9 @@ from routes.vaultum import router as vaultum_router
 # triad route is intentionally NOT mounted — Bumblebee supersedes it.
 from routes.pairs import router as pairs_router
 from routes.structure import router as structure_router
+# WildChance v4: 4-step pipeline audit + lunar overlay (prop challenge routes live in routes.propfirm)
+from routes.pipeline import router as pipeline_router
+from routes.lunar import router as lunar_router
 
 # Real-time streaming
 from services.polygon_stream import polygon_stream
@@ -250,6 +253,8 @@ app.include_router(saas_router)
 app.include_router(vaultum_router)
 app.include_router(pairs_router)
 app.include_router(structure_router)
+app.include_router(pipeline_router)
+app.include_router(lunar_router)
 app.include_router(correlation_router)
 
 # Serve the static dashboards (EdgeFinder board at /static/dashboard/edgefinder.html).

@@ -29,13 +29,28 @@ modes decide WHAT each account gets:
     intraday→acc2, asian→acc3, scan→acc4, cbdr→acc5). Verify at GET /execution/routing.
 Leave MT5_ACCOUNT unset for a single-account setup (all orders, no filter).
 
+Prop-challenge kill-switch (equity_guard.py — copy it next to this file):
+  set CHALLENGE_INITIAL_BALANCE=10000   # REQUIRED for a challenge: the starting balance
+  set CHALLENGE_TARGET=0.08             # 0.08 phase 1, 0.05 phase 2, 0 = off
+Every poll checks live equity: at 3.5% daily / 8% total drawdown (or the target) it
+flattens this system's positions + pending orders and stops pulling new orders. The
+state file survives restarts so the starting balance can never silently reset.
+Multi-asset: set SYMBOL_MAP (JSON app→broker names); unset keeps it gold-only.
+
 Safety: it only places orders the app already sized + prop-gated. Start on a
 DEMO / practice account first. Set MAX_VOLUME to hard-cap lot size.
 """
 
+import datetime as _dt
+import json
 import os
 import time
 import requests
+
+try:                                    # same folder on the VPS
+    from equity_guard import EquityGuard
+except ImportError:                     # imported as a package (tests / repo)
+    from mt5_bridge.equity_guard import EquityGuard
 
 try:
     import MetaTrader5 as mt5
@@ -54,6 +69,48 @@ ACCOUNT = os.environ.get("MT5_ACCOUNT")
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "20"))
 MAX_VOLUME = float(os.environ.get("MAX_VOLUME", "1.0"))
 DEVIATION = int(os.environ.get("DEVIATION", "20"))
+MAGIC = 770001
+# Multi-asset: app symbol → broker symbol, e.g. {"XAUUSD":"XAUUSD.r","EURUSD":"EURUSD.r"}.
+# Unset = the original gold-only bridge (SYMBOL).
+SYMBOL_MAP = json.loads(os.environ.get("SYMBOL_MAP", "{}") or "{}")
+GUARD = EquityGuard.from_env()          # FundingPips/FTMO daily + max-loss kill-switch
+
+
+def broker_symbol(app_symbol):
+    """Map an app symbol to this broker's name. Gold-only unless SYMBOL_MAP is set."""
+    key = (app_symbol or SYMBOL).upper().replace("/", "")
+    if SYMBOL_MAP:
+        return SYMBOL_MAP.get(key)
+    return SYMBOL if key.startswith("XAU") else None
+
+
+def guard_verdict():
+    """Ask the equity guard whether new orders may go out (server-day aware)."""
+    info, tick = mt5.account_info(), mt5.symbol_info_tick(SYMBOL)
+    if info is None:
+        return {"action": "TRADE", "note": "no account info"}
+    server_day = _dt.datetime.utcfromtimestamp(tick.time).strftime("%Y-%m-%d") if tick \
+        else _dt.datetime.utcnow().strftime("%Y-%m-%d")
+    return GUARD.check(info.balance, info.equity, server_day)
+
+
+def flatten(reason):
+    """Close every position and delete every pending order carrying our MAGIC."""
+    for p in mt5.positions_get() or []:
+        if p.magic != MAGIC:
+            continue
+        tick = mt5.symbol_info_tick(p.symbol)
+        buy = p.type == mt5.POSITION_TYPE_BUY
+        mt5.order_send({"action": mt5.TRADE_ACTION_DEAL, "symbol": p.symbol,
+                        "volume": p.volume, "position": p.ticket,
+                        "type": mt5.ORDER_TYPE_SELL if buy else mt5.ORDER_TYPE_BUY,
+                        "price": tick.bid if buy else tick.ask, "deviation": DEVIATION,
+                        "magic": MAGIC, "comment": reason[:31],
+                        "type_filling": mt5.ORDER_FILLING_IOC})
+    for o in mt5.orders_get() or []:
+        if o.magic == MAGIC:
+            mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": o.ticket})
+    print(f"FLATTENED ({reason})")
 
 
 def connect():
@@ -74,11 +131,15 @@ def place(o):
     if vol < 0.01:
         return "rejected", None, None
     is_limit = o["order_type"] == "limit"
-    tick = mt5.symbol_info_tick(SYMBOL)
+    sym = broker_symbol(o.get("symbol"))
+    if not sym or not mt5.symbol_select(sym, True):
+        print(f"  order {o['id']} rejected: symbol {o.get('symbol')} not tradable here")
+        return "rejected", None, None
+    tick = mt5.symbol_info_tick(sym)
     price = o["price"] if is_limit else (tick.ask if o["side"] == "buy" else tick.bid)
     req = {
         "action": mt5.TRADE_ACTION_PENDING if is_limit else mt5.TRADE_ACTION_DEAL,
-        "symbol": SYMBOL,
+        "symbol": sym,
         "volume": round(vol, 2),
         "type": _order_type(o["side"], o["order_type"]),
         "price": float(price),
@@ -135,8 +196,18 @@ def ack(order_id, status, ticket=None, fill_price=None):
 
 
 def loop():
+    last_action = "TRADE"
     while True:
         try:
+            verdict = guard_verdict()
+            if verdict["action"] != "TRADE":
+                if verdict["action"] != last_action:
+                    flatten(verdict["action"])        # once per lock, not every poll
+                    print(f"GUARD {verdict}")
+                last_action = verdict["action"]
+                time.sleep(POLL_SECONDS)
+                continue                             # pull NO new orders while locked
+            last_action = "TRADE"
             params = {"token": TOKEN}
             if ACCOUNT:
                 params["account"] = ACCOUNT      # pull only this account's orders
@@ -146,11 +217,11 @@ def loop():
                 if o.get("order_type") == "modify":
                     status, ticket, fill = modify(o)     # runner SL→break-even
                     ack(o["id"], status, ticket, fill)
-                elif o.get("symbol", SYMBOL).upper().startswith("XAU"):
+                elif broker_symbol(o.get("symbol")):
                     status, ticket, fill = place(o)
                     ack(o["id"], status, ticket, fill)
                 else:
-                    ack(o["id"], "rejected")     # non-gold, this bridge is gold-only
+                    ack(o["id"], "rejected")     # symbol not mapped on this bridge
         except Exception as e:
             print(f"poll error: {e}")
         time.sleep(POLL_SECONDS)
