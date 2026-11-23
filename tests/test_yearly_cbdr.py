@@ -115,7 +115,8 @@ def test_event_boxes_join_clusters(tmp_path, monkeypatch):
     # owner's chart: both boxes' −3.5 sit together (3,878.97 / 3,886.29) — the late-Oct low
     assert any({"FOMC hike Sep-16 -3.5", "FOMC hold Oct-28 -3.5"} <= set(c["members"]) for c in cl)
     assert abs(yc.level(ev[1], 2.5) - 4138.13) < 0.05                          # the 4,137.97 high
-    assert yc.ladder_name(2.5) == "TP1" and yc.ladder_name(-3) == "TP4 · extreme 3"
+    assert yc.ladder_name(2.5) == "TP1" and yc.ladder_name(-3) == "extreme 1 · TP2"
+    assert yc.ladder_name(-0.5) == "bear mean" and yc.ladder_name(1.5) == "buy/sell limit"
 
 
 def test_ipda_lookbacks():
@@ -127,3 +128,16 @@ def test_ipda_lookbacks():
     assert any(x["price"] == max(b[2] for b in last60) for x in lv)
     r = yc.analyse("EUR/USD", EU, today=D(2026, 11, 23), years_back=3)
     assert r["ipda"] and all("ipda" in c for c in r["clusters"])
+
+
+def test_anchor_boxes_master_levels():
+    gold = {b["year"]: b for b in yc.anchor_boxes("XAU/USD")}
+    assert abs(yc.level(gold["⚓Apr-Jul-25 box"], 4) - 5600) < 1e-6          # ≈ 5,598 ATH
+    eu = yc.anchor_boxes("EURUSD")[0]
+    assert abs(yc.level(eu, -4) - 0.95256) < 1e-4 and abs(yc.level(eu, 4) - 1.59808) < 1e-4
+    assert yc.ladder_name(4) == "extreme 3 · TP4"
+
+
+def test_prev_week_month_levels():
+    labels = [x["label"] for x in yc.ipda_levels(EU)]
+    assert {"now prev week high", "now prev month low", "now 3-month high"} <= set(labels)
