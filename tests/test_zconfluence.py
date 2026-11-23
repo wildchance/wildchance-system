@@ -129,3 +129,16 @@ def test_intraday_alert_held_when_closed(monkeypatch):
     monkeypatch.setattr(fr, "market_open", lambda now=None: False)
     r = TestClient(app).post("/intraday/scan").json()
     assert r["sent"] is False and "market closed" in r["held"]
+
+
+def test_held_reasons_explain_grade_b():
+    # live 2026-11-23 EUR/USD: COT agrees, conf 94, but weekly inside Monday range
+    r = {"lean": "SELL", "confluence": {"verdict": "SHORT", "confidence": 94, "cot_agrees": True,
+                                        "cot_missing": False},
+         "weekly": {"verdict": "neutral", "reason": "still inside Monday range — no sweep yet"}}
+    assert zc.grade_reasons(r) == ["weekly profile neutral (still inside Monday range — no sweep yet)"]
+    r2 = {"lean": "SELL", "confluence": None, "weekly": {"verdict": "neutral"}}
+    assert zc.grade_reasons(r2)[0] == "no COT/retail read for this pair"
+    r3 = {"lean": "SELL", "confluence": {"verdict": "WATCH", "confidence": 61, "cot_agrees": False,
+                                         "cot_missing": False}, "weekly": {"verdict": "confirms"}}
+    assert zc.grade_reasons(r3) == ["confluence WATCH conf 61 (needs LONG/SHORT ≥ 70)", "COT disagrees"]

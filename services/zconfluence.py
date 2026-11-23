@@ -108,6 +108,28 @@ def build(breaches: List[Dict], signals: List[Dict], cot_date: Optional[str],
     return out
 
 
+def grade_reasons(r: Dict) -> List[str]:
+    """Why a setup isn't 🅰️ — every missing or opposing piece, in plain words."""
+    out = []
+    c = r.get("confluence") or {}
+    want = "LONG" if r["lean"] == "BUY" else "SHORT"
+    if not c:
+        out.append("no COT/retail read for this pair")
+    else:
+        if c.get("verdict") not in ("LONG", "SHORT") or (c.get("confidence") or 0) < MIN_CONF_A:
+            out.append(f"confluence {c.get('verdict')} conf {c.get('confidence')} (needs LONG/SHORT ≥ {MIN_CONF_A})")
+        elif c.get("verdict") != want:
+            out.append(f"confluence says {c.get('verdict')}, z says {want}")
+        if c.get("cot_missing"):
+            out.append("COT missing")
+        elif c.get("cot_agrees") is False:
+            out.append("COT disagrees")
+    w = r.get("weekly") or {}
+    if w.get("verdict") != "confirms":
+        out.append(f"weekly profile {w.get('verdict')}" + (f" ({w.get('reason')})" if w.get("reason") else ""))
+    return out
+
+
 def sendable(r: Dict) -> bool:
     return r["grade"] in NOTIFY_GRADES and r["gate"]["allow"]
 
@@ -165,6 +187,9 @@ async def scan(z_threshold: float = 2.0, notify: bool = False, max_age_s: int = 
                 sent.append(r["symbol"])
     return {"z_threshold": z_threshold, "cot_as_of": cot_latest(feed),
             "notify_grades": sorted(NOTIFY_GRADES), "setups": setups, "notified": sent,
-            "held": [{"symbol": r["symbol"], "grade": r["grade"], "why": r["gate"]["reasons"]}
+            "held": [{"symbol": r["symbol"], "grade": r["grade"],
+                      "why": r["gate"]["reasons"] + ([] if r["grade"] in NOTIFY_GRADES
+                                                     else [f"grade {r['grade']}: "
+                                                           + "; ".join(grade_reasons(r))])}
                      for r in setups if not sendable(r)],
             "conflicts": [r["symbol"] for r in setups if r["grade"] == "X"]}
