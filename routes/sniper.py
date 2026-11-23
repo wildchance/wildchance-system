@@ -24,3 +24,9 @@ async def cases(symbol: Optional[str] = Query(None)):
     allc = await cl.all_cases()
     return {"cases": len(allc), "live": sum(1 for c in allc if c["source"] == "live"),
             "by_role": cl.score(allc, symbol=symbol)}
+
+
+@router.get("/council/{base}/{quote}")
+async def council(base: str, quote: str, side: str = Query("BUY", pattern="^(BUY|SELL)$")):
+    from services import council as cn
+    return await cn.convene(f"{base.upper()}/{quote.upper()}", side)

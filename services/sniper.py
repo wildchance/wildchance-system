@@ -9,6 +9,7 @@ WHERE; the sniper decides WHEN, on the 1h chart, with the journal's trigger:
              last opposing run of candles (bearish run for a BUY, bullish for a SELL)
   4. GATE    trade_gate (session, ≥1.3R, weekly profile) + the case library: the
              cluster's best ROLE must have held ≥ SNIPER_MIN_RATE recently (once n ≥ 3)
+  5. COUNCIL the agent council (services.council) must vote GO — no macro veto
 
 Entry = the CISD close · stop = beyond the sweep extreme (≥ the minimum stop) ·
 targets = the next clusters in the trade direction. Every fire is recorded as a live
@@ -118,6 +119,9 @@ def card(sym: str, s: Dict) -> str:
              + (f" · {rs['role']} held {rs['held']}/{rs['n']} (recent {rs['recent_rate']:.0%})" if rs else ""),
              f"Entry {px(sym, s['entry'])} · SL {px(sym, s['stop'])} (sweep {px(sym, s['extreme'])})",
              "   " + " · ".join(f"{t['name']} {px(sym, t['price'])} ({t['rr']}R)" for t in s["targets"])]
+    if s.get("council"):
+        from services.council import summary
+        lines.append(summary(s["council"]))
     try:
         from propfirm.target_lots import card_lines
         lines += card_lines(sym, s["entry"], s["stop"], s["targets"])
@@ -216,9 +220,14 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
                 g["reasons"].append("no target ≥ 1.3R")
             if rs and rs["n"] >= 3 and rs["recent_rate"] < MIN_RATE:
                 g["reasons"].append(f"role {rs['role']} recent hit-rate {rs['recent_rate']:.0%} < {MIN_RATE:.0%}")
+            from services import council as cn
+            cv = await cn.convene(sym, c["side"], yearly=r, role_stats=rs)
+            if cv["verdict"] != "GO":
+                g["reasons"].append(f"council {cv['verdict']} (score {cv['score']}"
+                                    + (f", veto {','.join(cv['veto'])}" if cv["veto"] else "") + ")")
             g["allow"] = not g["reasons"]
             row.update(entry=sig["entry"], extreme=sig["extreme"], stop=stop, targets=tps,
-                       role_stats=rs, gate=g)
+                       role_stats=rs, gate=g, council=cv)
             out.append(row)
             if notify and g["allow"]:
                 from services.realtime import alert_once
