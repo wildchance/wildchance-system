@@ -29,6 +29,12 @@ Make tokens with: `python -c "import secrets; print(secrets.token_urlsafe(32))"`
 | `POLYGON_API_KEY` | 🟢 | Stock daily bars (NVDA etc.). |
 | `FINNHUB_KEY` | 🟢 | Stock quotes. `FINNHUB_API_KEY` is also accepted. |
 | `EIA_KEY` | 🟢 | Oil inventory data. |
+| `TIINGO_API_KEY` | 🟠 | Long daily history (FX, stocks, crypto) — second history feed after Stooq. |
+| `ALPHAVANTAGE_API_KEY` | 🟠 | News sentiment per pair/coin/stock → the council's **news** agent (refreshed 6-hourly to stay inside ~25 calls/day). |
+| `MARKETAUX_API_KEY` | 🟢 | News sentiment for stocks (same agent). |
+| `COINGECKO_API_KEY` | 🟢 | Crypto market cap + BTC dominance (demo key; works without, rate-limited). |
+| `BLS_API_KEY` | 🟢 | US CPI / jobs / wages (works without a key at a lower limit). |
+| *(no key)* | — | Stooq (decades of daily history → automatic base rates), Binance (crypto), ECB, US Treasury, CBOE VIX — nothing to set. |
 | `MYFXBOOK_EMAIL` / `MYFXBOOK_PASSWORD` | 🟢 | Retail sentiment via your Myfxbook login. |
 | `MIROFISH_BASE_URL` | 🟢 | Only if you host a MiroFish server; the council adds its vote automatically. |
 | `OPTIONS_FEED_URL` / `OPTIONS_FEED_KEY` | 🟢 | Only if you have a gold-options JSON feed. |
