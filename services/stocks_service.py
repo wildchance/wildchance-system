@@ -17,7 +17,7 @@ import httpx
 from decouple import config
 
 POLYGON_KEY = config("POLYGON_API_KEY", default=None)
-FINNHUB_KEY = config("FINNHUB_API_KEY", default=None)
+FINNHUB_KEY = config("FINNHUB_KEY", default=None) or config("FINNHUB_API_KEY", default=None)
 _cache: Dict[str, Tuple[float, object]] = {}
 
 
