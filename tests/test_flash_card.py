@@ -41,3 +41,11 @@ def test_telegram_float_noise_is_tidied():
                         json={"chat_id": 1, "text": "sell 3704.6343899999997"})
     new = _tidy_request(req)
     assert json.loads(new.content)["text"] == "sell 3704.63" and json.loads(new.content)["chat_id"] == 1
+
+
+def test_head_requests_on_public_pages():
+    from fastapi.testclient import TestClient
+    import main
+    c = TestClient(main.app)
+    for path in ("/", "/pricing", "/members", "/status"):
+        assert c.head(path).status_code == 200, path
