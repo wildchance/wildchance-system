@@ -56,6 +56,30 @@ def record(source: str, ok: bool, ms: float = 0.0, err: str = "") -> None:
         h["last_err"] = err[:160]
 
 
+_persist = {"loaded": False, "saved_at": 0.0}
+
+
+async def ensure_loaded() -> None:
+    """Restore health scores saved before the last restart (free Render sleeps)."""
+    if _persist["loaded"]:
+        return
+    _persist["loaded"] = True
+    from services import data_store
+    saved, _ = await data_store.get("feed_health")
+    for src, h in (saved or {}).items():
+        if src not in _health and isinstance(h, dict):
+            _health[src] = {**{"ok": 0, "fail": 0, "recent": [], "last_ok": None, "last_err": None,
+                               "ms": 0.0}, **h}
+
+
+async def persist(force: bool = False) -> None:
+    if not force and time.time() - _persist["saved_at"] < 60:
+        return
+    _persist["saved_at"] = time.time()
+    from services import data_store
+    await data_store.put("feed_health", _health)
+
+
 def score(source: str) -> float:
     """Recent success rate (Laplace), 0..1 — untried sources start at 0.5."""
     r = _health.get(source, {}).get("recent") or []
@@ -364,19 +388,24 @@ DAILY_SOURCES = {"stooq": stooq_daily, "tiingo": tiingo_daily, "binance": binanc
 
 async def daily_chain(symbol: str, min_bars: int = 200) -> Tuple[List[Bar], Optional[str]]:
     """Long daily history from the healthiest free source that has the symbol."""
+    await ensure_loaded()
     names = [n for n in ranked(list(DAILY_SOURCES)) if n != "binance" or is_crypto(symbol)]
     best: Tuple[List[Bar], Optional[str]] = ([], None)
-    for name in names:
-        bars = await DAILY_SOURCES[name](symbol)
-        if len(bars) >= min_bars:
-            return bars, name
-        if len(bars) > len(best[0]):
-            best = (bars, name)            # keep the longest partial history as a fallback
-    return best
+    try:
+        for name in names:
+            bars = await DAILY_SOURCES[name](symbol)
+            if len(bars) >= min_bars:
+                return bars, name
+            if len(bars) > len(best[0]):
+                best = (bars, name)        # keep the longest partial history as a fallback
+        return best
+    finally:
+        await persist()
 
 
 async def cross_check(symbol: str, reference: Optional[float] = None, tol_pct: float = 0.5) -> Dict:
     """Latest close from every daily feed; flags any that sits > tol_pct from the median."""
+    await ensure_loaded()
     closes = {}
     for name, fn in DAILY_SOURCES.items():
         if name == "binance" and not is_crypto(symbol):
@@ -393,6 +422,7 @@ async def cross_check(symbol: str, reference: Optional[float] = None, tol_pct: f
     outliers = [k for k, v in closes.items() if med and abs(v["close"] / med - 1) * 100 > tol_pct]
     for k in outliers:
         record(k, False, err=f"cross-check outlier on {symbol}")
+    await persist(force=True)
     return {"symbol": symbol, "median": med, "feeds": closes, "outliers": outliers}
 
 
@@ -401,6 +431,7 @@ _sent: Dict[str, Dict] = {}
 
 async def refresh_sentiment(symbols: Sequence[str]) -> Dict:
     """Alpha Vantage (FX/crypto/stocks) + MarketAux (stocks). Few calls → run 6-hourly."""
+    await ensure_loaded()
     out = {}
     av_ticks = {_s(s): AV_TICKERS.get(_s(s)) or (_s(s) if _s(s).isalpha() and len(_s(s)) <= 5 else None)
                 for s in symbols}
@@ -428,6 +459,7 @@ async def refresh_sentiment(symbols: Sequence[str]) -> Dict:
     for sym, srcs in out.items():
         sc = [v["score"] for v in srcs.values()]
         _sent[sym] = {"score": round(sum(sc) / len(sc), 3), "sources": srcs, "_t": time.time()}
+    await persist(force=True)
     return {s: {k: v for k, v in d.items() if k != "_t"} for s, d in _sent.items()}
 
 
@@ -440,6 +472,7 @@ _macro: Dict = {}
 
 
 async def refresh_macro() -> Dict:
+    await ensure_loaded()
     year = dt.date.today().year
     out: Dict = {}
     t = await _get("ecb", "https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A",
@@ -479,6 +512,7 @@ async def refresh_macro() -> Dict:
         out["crypto_global"] = r
     if out:
         _macro.update(out, _t=time.time())
+    await persist(force=True)
     return {k: v for k, v in _macro.items() if k != "_t"}
 
 

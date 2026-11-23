@@ -11,6 +11,8 @@ agent reads ONE intelligence source from cache and votes on a proposed side.
   history    case library: how the zone's roles have held recently
   macro      owner's regime / manual locks (BUY_ONLY / SELL_ONLY)
   news       Alpha Vantage + MarketAux news sentiment (refreshed 6-hourly, cache only)
+  base_rates the asset's long-term lean from decades of yearly boxes (gold: bullish);
+             blocks only POSITION trades against it — swing trades may still fade it
   mirofish   external MiroFish score when MIROFISH_BASE_URL is live (else abstains)
 
 Votes: +1 for the side, −1 against, 0 abstain. A LOCK (macro) against the side is a
@@ -101,6 +103,21 @@ def vote_news(n: Optional[Dict], side: str) -> Dict:
     return _v("news", 1 if (s > 0) == (side == "BUY") else -1, f"{s:+.2f} ({', '.join(n.get('sources') or {})})")
 
 
+def vote_base_rates(history: Optional[Dict], side: str, trade_type: str = "swing") -> Dict:
+    """The asset's long-term lean from its yearly base rates (e.g. gold: 50 % of years
+    close above the Q1 box, 22 % below → BUY lean). Agreeing trades get +1; against
+    the lean only a POSITION trade gets −1 — swing trades can still fade it."""
+    from services.yearly_cbdr import lean
+    ln = lean(history)
+    if not ln:
+        return _v("base_rates", 0, "no long-term lean" if history else "no history")
+    why = (f"{ln} lean ({history.get('years')}y: {history.get('pct_close_above_box')}% close above box, "
+           f"{history.get('pct_close_below_box')}% below)")
+    if ln == side:
+        return _v("base_rates", 1, why)
+    return _v("base_rates", -1 if trade_type == "position" else 0, why + " — against")
+
+
 def vote_mirofish(m: Optional[Dict], side: str) -> Dict:
     if not m or m.get("score") is None:
         return _v("mirofish", 0, "offline")
@@ -124,7 +141,7 @@ def decide(votes: List[Dict]) -> Dict:
 
 
 async def convene(symbol: str, side: str, yearly: Optional[Dict] = None,
-                  role_stats: Optional[Dict] = None) -> Dict:
+                  role_stats: Optional[Dict] = None, trade_type: str = "swing") -> Dict:
     """Gather every agent's vote from cached intelligence (no paid calls)."""
     sym = symbol.upper().replace("/", "")
     pair = f"{sym[:3]}/{sym[3:6]}" if len(sym) == 6 and sym.isalpha() else symbol
@@ -171,7 +188,8 @@ async def convene(symbol: str, side: str, yearly: Optional[Dict] = None,
             yearly = None
     votes = [vote_cot(cot_row, side), vote_sentiment(sent, side), vote_weekly(wk, side),
              vote_structure(yearly, side), vote_history(role_stats), vote_macro(lock, side),
-             vote_news(news, side), vote_mirofish(mf, side)]
+             vote_news(news, side), vote_base_rates((yearly or {}).get("history"), side, trade_type),
+             vote_mirofish(mf, side)]
     return {"symbol": symbol, "side": side, **decide(votes)}
 
 
