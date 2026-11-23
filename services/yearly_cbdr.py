@@ -261,6 +261,17 @@ def ipda_levels(daily: Sequence[DatedOHLC], months: int = IPDA_MONTHS) -> List[D
             if len(ends) > months:
                 break
     out, prices = [], set()
+    last = daily[-1][0]
+    wk0 = last - dt.timedelta(days=last.weekday())
+    m0 = last.replace(day=1)
+    q0 = (m0 - dt.timedelta(days=62)).replace(day=1)
+    for tag, bs in (("prev week", [b for b in daily if wk0 - dt.timedelta(days=7) <= b[0] < wk0]),
+                    ("prev month", [b for b in daily if (m0 - dt.timedelta(days=1)).replace(day=1) <= b[0] < m0]),
+                    ("3-month", [b for b in daily if b[0] >= q0])):
+        if bs:
+            for kind, v in (("high", max(b[2] for b in bs)), ("low", min(b[3] for b in bs))):
+                prices.add(v)
+                out.append({"label": f"now {tag} {kind}", "price": v})
     for i in ends:
         tag = "now" if i == len(daily) - 1 else f"{daily[i][0]:%b-%y}"
         for n in (20, 40, 60):
@@ -273,11 +284,47 @@ def ipda_levels(daily: Sequence[DatedOHLC], months: int = IPDA_MONTHS) -> List[D
     return sorted(out, key=lambda x: x["price"])
 
 
+ROLES = {0.0: "central limit", 0.5: "mean", 1.0: "range edge", 1.5: "buy/sell limit",
+         2.0: "equilibrium", 2.5: "TP1", 3.0: "extreme 1 · TP2", 3.5: "extreme 2 · TP3",
+         4.0: "extreme 3 · TP4"}
+
+
 def ladder_name(k: float) -> Optional[str]:
-    """Owner's target names by distance beyond the box edge: 1.5 TP1, 2 TP2/extreme 1,
-    2.5 TP3/extreme 2, 3 TP4/extreme 3 (i.e. labels 2.5/3/3.5/4 and −1.5/−2/−2.5/−3)."""
-    d = k - 1 if k > 1 else -k if k < 0 else 0
-    return {1.5: "TP1", 2.0: "TP2 · extreme 1", 2.5: "TP3 · extreme 2", 3.0: "TP4 · extreme 3"}.get(d)
+    """The role of a deviation, symmetric about 0 (the shared journal's ladder):
+    0 central limit · ±0.5 bull/bear mean · ±1 range high/low · ±1.5 buy/sell limit ·
+    ±2 equilibrium · ±2.5 TP1 · ±3 extreme 1 + TP2 · ±3.5 extreme 2 + TP3 · ±4 extreme 3 + TP4."""
+    role = ROLES.get(abs(k))
+    if role == "mean":
+        return "bull mean" if k > 0 else "bear mean"
+    if role == "range edge":
+        return "range high" if k > 0 else "range low"
+    return role
+
+
+ANCHORS_CSV = str(config("ANCHOR_BOXES_CSV", default="data/anchor_boxes.csv"))
+
+
+def anchor_boxes(symbol: str) -> List[Dict]:
+    """Long-lived anchor boxes (multi-decade / cycle / swing consolidations) that never
+    expire, e.g. EUR/USD's monthly master box (2008 top = 4, 2022 low = −4) or gold's
+    Apr–Jul 2025 2,800–3,500 box (4 = 5,600 ≈ the 5,598 ATH)."""
+    import csv
+    import os
+    if not os.path.exists(ANCHORS_CSV):
+        return []
+    out = []
+    with open(ANCHORS_CSV, newline="") as f:
+        for r in csv.DictReader(f):
+            try:
+                if _sym(r["symbol"]) != _sym(symbol):
+                    continue
+                lo, hi = float(r["low"]), float(r["high"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if hi > lo:
+                out.append({"year": f"⚓{r.get('label') or 'anchor'}", "low": lo, "high": hi,
+                            "range": hi - lo, "source": r.get("source") or "manual", "anchor": True})
+    return out
 
 
 def all_levels(boxes: List[Dict]) -> List[Dict]:
@@ -330,7 +377,7 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
                       "internal": {f"{f:g}": _r(symbol, level(b, f)) for f in INTERNAL}})
     magnet = max(years, key=lambda y: y["mean_crosses"]) if years else None
     control = next((y for y in reversed(years) if -4 <= y["position"] <= 4), None)
-    events = event_boxes(symbol, today)
+    events = event_boxes(symbol, today) + anchor_boxes(symbol)
     levels = all_levels(boxes + events)
     cl = clusters(levels, tolerance(symbol, price))
     o = ote(daily)
@@ -433,7 +480,7 @@ def card(r: Dict) -> str:
         lines.append("IPDA 20/40/60d: " + " · ".join(f"{x['label'][4:]} {px(s, x['price'])}"
                                                     for x in r["ipda"]))
     for e in r.get("events") or []:
-        lines.append(f"⚡ {e['event']} box {px(s, e['box_low'])}–{px(s, e['box_high'])} · now at {e['position']:g}")
+        lines.append(f"{'' if e['event'].startswith('⚓') else '⚡ '}{e['event']} box {px(s, e['box_low'])}–{px(s, e['box_high'])} · now at {e['position']:g}")
     o = r.get("ote")
     if o:
         lines.append(f"OTE ({o['leg']} leg {o['from']}→{o['to']}): {px(s, o['zone_bottom'])}–"

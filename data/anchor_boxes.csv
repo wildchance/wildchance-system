@@ -1,0 +1,8 @@
+symbol,label,low,high,source
+EUR/USD,monthly master,1.27532,1.35601,journal-1M-vantage
+XAU/USD,Apr-Jul-25 box,2800,3500,journal-1D-cityindex
+XAU/USD,Oct-25 box,3887.215,4355.853,journal-1D-ice
+XAU/USD,Jan-26 main box,5281.066,5531.580,journal-1D-oanda
+XAU/USD,century 3M box,26.204,1712.895,journal-3M-ice
+NAS100,dot-com master,-26.34,8426.43,journal-1M-fxcm
+BTC/USD,cycle box,-20.18,40168.75,journal-1W-index
