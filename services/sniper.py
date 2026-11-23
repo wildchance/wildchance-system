@@ -25,7 +25,7 @@ from decouple import config
 
 MIN_RATE = float(config("SNIPER_MIN_RATE", default="0.5"))
 LOOKBACK = int(config("SNIPER_LOOKBACK_H", default="12"))
-DEFAULT_SYMBOLS = str(config("SNIPER_SYMBOLS", default="EUR/USD,GBP/USD,USD/JPY,XAU/USD"))
+DEFAULT_SYMBOLS = str(config("SNIPER_SYMBOLS", default="EUR/USD,GBP/USD,USD/JPY,XAU/USD,BTC/USD"))
 
 
 def roles_of(members: Sequence[str]) -> List[str]:

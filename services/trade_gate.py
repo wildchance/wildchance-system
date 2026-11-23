@@ -3,7 +3,7 @@
   SESSION   no new trades while the CBDR box is still forming (14:00–20:00 New York)
             nor in the thin first hour after the Sunday open (17:00–18:00 NY)
   STOP      at least the owner's 10-pip FX stop (sheet: 100 points); gold ≥ $3
-            (MIN_SL_PIPS / MIN_SL_GOLD_USD) — no 1.7-pip noise stops
+            (MIN_SL_PIPS / MIN_SL_GOLD_USD / MIN_SL_BTC_USD) — no 1.7-pip noise stops
   R:R       the furthest target must pay ≥ MIN_RR (1.3R = the first sheet rung)
   WEEKLY    the ICT weekly profile (Monday-sweep bias, gold.weekly) must confirm
             the side; "diverges" blocks, "neutral" is not a confirmation. While the
@@ -24,6 +24,9 @@ NY = ZoneInfo("America/New_York")
 MIN_RR = float(config("MIN_RR", default="1.3"))
 MIN_SL_PIPS = float(config("MIN_SL_PIPS", default="10"))
 MIN_SL_GOLD_USD = float(config("MIN_SL_GOLD_USD", default="3.0"))
+# BTC mirrors gold's structure: a fixed USD floor. Gold's $3 ≈ 0.075 % of ~$4,000;
+# the same share of ~$60k BTC ≈ $45 → default $50.
+MIN_SL_BTC_USD = float(config("MIN_SL_BTC_USD", default="50"))
 WEEKLY_PRIOR_FALLBACK = str(config("WEEKLY_PRIOR_FALLBACK", default="true")).lower() in ("1", "true", "yes", "on")
 BLOCK_CBDR_FORMING = str(config("BLOCK_CBDR_FORMING", default="true")).lower() in ("1", "true", "yes", "on")
 
@@ -45,6 +48,8 @@ def min_stop_distance(symbol: str) -> float:
     s = symbol.upper().replace("/", "")
     if s.startswith(("XAU", "GOLD")):
         return MIN_SL_GOLD_USD
+    if s.startswith(("BTC", "XBT")):
+        return MIN_SL_BTC_USD
     if len(s) >= 6 and s[3:6] == "JPY":
         return MIN_SL_PIPS * 0.01
     if len(s) >= 6 and s[:6].isalpha():
