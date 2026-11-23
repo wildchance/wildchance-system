@@ -5,8 +5,12 @@ WHERE; the sniper decides WHEN, on the 1h chart, with the journal's trigger:
 
   1. RANGE   price is at a golden cluster (within its tolerance band)
   2. SWEEP   the 1h bars ran INTO the band (liquidity taken at the level)
-  3. CISD    change in state of delivery — a 1h close back through the OPEN of the
-             last opposing run of candles (bearish run for a BUY, bullish for a SELL)
+  3. TRIGGER the fastest that fires, others listed as confirmations:
+             1h CISD → 1h RTO → 4h CISD → 4h RTO → D1 CISD → D1 OB line → W1 CISD
+             CISD = close back through the OPEN of the last opposing run of candles;
+             RTO  = after the sweep, displacement ≥ its depth, then a hold at the origin;
+             OB line = 'buy above / sell below D1 OB' (daily close through the last
+             opposing candle before the latest structure break)
   4. GATE    trade_gate (session, ≥1.3R, weekly profile) + the case library: the
              cluster's best ROLE must have held ≥ SNIPER_MIN_RATE recently (once n ≥ 3)
   5. COUNCIL the agent council (services.council) must vote GO — no macro veto
@@ -67,6 +71,74 @@ def cisd(bars: Sequence[Dict], side: str, band: Sequence[float]) -> Dict:
                                                    else "no close through the run's open")}
 
 
+def rto(bars: Sequence[Dict], side: str, band: Sequence[float]) -> Dict:
+    """Return-to-origin: after the sweep INTO the zone, price displaces away from the
+    origin (the open of the first candle that turned it) by ≥ the sweep depth, then
+    comes back to that origin and holds it on the close → entry at the origin."""
+    if len(bars) < 5:
+        return {"fired": False, "why": "not enough bars"}
+    buy = side == "BUY"
+    idx = (min if buy else max)(range(len(bars) - 1),
+                                key=lambda i: bars[i]["low"] if buy else bars[i]["high"])
+    ext = bars[idx]["low"] if buy else bars[idx]["high"]
+    if not ((ext <= band[1]) if buy else (ext >= band[0])):
+        return {"fired": False, "why": "no sweep into the zone"}
+    turn = next((j for j in range(idx, len(bars) - 1)
+                 if (bars[j]["close"] > bars[j]["open"]) == buy), None)
+    if turn is None:
+        return {"fired": False, "why": "no turn after the sweep"}
+    origin = bars[turn]["open"]
+    depth = abs(origin - ext)
+    after = bars[turn:-1]
+    away = (max(b["high"] for b in after) - origin) if buy else (origin - min(b["low"] for b in after))
+    last = bars[-1]
+    back = (last["low"] <= origin < last["close"]) if buy else (last["high"] >= origin > last["close"])
+    fired = bool(after and away >= depth and back)
+    return {"fired": fired, "level": origin, "extreme": ext, "entry": last["close"],
+            "why": None if fired else ("no displacement yet" if away < depth else "not back at the origin")}
+
+
+def ob_line(daily: Sequence[Dict], side: str, lookback: int = 5) -> Dict:
+    """'Buy above / sell below D1 OB': the last opposing daily candle before the latest
+    structure break; the trigger is a daily close through that candle's far edge."""
+    buy = side == "BUY"
+    for i in range(len(daily) - 1, lookback, -1):
+        prior = daily[i - lookback:i]
+        broke = daily[i]["close"] > max(b["high"] for b in prior) if buy \
+            else daily[i]["close"] < min(b["low"] for b in prior)
+        if not broke:
+            continue
+        j = next((k for k in range(i - 1, -1, -1)
+                  if (daily[k]["close"] < daily[k]["open"]) == buy), None)
+        if j is None:
+            break
+        line = daily[j]["high"] if buy else daily[j]["low"]
+        last, prev = daily[-1], daily[-2]
+        crossed = (prev["close"] <= line < last["close"]) if buy else (prev["close"] >= line > last["close"])
+        return {"fired": crossed, "level": line, "entry": last["close"],
+                "extreme": min(b["low"] for b in daily[j:]) if buy else max(b["high"] for b in daily[j:]),
+                "why": None if crossed else f"{'buy above' if buy else 'sell below'} {line}"}
+    return {"fired": False, "why": "no D1 structure break"}
+
+
+TRIGGER_ORDER = [("1h", "cisd"), ("1h", "rto"), ("4h", "cisd"), ("4h", "rto"),
+                 ("1day", "cisd"), ("1day", "ob_line"), ("1week", "cisd")]
+
+
+def triggers(by_tf: Dict[str, Sequence[Dict]], side: str, band: Sequence[float]) -> Dict:
+    """Every trigger on every timeframe; the PRIMARY is the fastest that fired (its
+    close is the entry, its extreme sets the stop); the rest are confirmations."""
+    fns = {"cisd": lambda b: cisd(b, side, band), "rto": lambda b: rto(b, side, band),
+           "ob_line": lambda b: ob_line(b, side)}
+    out = []
+    for tf, kind in TRIGGER_ORDER:
+        bars = by_tf.get(tf) or []
+        if len(bars) >= 4:
+            out.append({"tf": tf, "type": kind, **fns[kind](bars)})
+    fired = [t for t in out if t["fired"]]
+    return {"primary": fired[0] if fired else None, "confirmations": fired[1:], "all": out}
+
+
 def candidates(r: Dict, bars: Sequence[Dict]) -> List[Dict]:
     """Golden clusters the recent 1h bars traded into; side from where price came from."""
     from services.yearly_cbdr import tolerance
@@ -113,12 +185,16 @@ def targets_from(r: Dict, side: str, entry: float, stop: float) -> List[Dict]:
 def card(sym: str, s: Dict) -> str:
     from routes.cbdr import px
     rs = s.get("role_stats")
-    lines = [f"🎯 *SNIPER {s['side']} — {sym}* (CISD at the artillery's level)",
+    trig = s.get("trigger") or "1h CISD"
+    conf = f" + {', '.join(s['confirmations'])}" if s.get("confirmations") else ""
+    lines = [f"🎯 *SNIPER {s['side']} — {sym}* ({trig}{conf} at the artillery's level)",
              f"Zone {px(sym, s['zone'][0])}–{px(sym, s['zone'][1])}: " + ", ".join(s["members"]),
              f"Roles: {', '.join(s['roles']) or '—'}"
              + (f" · {rs['role']} held {rs['held']}/{rs['n']} (recent {rs['recent_rate']:.0%})" if rs else ""),
              f"Entry {px(sym, s['entry'])} · SL {px(sym, s['stop'])} (sweep {px(sym, s['extreme'])})",
              "   " + " · ".join(f"{t['name']} {px(sym, t['price'])} ({t['rr']}R)" for t in s["targets"])]
+    if s.get("intraday"):
+        lines.append("⏱ also at: " + ", ".join(s["intraday"]))
     if s.get("council"):
         from services.council import summary
         lines.append(summary(s["council"]))
@@ -130,12 +206,16 @@ def card(sym: str, s: Dict) -> str:
     return "\n".join(lines)
 
 
-async def _bars_1h(symbol: str, n: int = 72) -> List[Dict]:
+async def _bars(symbol: str, interval: str, n: int, tz: str = "UTC") -> List[Dict]:
     from services.ohlc_service import fetch_ohlc_raw
     try:
-        return await fetch_ohlc_raw(symbol, "1h", n)
+        return await fetch_ohlc_raw(symbol, interval, n, timezone=tz)
     except Exception:
         return []
+
+
+async def _bars_1h(symbol: str, n: int = 72, tz: str = "UTC") -> List[Dict]:
+    return await _bars(symbol, "1h", n, tz)
 
 
 async def resolve_pending() -> Dict:
@@ -199,11 +279,23 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
         if not any(abs(c["mid"] - r["price"]) <= 3 * tol + (c["high"] - c["low"]) for c in r["clusters"]):
             out.append({"symbol": sym, "skip": "no golden cluster near price"})   # saves a credit
             continue
-        bars = await _bars_1h(sym)
-        for c in candidates(r, bars):
-            sig = cisd(bars, c["side"], c["band"])
+        bars = await _bars_1h(sym, tz="America/New_York")     # NY time → session levels too
+        cands = candidates(r, bars)
+        from services import session_levels as sl
+        intraday = sl.all_levels(sym, bars)
+        by_tf = {"1h": bars}
+        if cands:                       # higher timeframes only when a zone is in play
+            for tf, n in (("4h", 60), ("1day", 40), ("1week", 30)):
+                by_tf[tf] = await _bars(sym, tf, n)
+        for c in cands:
+            tr = triggers(by_tf, c["side"], c["band"])
+            sig = tr["primary"] or {"fired": False, "why": "; ".join(
+                f"{t['tf']} {t['type']}: {t['why']}" for t in tr["all"][:3])}
             row = {"symbol": sym, "side": c["side"], "zone": [c["low"], c["high"]],
-                   "members": c["members"], "roles": roles_of(c["members"]), "cisd": sig}
+                   "members": c["members"], "roles": roles_of(c["members"]), "cisd": sig,
+                   "trigger": sig.get("tf") and f"{sig['tf']} {sig['type'].upper()}",
+                   "confirmations": [f"{t['tf']} {t['type'].upper()}" for t in tr["confirmations"]],
+                   "intraday": sl.near(intraday, c["low"], c["high"], tol / 2)}
             if not sig["fired"]:
                 row["held"] = sig["why"]
                 out.append(row)

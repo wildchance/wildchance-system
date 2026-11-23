@@ -219,6 +219,7 @@ def ote(daily: Sequence[DatedOHLC], lookback: int = OTE_LOOKBACK) -> Optional[Di
 
 EVENTS_CSV = str(config("EVENT_BOXES_CSV", default="data/event_boxes.csv"))
 EVENT_MAX_DAYS = int(config("EVENT_BOX_MAX_DAYS", default="120"))
+AUTO_BOXES = str(config("AUTO_EVENT_BOXES", default="true")).lower() in ("1", "true", "yes", "on")
 
 
 def event_boxes(symbol: str, today: dt.date, max_days: int = EVENT_MAX_DAYS) -> List[Dict]:
@@ -378,7 +379,7 @@ def clusters(levels: List[Dict], tol: float) -> List[Dict]:
 
 
 def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = None,
-            years_back: int = YEARS_BACK) -> Dict:
+            years_back: int = YEARS_BACK, extra_events: Sequence[Dict] = ()) -> Dict:
     daily = list(daily)
     if not daily:
         return {"symbol": symbol, "ok": False, "reason": "no daily bars"}
@@ -401,7 +402,7 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
                       "internal": {f"{f:g}": _r(symbol, level(b, f)) for f in INTERNAL}})
     magnet = max(years, key=lambda y: y["mean_crosses"]) if years else None
     control = next((y for y in reversed(years) if -4 <= y["position"] <= 4), None)
-    events = [e for e in event_boxes(symbol, today) + anchor_boxes(symbol)   # skip a box already
+    events = [e for e in event_boxes(symbol, today) + anchor_boxes(symbol) + list(extra_events)
               if not any(abs(e["low"] - b["low"]) <= 1e-6 * abs(b["low"] or 1)   # loaded as a year
                          and abs(e["high"] - b["high"]) <= 1e-6 * abs(b["high"] or 1) for b in boxes)]
     levels = all_levels(boxes + events)
@@ -558,7 +559,18 @@ async def run(symbol: str, years_back: int = YEARS_BACK) -> Dict:
             daily = await _yahoo_ohlc(symbol, "1day", n)
         except Exception:
             daily = []
-    r = analyse(symbol, daily, years_back=years_back)
+    auto = []
+    if AUTO_BOXES and daily:
+        try:
+            from services import auto_boxes as ab
+            today = daily[-1][0]
+            manual = event_boxes(symbol, today)
+            mdates = [dt.date.fromisoformat(e["date"]) for e in manual if e.get("date")]
+            auto = await ab.load(symbol, today, EVENT_MAX_DAYS, tolerance(symbol, daily[-1][4]),
+                                 manual_dates=mdates, manual_parents=manual)
+        except Exception:
+            auto = []
+    r = analyse(symbol, daily, years_back=years_back, extra_events=auto)
     p = r.get("plan") if r.get("ok") else None
     if p and p.get("status") == "limit":
         weekly = await tg.weekly_profile(symbol)
