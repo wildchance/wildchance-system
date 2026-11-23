@@ -100,3 +100,19 @@ def test_magnet_mean_counts_weekly_crosses():
 def test_index_tolerance_scales_with_price():
     assert yc.tolerance("NAS100", 25000) == 75.0
     assert yc.tolerance("EUR/USD", 1.1) == 0.003
+
+
+def test_event_boxes_join_clusters(tmp_path, monkeypatch):
+    f = tmp_path / "e.csv"
+    f.write_text("symbol,date,label,low,high,source\n"
+                 "XAU/USD,2026-09-16,FOMC hike,4252.927,4359.772,m\n"
+                 "XAU/USD,2026-10-28,FOMC hold,4033.198,4075.173,m\n"
+                 "XAU/USD,2025-01-29,FOMC old,2700,2760,m\n")
+    monkeypatch.setattr(yc, "EVENTS_CSV", str(f))
+    ev = yc.event_boxes("XAUUSD", D(2026, 11, 2))
+    assert [e["year"] for e in ev] == ["FOMC hike Sep-16", "FOMC hold Oct-28"]   # old one aged out
+    cl = yc.clusters(yc.all_levels(ev), 15.0)
+    # owner's chart: both boxes' −3.5 sit together (3,878.97 / 3,886.29) — the late-Oct low
+    assert any({"FOMC hike Sep-16 -3.5", "FOMC hold Oct-28 -3.5"} <= set(c["members"]) for c in cl)
+    assert abs(yc.level(ev[1], 2.5) - 4138.13) < 0.05                          # the 4,137.97 high
+    assert yc.ladder_name(2.5) == "TP1" and yc.ladder_name(-3) == "TP4 · extreme 3"
