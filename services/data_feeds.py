@@ -86,13 +86,13 @@ async def _get(source: str, url: str, params: Optional[Dict] = None, headers: Op
                                      follow_redirects=True) as c:
             r = await (c.post(url, json=body) if method == "POST" else c.get(url, params=params))
         if r.status_code != 200:
-            record(source, False, err=f"HTTP {r.status_code}")
+            record(source, False, err=f"HTTP {r.status_code}: {r.text[:120].strip()}")
             return None
         data = r.json() if as_json else r.text
         record(source, True, (time.time() - t0) * 1000)
         return data
     except Exception as e:
-        record(source, False, err=str(e))
+        record(source, False, err=f"{type(e).__name__}: {e}"[:160])
         return None
 
 
@@ -292,7 +292,9 @@ async def tiingo_daily(symbol: str, years: int = 30) -> List[Bar]:
     if is_crypto(symbol):
         data = await _get("tiingo", "https://api.tiingo.com/tiingo/crypto/prices",
                           {**p, "tickers": s.lower()})
-    elif len(s) == 6 and s.isalpha() or s.startswith(("XAU", "XAG")):
+    elif s.startswith(("XAU", "XAG")):
+        return []                                       # Tiingo FX carries no metals (HTTP 400)
+    elif len(s) == 6 and s.isalpha():
         data = await _get("tiingo", f"https://api.tiingo.com/tiingo/fx/{s.lower()}/prices", p)
     elif s.isalpha() and len(s) <= 5:
         data = await _get("tiingo", f"https://api.tiingo.com/tiingo/daily/{s.lower()}/prices",
@@ -320,17 +322,57 @@ async def binance_daily(symbol: str, limit: int = 1000) -> List[Bar]:
     return bars
 
 
-DAILY_SOURCES = {"stooq": stooq_daily, "tiingo": tiingo_daily, "binance": binance_daily}
+async def twelvedata_daily(symbol: str) -> List[Bar]:
+    """5,000 daily bars in ONE credit (~19 years) — the existing key, through the limiter."""
+    hit = _cached(f"td:{_s(symbol)}", 12 * 3600)
+    if hit is not None:
+        return hit
+    t0 = time.time()
+    try:
+        from services.ohlc_service import fetch_ohlc
+        bars = await fetch_ohlc(symbol, "1day", 5000, broker=False)
+    except Exception as e:
+        record("twelvedata", False, err=f"{type(e).__name__}: {e}"[:160])
+        return []
+    record("twelvedata", bool(bars), (time.time() - t0) * 1000, "" if bars else "no rows")
+    if bars:
+        _cache[f"td:{_s(symbol)}"] = (time.time(), bars)
+    return bars
+
+
+async def yahoo_daily(symbol: str) -> List[Bar]:
+    """Yahoo chart range=max — decades for FX (=X), gold (GC=F), indices."""
+    hit = _cached(f"yahoo:{_s(symbol)}", 12 * 3600)
+    if hit is not None:
+        return hit
+    t0 = time.time()
+    try:
+        from services.ohlc_service import _yahoo_ohlc
+        bars = await _yahoo_ohlc(symbol, "1day", 9000)
+    except Exception as e:
+        record("yahoo", False, err=f"{type(e).__name__}: {e}"[:160])
+        return []
+    record("yahoo", bool(bars), (time.time() - t0) * 1000, "" if bars else "no rows")
+    if bars:
+        _cache[f"yahoo:{_s(symbol)}"] = (time.time(), bars)
+    return bars
+
+
+DAILY_SOURCES = {"stooq": stooq_daily, "tiingo": tiingo_daily, "binance": binance_daily,
+                 "twelvedata": twelvedata_daily, "yahoo": yahoo_daily}
 
 
 async def daily_chain(symbol: str, min_bars: int = 200) -> Tuple[List[Bar], Optional[str]]:
     """Long daily history from the healthiest free source that has the symbol."""
     names = [n for n in ranked(list(DAILY_SOURCES)) if n != "binance" or is_crypto(symbol)]
+    best: Tuple[List[Bar], Optional[str]] = ([], None)
     for name in names:
         bars = await DAILY_SOURCES[name](symbol)
         if len(bars) >= min_bars:
             return bars, name
-    return [], None
+        if len(bars) > len(best[0]):
+            best = (bars, name)            # keep the longest partial history as a fallback
+    return best
 
 
 async def cross_check(symbol: str, reference: Optional[float] = None, tol_pct: float = 0.5) -> Dict:
@@ -368,7 +410,7 @@ async def refresh_sentiment(symbols: Sequence[str]) -> Dict:
                           {"function": "NEWS_SENTIMENT", "tickers": ",".join(sorted(set(av_ticks.values()))),
                            "limit": 200, "apikey": AV_KEY})
         if isinstance(data, dict) and ("Note" in data or "Information" in data):
-            record("alphavantage", False, err="rate limit")
+            record("alphavantage", False, err=str(data.get("Information") or data.get("Note"))[:160])
             data = None
         for sym, tick in av_ticks.items():
             r = parse_av_sentiment(data, tick) if data else None

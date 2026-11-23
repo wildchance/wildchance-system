@@ -13,6 +13,26 @@ from core.webhook import router as webhook_router
 from database.db import init_db
 # TwelveData free plan = 8 requests/min: rate-limit + cache every call at the HTTP layer
 from services import td_limiter as _td_limiter
+
+import logging as _log
+import re as _re
+
+
+class _RedactTokens(_log.Filter):
+    """Access logs print full URLs — never let ?token= / api keys reach the log."""
+    _pat = _re.compile(r"((?:token|api_key|apikey|key)=)[^&\s\"]+", _re.I)
+
+    def filter(self, record):
+        if record.args:
+            record.args = tuple(self._pat.sub(r"\1***", a) if isinstance(a, str) else a
+                                for a in record.args)
+        if isinstance(record.msg, str):
+            record.msg = self._pat.sub(r"\1***", record.msg)
+        return True
+
+
+for _name in ("uvicorn.access", "uvicorn.error"):
+    _log.getLogger(_name).addFilter(_RedactTokens())
 _td_limiter.install()
 # every Telegram post is also stored for the members' web feed
 from services import signal_feed as _signal_feed

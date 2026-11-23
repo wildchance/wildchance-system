@@ -66,3 +66,25 @@ def test_summarise_base_rates():
     ys = [{"year": 2000 + i, "up": 2.6, "down": -0.4, "close": 1.4} for i in range(6)]
     s = summarise(ys, source="auto-stooq")
     assert s["years"] == 6 and s["pct_reach_up"]["2.5"] == 100 and s["source"] == "auto-stooq"
+
+
+def test_access_log_redacts_tokens():
+    import logging
+    import main
+    rec = logging.LogRecord("uvicorn.access", logging.INFO, "", 0, '%s - "%s %s HTTP/%s" %d',
+                            ("10.0.0.1:0", "GET", "/data/sources?token=2dc3abc&x=1&api_key=zz", "1.1", 200), None)
+    main._RedactTokens().filter(rec)
+    assert rec.args[2] == "/data/sources?token=***&x=1&api_key=***"
+
+
+def test_daily_chain_returns_longest_partial(monkeypatch):
+    import asyncio
+    async def short(s): return [(dt.date(2020, 1, 1) + dt.timedelta(days=i), 1, 1, 1, 1) for i in range(50)]
+    async def none(s): return []
+    monkeypatch.setattr(df, "DAILY_SOURCES", {"a": none, "b": short})
+    loop = asyncio.new_event_loop()
+    try:
+        bars, src = loop.run_until_complete(df.daily_chain("XAU/USD", min_bars=200))
+    finally:
+        loop.close()
+    assert src == "b" and len(bars) == 50
