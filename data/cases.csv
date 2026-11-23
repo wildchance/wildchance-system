@@ -96,3 +96,9 @@ date,symbol,anchor,level,role,price,side,outcome,source,note
 2026-10-30,XAU/USD,Gold 'rates unchanged' event box,-3.5,extreme 2 · TP3,3886.288,BUY,held,agent-192.jpeg,Low 3;875.645 between -3.5 (3;886.288) and -4 (3;865.301); H1 ob 3;883.588 / H4 ob 3;896.5
 2026-11-10,XAU/USD,Gold 15m box Nov-10,2.5,TP1,4062.467,SELL,held,agent-198.jpeg,Rebound topped ~4;066 between 2.5 and 3 (4;069.485); then fell ~95 (~7 box widths)
 2026-11-11,XAU/USD,Gold 15m box Nov-10,-4,extreme 3 · TP4,3971.242,BUY,held,agent-198.jpeg,Low ~3;968-3;970 at -4 with daily fib 0.618 3;976.242 confluence; bounced to ~4;000 (-2) ~
+2026-11-20,XAU/USD,ATH fib G3 (inverted) + G2 2.5,1.5,buy/sell limit,3504.0,BUY,held,owner-3M-ice,Q4 low 3502.93 at G3 1.5 / G2 2.5 3486 cluster then 3624
+2025-10-06,BTC/USD,origin box B2 + B1 2,4,extreme 3 · TP4,126377.29,SELL,held,owner-1M-crypto,ATH 126229.91; B1 2 126455.99 same zone
+2026-11-20,USD/JPY,Nov-13 4h box,-2.5,TP1,158.587,BUY,held,owner-4h-oanda,low ~158.56 + fib 0.618 158.628 then 158.976
+1985-02-26,GBP/USD,1972 top fib B (inverted),4,extreme 3 · TP4,1.0566,BUY,held,owner-3M-ice,1985 low 1.0502 (A 2 = 1.0490)
+2008-07-11,USOIL,origin box O1 + O2 2,4,extreme 3 · TP4,147.69,SELL,held,owner-3M-tvc,2008 top 147.27 (O2 2 = 147.20)
+2026-01-29,XAU/USD,origin box G1,2,equilibrium,5593.8,SELL,held,owner-3M-ice,ATH 5598.75; G2 4 = 5565.4 same zone

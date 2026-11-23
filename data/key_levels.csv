@@ -1,0 +1,52 @@
+symbol,price,label,source
+DXY,164.692,1985 all-time high,owner-6M-tvc
+DXY,146.064,6m ob,owner-6M-tvc
+DXY,123.358,12m ob,owner-6M-tvc
+DXY,121.722,12m ob,owner-6M-tvc
+DXY,119.888,12m ob + origin 1967,owner-6M-tvc
+DXY,109.404,12m ob,owner-6M-tvc
+DXY,108.044,12m ob wick,owner-6M-tvc
+DXY,103.529,12m ob,owner-6M-tvc
+DXY,103.396,12m ob,owner-6M-tvc
+DXY,96.113,12m ob,owner-6M-tvc
+DXY,95.618,12m ob wick,owner-6M-tvc
+DXY,88.472,12m ob wick,owner-6M-tvc
+DXY,81.331,12m ob,owner-6M-tvc
+DXY,70.873,2008 low,owner-6M-tvc
+EUR/USD,1.60287,2008 high,owner-1M-ice
+EUR/USD,1.39607,12m ob,owner-1M-ice
+EUR/USD,1.25328,12m ob,owner-1M-ice
+EUR/USD,1.23285,12m ob wick,owner-1M-ice
+EUR/USD,1.14588,12m ob,owner-1M-ice
+EUR/USD,1.09763,12m ob wick,owner-1M-ice
+EUR/USD,1.07288,12m ob,owner-1M-ice
+EUR/USD,0.79820,12m ob,owner-1M-ice
+EUR/USD,0.59758,12m ob,owner-1M-ice
+GBP/USD,2.3469,12m ob,owner-3M-ice
+GBP/USD,2.2401,12m ob,owner-3M-ice
+GBP/USD,2.0256,12m ob,owner-3M-ice
+GBP/USD,1.9540,12m ob,owner-3M-ice
+GBP/USD,1.8542,equilibrium target,owner-3M-ice
+GBP/USD,1.3141,12m ob,owner-3M-ice
+GBP/USD,1.3107,6m ob,owner-3M-ice
+GBP/USD,1.0502,1985 low,owner-3M-ice
+XAU/USD,3986.165,w1 ob,owner-3M-ice
+XAU/USD,3942.837,w1 ob,owner-3M-ice
+XAU/USD,3894.191,1 month + 1w ob,owner-3M-ice
+XAU/USD,3886.716,w1 ob,owner-3M-ice
+XAU/USD,3882.819,3m ob,owner-3M-ice
+XAU/USD,3486.000,quarter-low reaction,owner-3M-ice
+XAU/USD,1828.308,12m ob,owner-3M-ice
+XAU/USD,1804.723,3m ob,owner-3M-ice
+BTC/USD,79871.30,12m ob + 3m + 6m,owner-1M-crypto
+BTC/USD,74429.91,12 month ob,owner-1M-crypto
+BTC/USD,56066.58,12m ob,owner-1M-crypto
+BTC/USD,54543.58,12m ob,owner-1M-crypto
+BTC/USD,46360.78,3m ob + 6m,owner-1M-crypto
+BTC/USD,31622.94,mean 2,owner-1M-crypto
+USOIL,101.41,3m ob,owner-3M-tvc
+USOIL,75.01,12m ob,owner-3M-tvc
+USOIL,74.16,12m ob,owner-3M-tvc
+USOIL,61.12,12m ob,owner-3M-tvc
+USOIL,53.85,3m ob,owner-3M-tvc
+USOIL,42.62,12m ob wick,owner-3M-tvc
