@@ -63,6 +63,45 @@ def label(k: float) -> str:
     return f"{k:g}"
 
 
+BOXES_CSV = str(config("YEARLY_BOXES_CSV", default="data/yearly_boxes.csv"))
+_manual: Dict = {"mtime": None, "rows": {}}
+
+
+def manual_boxes() -> Dict[Tuple[str, int], Dict]:
+    """Owner-entered Q1 body ranges (TradingView, consistent feed) — they override the
+    computed box. CSV: symbol,year,low,high,source; blank rows are ignored."""
+    import csv
+    import os
+    try:
+        m = os.path.getmtime(BOXES_CSV)
+    except OSError:
+        return {}
+    if _manual["mtime"] != m:
+        rows = {}
+        with open(BOXES_CSV, newline="") as f:
+            for r in csv.DictReader(f):
+                try:
+                    lo, hi = float(r["low"]), float(r["high"])
+                except (TypeError, ValueError, KeyError):
+                    continue
+                if hi > lo:
+                    rows[(_sym(r["symbol"]), int(r["year"]))] = {
+                        "year": int(r["year"]), "low": lo, "high": hi, "range": hi - lo,
+                        "source": (r.get("source") or "manual").strip() or "manual"}
+        _manual.update(mtime=m, rows=rows)
+    return _manual["rows"]
+
+
+def box_for(symbol: str, daily: Sequence[DatedOHLC], year: int) -> Optional[Dict]:
+    hit = manual_boxes().get((_sym(symbol), year))
+    if hit:
+        return dict(hit)
+    b = q1_box(daily, year)
+    if b:
+        b["source"] = "computed"
+    return b
+
+
 def q1_box(daily: Sequence[DatedOHLC], year: int) -> Optional[Dict]:
     q1 = [b for b in daily if b[0].year == year and b[0].month <= 3]
     if len(q1) < 40:                                     # ~62 trading days in Q1
@@ -147,14 +186,14 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
     price = daily[-1][4]
     # the current year's box only counts once Q1 has closed
     last_complete = today.year if today > dt.date(today.year, 3, 31) else today.year - 1
-    boxes = [b for b in (q1_box(daily, y) for y in range(last_complete - years_back + 1, last_complete + 1))
+    boxes = [b for b in (box_for(symbol, daily, y) for y in range(last_complete - years_back + 1, last_complete + 1))
              if b]
     if not boxes:
         return {"symbol": symbol, "ok": False, "reason": "not enough history for a Q1 box"}
     years = []
     for b in boxes:
         pos = position(b, price)
-        years.append({"year": b["year"], "box_low": _r(symbol, b["low"]), "box_high": _r(symbol, b["high"]),
+        years.append({"year": b["year"], "source": b.get("source"), "box_low": _r(symbol, b["low"]), "box_high": _r(symbol, b["high"]),
                       "position": round(pos, 2), "position_dev": label(round(pos * 2) / 2),
                       "peak": peak(b, daily),
                       "levels": {label(k): _r(symbol, level(b, k)) for k in DEVS},
@@ -233,7 +272,8 @@ def card(r: Dict) -> str:
     for y in r["years"]:
         pk = y["peak"]
         pk_txt = (f" · peak {label(pk['up'])} / {label(pk['down'])}" if pk.get("up") is not None else "")
-        lines.append(f"`{y['year']}` box {px(s, y['box_low'])}–{px(s, y['box_high'])} · "
+        src = " ✍️" if y.get("source") not in (None, "computed") else ""
+        lines.append(f"`{y['year']}`{src} box {px(s, y['box_low'])}–{px(s, y['box_high'])} · "
                      f"now at {y['position_dev']}{pk_txt}")
     o = r.get("ote")
     if o:
