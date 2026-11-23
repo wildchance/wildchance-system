@@ -78,7 +78,8 @@ def jobs() -> List[Job]:
         # forming box, so the weekly gold swing scan was held every week.
         Job("weekly_review_sun", NY, (20,), 5, ((P, "/scorecard/weekly"),
             (P, "/gold/scan?balance=5000&notify=true"), (P, "/cbdr/alert/XAU/USD?window=trade4"),
-            (P, "/gold/monitor"), (P, "/gold/scorecard/digest"), (P, "/gold/stratops/fit")), days=(6,)),
+            (P, "/gold/monitor"), (P, "/gold/scorecard/digest"), (P, "/gold/stratops/fit"),
+            (P, "/yearly/alert")), days=(6,)),
         Job("asia_accumulation", UTC, (2,), 0, ((P, "/gold/intraday?balance=5000&notify=true"),
             (P, "/gold/stratops/deploy")), days=WEEKDAYS),
         Job("crt_asia", UTC, (5,), 0, ((P, "/candlerange/crt?session=asia&execute=true"),), days=WEEKDAYS),
@@ -160,7 +161,7 @@ _ENTRY = _re.compile(r"execute=true|deploy=true|/stratops/deploy|/gold/scan|/gol
                      r"/gold/alerter|/swing/scan|/zconfluence|/cbdr/limits|/gold/prelondon|"
                      r"/gold/recon|/candlerange/crt|/autoalert")
 _DIGEST = _re.compile(r"/alerts/session|/intraday/scan|/cbdr/alert|/candlerange/(scan|friday)|"
-                      r"/gold/zones/digest|/gold/kingdom-report|/gold/dxy/flip|/usdjpy/scan")
+                      r"/gold/zones/digest|/gold/kingdom-report|/gold/dxy/flip|/usdjpy/scan|/yearly/alert")
 
 
 def call_class(path: str) -> str:

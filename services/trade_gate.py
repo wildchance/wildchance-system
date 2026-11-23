@@ -6,7 +6,9 @@
             (MIN_SL_PIPS / MIN_SL_GOLD_USD) — no 1.7-pip noise stops
   R:R       the furthest target must pay ≥ MIN_RR (1.3R = the first sheet rung)
   WEEKLY    the ICT weekly profile (Monday-sweep bias, gold.weekly) must confirm
-            the side; "diverges" blocks, "neutral" is not a confirmation
+            the side; "diverges" blocks, "neutral" is not a confirmation. While the
+            week is still inside Monday's range, last week's profile carries over
+            (WEEKLY_PRIOR_FALLBACK, default on) and is labelled prior_week
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ NY = ZoneInfo("America/New_York")
 MIN_RR = float(config("MIN_RR", default="1.3"))
 MIN_SL_PIPS = float(config("MIN_SL_PIPS", default="10"))
 MIN_SL_GOLD_USD = float(config("MIN_SL_GOLD_USD", default="3.0"))
+WEEKLY_PRIOR_FALLBACK = str(config("WEEKLY_PRIOR_FALLBACK", default="true")).lower() in ("1", "true", "yes", "on")
 BLOCK_CBDR_FORMING = str(config("BLOCK_CBDR_FORMING", default="true")).lower() in ("1", "true", "yes", "on")
 
 
@@ -75,7 +78,7 @@ async def weekly_profile(symbol: str) -> Optional[Dict]:
     try:
         from gold.weekly import weekly_bias
         from services.ohlc_service import fetch_ohlc
-        read = weekly_bias(await fetch_ohlc(symbol, "1day", 15))
+        read = weekly_bias(await fetch_ohlc(symbol, "1day", 15), prior_fallback=WEEKLY_PRIOR_FALLBACK)
     except Exception:
         read = None
     _wcache[symbol] = {"read": read, "_t": time.time()}

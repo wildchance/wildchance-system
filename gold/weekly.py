@@ -25,8 +25,28 @@ def _monday_of(d: dt.date) -> dt.date:
     return d - dt.timedelta(days=d.weekday())
 
 
-def weekly_bias(daily: List[DatedOHLC]) -> Optional[dict]:
-    """Monday-sweep bias for the CURRENT week (relative to the last bar)."""
+def weekly_bias(daily: List[DatedOHLC], prior_fallback: bool = False) -> Optional[dict]:
+    """Monday-sweep bias for the CURRENT week (relative to the last bar).
+
+    ``prior_fallback``: while this week is still inside (or before) Monday's range,
+    carry LAST week's directional profile instead of 'neutral' — labelled
+    ``prior_week`` so every card shows it is last week's read, not this week's.
+    """
+    if not daily:
+        return None
+    read = _bias(daily)
+    if prior_fallback and read and read["bias"] == "neutral":
+        monday = _monday_of(daily[-1][0])
+        prev = _bias([b for b in daily if b[0] < monday])
+        if prev and prev["bias"] in ("long", "short"):
+            return {**read, "bias": prev["bias"], "prior_week": prev,
+                    "profile": f"prior_week_{prev['profile']}",
+                    "reason": f"{read['reason']} — using last week's profile "
+                              f"({prev['week_of']}: {prev['reason']})"}
+    return read
+
+
+def _bias(daily: List[DatedOHLC]) -> Optional[dict]:
     if not daily:
         return None
     last_date = daily[-1][0]
@@ -57,11 +77,11 @@ def weekly_bias(daily: List[DatedOHLC]) -> Optional[dict]:
 
     return {
         "week_of": monday.isoformat(),
-        "monday_high": round(mh, 2),
-        "monday_low": round(ml, 2),
+        "monday_high": round(mh, 5),
+        "monday_low": round(ml, 5),
         "swept_high": swept_high,
         "swept_low": swept_low,
-        "last_close": round(last_close, 2),
+        "last_close": round(last_close, 5),
         "bias": bias,
         "profile": profile,
         "reason": reason,
