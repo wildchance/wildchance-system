@@ -98,6 +98,7 @@ from routes.sentiment import router as sentiment_router
 from routes.derivs import router as derivs_router
 from routes.cron import router as cron_router
 from routes.zconfluence import router as zconfluence_router
+from routes.yearly import router as yearly_router
 from routes.macro import router as macro_router
 from routes.billing import router as billing_router
 from routes.members import router as members_router
@@ -327,6 +328,7 @@ app.include_router(derivs_router)
 app.include_router(cron_router)
 app.include_router(bt_engines_router)
 app.include_router(zconfluence_router)
+app.include_router(yearly_router)
 app.include_router(macro_router)
 app.include_router(billing_router)
 app.include_router(members_router)

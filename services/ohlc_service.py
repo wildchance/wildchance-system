@@ -90,9 +90,12 @@ async def _yahoo_ohlc(symbol: str, interval: str, outputsize: int) -> List[Dated
 DatedOHLC = Tuple[dt.date, float, float, float, float]
 
 
-async def time_series(params: dict) -> dict:
-    """Broker feed (EA-pushed, free, real-time) first; TwelveData when it's absent/stale."""
+async def time_series(params: dict, broker: bool = True) -> dict:
+    """Broker feed (EA-pushed, free, real-time) first; TwelveData when it's absent/stale.
+    ``broker=False`` skips the EA feed (it only holds recent bars — useless for years)."""
     try:
+        if not broker:
+            raise LookupError
         from services import broker_feed
         b = await broker_feed.td_values(params["symbol"], params["interval"],
                                         int(params.get("outputsize", 60)),
@@ -132,22 +135,23 @@ def normalize_symbol(symbol: str) -> str:
 
 
 async def fetch_ohlc(symbol: str, interval: str = "1day",
-                     outputsize: int = 60) -> List[DatedOHLC]:
+                     outputsize: int = 60, broker: bool = True) -> List[DatedOHLC]:
     """Recent OHLC bars, oldest-first. interval: 1day / 1week / 1h / 4h …"""
-    out = await _fetch_ohlc_td(symbol, interval, outputsize)
+    out = await _fetch_ohlc_td(symbol, interval, outputsize, broker)
     if not out and YAHOO_FALLBACK:
         out = await _yahoo_ohlc(symbol, interval, outputsize)
     return out
 
 
-async def _fetch_ohlc_td(symbol: str, interval: str, outputsize: int) -> List[DatedOHLC]:
+async def _fetch_ohlc_td(symbol: str, interval: str, outputsize: int,
+                         broker: bool = True) -> List[DatedOHLC]:
     params = {
         "symbol": normalize_symbol(symbol),
         "interval": interval,
         "outputsize": max(1, min(int(outputsize), 5000)),
     }
     try:
-        data = await time_series(params)
+        data = await time_series(params, broker=broker)
         values = data.get("values") or []
         out: List[DatedOHLC] = []
         for v in values:
