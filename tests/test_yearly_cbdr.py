@@ -116,3 +116,14 @@ def test_event_boxes_join_clusters(tmp_path, monkeypatch):
     assert any({"FOMC hike Sep-16 -3.5", "FOMC hold Oct-28 -3.5"} <= set(c["members"]) for c in cl)
     assert abs(yc.level(ev[1], 2.5) - 4138.13) < 0.05                          # the 4,137.97 high
     assert yc.ladder_name(2.5) == "TP1" and yc.ladder_name(-3) == "TP4 · extreme 3"
+
+
+def test_ipda_lookbacks():
+    lv = yc.ipda_levels(EU, months=2)
+    labels = [x["label"] for x in lv]
+    assert any(l.startswith("now 20d") for l in labels) and any("60d high" in l for l in labels)
+    assert len({x["price"] for x in lv}) == len(lv)                          # deduped
+    last60 = EU[-60:]
+    assert any(x["price"] == max(b[2] for b in last60) for x in lv)
+    r = yc.analyse("EUR/USD", EU, today=D(2026, 11, 23), years_back=3)
+    assert r["ipda"] and all("ipda" in c for c in r["clusters"])

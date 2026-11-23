@@ -242,6 +242,37 @@ def event_boxes(symbol: str, today: dt.date, max_days: int = EVENT_MAX_DAYS) -> 
     return out
 
 
+IPDA_MONTHS = int(config("IPDA_MONTHS", default="6"))
+
+
+def ipda_levels(daily: Sequence[DatedOHLC], months: int = IPDA_MONTHS) -> List[Dict]:
+    """20/40/60-trading-day highs and lows (IPDA look-backs) as they stood at each of
+    the last ``months`` month-ends plus today — the 'Nov 2025 60 day high' / 'Sept
+    2025 40 day low' liquidity levels from the owner's daily charts. Deduped."""
+    daily = list(daily)
+    if len(daily) < 61:
+        return []
+    ends, seen_m = [len(daily) - 1], {(daily[-1][0].year, daily[-1][0].month)}
+    for i in range(len(daily) - 2, 0, -1):
+        ym = (daily[i][0].year, daily[i][0].month)
+        if ym not in seen_m and daily[i + 1][0].month != daily[i][0].month:
+            seen_m.add(ym)
+            ends.append(i)
+            if len(ends) > months:
+                break
+    out, prices = [], set()
+    for i in ends:
+        tag = "now" if i == len(daily) - 1 else f"{daily[i][0]:%b-%y}"
+        for n in (20, 40, 60):
+            win = daily[max(0, i - n + 1): i + 1]
+            for kind, v in (("high", max(b[2] for b in win)), ("low", min(b[3] for b in win))):
+                if v in prices:
+                    continue
+                prices.add(v)
+                out.append({"label": f"{tag} {n}d {kind}", "price": v})
+    return sorted(out, key=lambda x: x["price"])
+
+
 def ladder_name(k: float) -> Optional[str]:
     """Owner's target names by distance beyond the box edge: 1.5 TP1, 2 TP2/extreme 1,
     2.5 TP3/extreme 2, 3 TP4/extreme 3 (i.e. labels 2.5/3/3.5/4 and −1.5/−2/−2.5/−3)."""
@@ -303,7 +334,10 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
     levels = all_levels(boxes + events)
     cl = clusters(levels, tolerance(symbol, price))
     o = ote(daily)
+    ipda = ipda_levels(daily)
     for c in cl:
+        t0 = tolerance(symbol, price)
+        c["ipda"] = [x["label"] for x in ipda if c["low"] - t0 <= x["price"] <= c["high"] + t0]
         t = tolerance(symbol, price)        # overlap with the OTE (± tolerance) counts as golden
         c["in_ote"] = bool(o and c["low"] <= o["zone_top"] + t and c["high"] >= o["zone_bottom"] - t)
         c["distance"] = _r(symbol, c["mid"] - price)
@@ -321,6 +355,8 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
            "clusters": cl,
            "ote": o and {k: (_r(symbol, v) if isinstance(v, float) else v) for k, v in o.items()},
            "plan": plan(symbol, price, levels, cl, o),
+           "ipda": [{"label": x["label"], "price": _r(symbol, x["price"])} for x in ipda
+                    if x["label"].startswith("now")],
            "history": history_stats(symbol)}
     return res
 
@@ -393,6 +429,9 @@ def card(r: Dict) -> str:
         lines.append(f"📚 {h['years']}y history ({h['span']}): median run {h['median_up']:g} / "
                      f"{h['median_down']:g} · reach 2.5 in {h['pct_reach_up']['2.5']}% · "
                      f"reach 4 in {h['pct_reach_up']['4']}% · reach −1 in {h['pct_reach_down']['-1']}%")
+    if r.get("ipda"):
+        lines.append("IPDA 20/40/60d: " + " · ".join(f"{x['label'][4:]} {px(s, x['price'])}"
+                                                    for x in r["ipda"]))
     for e in r.get("events") or []:
         lines.append(f"⚡ {e['event']} box {px(s, e['box_low'])}–{px(s, e['box_high'])} · now at {e['position']:g}")
     o = r.get("ote")
@@ -402,7 +441,8 @@ def card(r: Dict) -> str:
     near = sorted(r["clusters"], key=lambda c: abs(c["distance"]))[:3]
     for c in near:
         lines.append(f"{'✨' if c['in_ote'] else '•'} {px(s, c['low'])}–{px(s, c['high'])}: "
-                     + ", ".join(c["members"]))
+                     + ", ".join(c["members"])
+                     + (f" + IPDA {', '.join(c['ipda'])}" if c.get("ipda") else ""))
     p = r.get("plan")
     if p and p.get("status") == "limit":
         lines.append(f"\n🎯 *{p['side']} LIMIT* {px(s, p['entry'])} · SL {px(s, p['stop'])}")
