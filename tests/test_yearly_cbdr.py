@@ -95,3 +95,8 @@ def test_magnet_mean_counts_weekly_crosses():
             bars.append((d, c, c, c, c)); i += 1
         d += dt.timedelta(days=1)
     assert yc.mid_crosses(box, bars) >= 40
+
+
+def test_index_tolerance_scales_with_price():
+    assert yc.tolerance("NAS100", 25000) == 75.0
+    assert yc.tolerance("EUR/USD", 1.1) == 0.003
