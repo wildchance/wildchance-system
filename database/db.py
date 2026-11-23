@@ -111,6 +111,8 @@ _GOLD_POSITION_MIGRATIONS = [
     # Per-account copy-trade fan-out: each execution order carries which fleet
     # account (acc1..acc5) it belongs to, so each VPS connector pulls only its own.
     "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS account VARCHAR",
+    # Members can log in with email + password (the API key still works).
+    "ALTER TABLE saas_users ADD COLUMN IF NOT EXISTS password_hash VARCHAR",
     # Partial scale-out + runner break-even metadata (the 250/500 exit plan).
     "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS group_id VARCHAR",
     "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS scale_role VARCHAR",

@@ -24,4 +24,5 @@ class User(Base):
     paid_until = Column(DateTime(timezone=True))                # subscription end (UTC)
     provider = Column(String)                                   # paystack | stripe | manual
     provider_ref = Column(String)                               # last payment / sub reference
+    password_hash = Column(String)                              # pbkdf2$iters$salt$hash (optional)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

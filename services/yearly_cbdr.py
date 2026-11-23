@@ -559,6 +559,12 @@ async def run(symbol: str, years_back: int = YEARS_BACK) -> Dict:
             daily = await _yahoo_ohlc(symbol, "1day", n)
         except Exception:
             daily = []
+    if not daily:                       # stocks: Polygon daily bars (POLYGON_API_KEY)
+        try:
+            from services.stocks_service import daily as poly_daily
+            daily = await poly_daily(symbol)
+        except Exception:
+            daily = []
     auto = []
     if AUTO_BOXES and daily:
         try:
