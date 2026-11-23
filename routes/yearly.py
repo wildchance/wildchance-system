@@ -13,12 +13,12 @@ DEFAULT = "EUR/USD,GBP/USD,USD/JPY,XAU/USD"
 
 
 @router.get("/cbdr/{base}/{quote}")
-async def cbdr(base: str, quote: str, years: int = Query(yc.YEARS_BACK, ge=1, le=8)):
+async def cbdr(base: str, quote: str, years: int = Query(yc.YEARS_BACK, ge=1, le=10)):
     return await yc.run(f"{base.upper()}/{quote.upper()}", years)
 
 
 @router.post("/alert")
-async def alert(symbols: str = Query(DEFAULT), years: int = Query(yc.YEARS_BACK, ge=1, le=8),
+async def alert(symbols: str = Query(DEFAULT), years: int = Query(yc.YEARS_BACK, ge=1, le=10),
                 notify: bool = Query(True)):
     syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     return await yc.alert(syms, years, notify)

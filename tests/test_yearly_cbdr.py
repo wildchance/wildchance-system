@@ -72,3 +72,15 @@ def test_weekly_prior_fallback():
     r = weekly_bias(bars, prior_fallback=True)
     assert r["bias"] == "long" and r["profile"].startswith("prior_week_")
     assert "last week" in r["reason"]
+
+
+def test_manual_box_overrides(tmp_path, monkeypatch):
+    f = tmp_path / "b.csv"
+    f.write_text("symbol,year,low,high,source\nEURUSD,2025,1.02375,1.09389,tv-oanda\nEUR/USD,2024,,,\n")
+    monkeypatch.setattr(yc, "BOXES_CSV", str(f))
+    yc._manual.update(mtime=None, rows={})
+    b = yc.box_for("EUR/USD", [], 2025)
+    assert b["source"] == "tv-oanda" and b["high"] == 1.09389
+    assert yc.box_for("EUR/USD", [], 2024) is None          # blank row → computed (none here)
+    r = yc.analyse("EUR/USD", EU, today=D(2026, 11, 23), years_back=3)
+    assert next(y for y in r["years"] if y["year"] == 2025)["source"] == "tv-oanda"
