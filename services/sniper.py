@@ -34,6 +34,7 @@ STOCKS = str(config("SNIPER_STOCKS", default="NVDA"))           # US stocks (Twe
 ENTRY_TFS = tuple(x.strip() for x in str(config("SNIPER_ENTRY_TFS", default="1h,4h")).split(","))
 POSITION_MIN_HIST = int(config("POSITION_MIN_HIST_PCT", default="15"))   # (kept for compatibility)
 REALISTIC_MIN_HIST = int(config("REALISTIC_MIN_HIST", default="25"))   # aim only as far as ≥25 % of years go
+SWING_HORIZON_D = int(config("SWING_HORIZON_DAYS", default="5"))      # expected-move horizon for TP3
 MAX_TARGET_PCT = float(config("SNIPER_MAX_TARGET_PCT", default="0.12"))   # swing horizon;
 #   anything further is a POSITION target from the yearly CBDR ranges (position_targets)
 
@@ -286,6 +287,13 @@ def card(sym: str, s: Dict) -> str:
                                 + (f", {t['pct']}%" if "pct" in t else "")
                                 + (f", hist {t['hist']}%" if t.get("hist") is not None else "") + ")"
                                 for t in s["targets"])]
+    if s.get("trade_type") != "position" and any(t["name"] == "TP1" and t.get("level") == "1R"
+                                                 for t in s["targets"]):
+        sw = s.get("sweet") or {}
+        z = sw.get("zone")
+        lines.append("🧭 Plan: ⅓ at TP1 (1R) → stop to breakeven · ⅓ at TP2 (2R) · runner to TP3"
+                     + (f" — sweet spot {px(sym, min(z))}–{px(sym, max(z))} (1σ–2σ"
+                        + (f", best {sw['best_k']:g}σ" if sw.get("best_k") else "") + ")" if z else ""))
     if s.get("cap"):
         cp = s["cap"]
         lines.append(f"📏 Realistic reach: {cp['year']} box {cp['k']:g} = {px(sym, cp['price'])} "
@@ -423,7 +431,26 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             tps = apply_cap(tps, cap, c["side"])
             ptps = apply_cap(ptps, cap, c["side"])
             held_reason = None
-            if not tps and not ptps and cap:
+            # SWEET-SPOT LADDER: TP1 1R (⅓ + stop to BE) · TP2 2R (⅓) · TP3 inside the
+            # 1σ–2σ expected move (68–95 % band) sized by this market's own volatility
+            from services import tp_study as tps_mod
+            closes = [b["close"] for b in by_tf.get("1day") or []]
+            sig_d = tps_mod.sigma_daily(closes)
+            unit = sig["entry"] * sig_d * (SWING_HORIZON_D ** 0.5) if sig_d else None
+            best_k = None
+            try:
+                st = await tps_mod.study(sym, SWING_HORIZON_D)
+                best_k = st and st.get("best_k")
+            except Exception:
+                st = None
+            lad = tps_mod.ladder(c["side"], sig["entry"], stop, unit, best_k, structure=tps,
+                                 cap_price=cap and cap["price"])
+            sweet = {"zone": lad.get("sweet_zone"), "best_k": best_k, "unit": unit}
+            if lad["targets"]:
+                tps = lad["targets"]
+            elif lad["hold"] and lad["hold"].startswith("stop wider") and not ptps:
+                held_reason = lad["hold"]
+            if not tps and not ptps and cap and not held_reason:
                 from services.trade_gate import MIN_RR
                 move = (cap["price"] - sig["entry"]) * (1 if c["side"] == "BUY" else -1)
                 risk = abs(sig["entry"] - stop)
@@ -461,7 +488,7 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             if fit:
                 g["reasons"].append(fit)
             g["allow"] = not g["reasons"]
-            row.update(trade_type=trade_type, cap=cap,
+            row.update(trade_type=trade_type, cap=cap, sweet=sweet,
                        position_targets=ptps if trade_type == "swing" else [],
                        entry=sig["entry"], extreme=sig["extreme"], stop=stop, targets=tps,
                        role_stats=rs, gate=g, council=cv)
