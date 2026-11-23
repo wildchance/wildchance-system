@@ -92,6 +92,50 @@ def manual_boxes() -> Dict[Tuple[str, int], Dict]:
     return _manual["rows"]
 
 
+STATS_CSV = str(config("YEARLY_STATS_CSV", default="data/yearly_stats.csv"))
+_stats: Dict = {"mtime": None, "rows": {}}
+
+
+def history_stats(symbol: str) -> Optional[Dict]:
+    """Base rates from the owner's long history (wildchance.history_import): how far a
+    year's projection usually travels after its Q1 box closes."""
+    import csv
+    import os
+    try:
+        m = os.path.getmtime(STATS_CSV)
+    except OSError:
+        return None
+    if _stats["mtime"] != m:
+        rows: Dict[str, List[Dict]] = {}
+        with open(STATS_CSV, newline="") as f:
+            for r in csv.DictReader(f):
+                try:
+                    if r.get("complete") not in ("1", "True", "true"):
+                        continue
+                    rows.setdefault(_sym(r["symbol"]), []).append(
+                        {"year": int(r["year"]), "up": float(r["peak_up"]), "down": float(r["peak_down"]),
+                         "close": float(r["close_pos"])})
+                except (TypeError, ValueError, KeyError):
+                    continue
+        _stats.update(mtime=m, rows=rows)
+    ys = _stats["rows"].get(_sym(symbol))
+    if not ys or len(ys) < 5:
+        return None
+    n = len(ys)
+
+    def med(xs):
+        xs = sorted(xs)
+        return round(xs[len(xs) // 2], 2)
+
+    reach_up = {f"{k:g}": round(100 * sum(y["up"] >= k for y in ys) / n) for k in (1.5, 2, 2.5, 3, 4)}
+    reach_dn = {f"{k:g}": round(100 * sum(y["down"] <= k for y in ys) / n) for k in (-0.5, -1, -1.5, -2, -3)}
+    return {"years": n, "span": f"{min(y['year'] for y in ys)}–{max(y['year'] for y in ys)}",
+            "median_up": med([y["up"] for y in ys]), "median_down": med([y["down"] for y in ys]),
+            "pct_reach_up": reach_up, "pct_reach_down": reach_dn,
+            "pct_close_above_box": round(100 * sum(y["close"] > 1 for y in ys) / n),
+            "pct_close_below_box": round(100 * sum(y["close"] < 0 for y in ys) / n)}
+
+
 def box_for(symbol: str, daily: Sequence[DatedOHLC], year: int) -> Optional[Dict]:
     hit = manual_boxes().get((_sym(symbol), year))
     if hit:
@@ -213,7 +257,8 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
            "years": years, "control": control and control["year"],
            "clusters": cl,
            "ote": o and {k: (_r(symbol, v) if isinstance(v, float) else v) for k, v in o.items()},
-           "plan": plan(symbol, price, levels, cl, o)}
+           "plan": plan(symbol, price, levels, cl, o),
+           "history": history_stats(symbol)}
     return res
 
 
@@ -275,6 +320,11 @@ def card(r: Dict) -> str:
         src = " ✍️" if y.get("source") not in (None, "computed") else ""
         lines.append(f"`{y['year']}`{src} box {px(s, y['box_low'])}–{px(s, y['box_high'])} · "
                      f"now at {y['position_dev']}{pk_txt}")
+    h = r.get("history")
+    if h:
+        lines.append(f"📚 {h['years']}y history ({h['span']}): median run {h['median_up']:g} / "
+                     f"{h['median_down']:g} · reach 2.5 in {h['pct_reach_up']['2.5']}% · "
+                     f"reach 4 in {h['pct_reach_up']['4']}% · reach −1 in {h['pct_reach_down']['-1']}%")
     o = r.get("ote")
     if o:
         lines.append(f"OTE ({o['leg']} leg {o['from']}→{o['to']}): {px(s, o['zone_bottom'])}–"
