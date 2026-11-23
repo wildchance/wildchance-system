@@ -243,6 +243,13 @@ async def resolve_pending() -> Dict:
                         c.status = "broke" if hit_stop else "held"    # same bar → conservative
                         c.resolved_at = dt.datetime.now(dt.timezone.utc)
                         done += 1
+                        if c.status == "held":                      # winners → flash card
+                            try:
+                                from services import flash_card as fc
+                                if fc.ENABLED:
+                                    await fc.post(c.symbol, c.side, c.entry, c.tp1, c.resolved_at)
+                            except Exception:
+                                pass
                         break
             await db.commit()
     except Exception:
