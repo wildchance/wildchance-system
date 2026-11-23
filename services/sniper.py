@@ -30,6 +30,9 @@ from decouple import config
 MIN_RATE = float(config("SNIPER_MIN_RATE", default="0.5"))
 LOOKBACK = int(config("SNIPER_LOOKBACK_H", default="12"))
 DEFAULT_SYMBOLS = str(config("SNIPER_SYMBOLS", default="EUR/USD,GBP/USD,USD/JPY,XAU/USD,BTC/USD"))
+STOCKS = str(config("SNIPER_STOCKS", default="NVDA"))           # US stocks (TwelveData / Polygon)
+ENTRY_TFS = tuple(x.strip() for x in str(config("SNIPER_ENTRY_TFS", default="1h,4h")).split(","))
+MAX_TARGET_PCT = float(config("SNIPER_MAX_TARGET_PCT", default="0.12"))
 
 
 def roles_of(members: Sequence[str]) -> List[str]:
@@ -136,7 +139,10 @@ def triggers(by_tf: Dict[str, Sequence[Dict]], side: str, band: Sequence[float])
         if len(bars) >= 4:
             out.append({"tf": tf, "type": kind, **fns[kind](bars)})
     fired = [t for t in out if t["fired"]]
-    return {"primary": fired[0] if fired else None, "confirmations": fired[1:], "all": out}
+    # only fast timeframes set entry/stop (a weekly sweep = a 26k BTC stop); D1/W1 confirm
+    entry = [t for t in fired if t["tf"] in ENTRY_TFS]
+    primary = entry[0] if entry else None
+    return {"primary": primary, "confirmations": [t for t in fired if t is not primary], "all": out}
 
 
 def candidates(r: Dict, bars: Sequence[Dict]) -> List[Dict]:
@@ -167,7 +173,8 @@ def targets_from(r: Dict, side: str, entry: float, stop: float) -> List[Dict]:
     if risk <= 0:
         return []
     mids = sorted((c for c in r.get("clusters") or []
-                   if (c["mid"] > entry if side == "BUY" else c["mid"] < entry)),
+                   if (c["mid"] > entry if side == "BUY" else c["mid"] < entry)
+                   and c["mid"] > 0 and abs(c["mid"] - entry) <= MAX_TARGET_PCT * entry),
                   key=lambda c: abs(c["mid"] - entry))
     out, last = [], entry
     for c in mids:
@@ -182,13 +189,34 @@ def targets_from(r: Dict, side: str, entry: float, stop: float) -> List[Dict]:
     return out
 
 
+_held: set = set()                      # setups held today (council / gate) — promotion watch
+
+
+def account_fit(sym: str, entry: float, stop: float) -> Optional[str]:
+    """Hold the shot if even 0.01 lot over-risks the LARGEST card balance (the lot card
+    would read '⛔ skip' on every account — no point sending it)."""
+    try:
+        from propfirm.target_lots import card_balances, pip_size, pip_value_per_lot
+        ps, pv = pip_size(sym), pip_value_per_lot(sym, entry)
+        if not ps or not pv:
+            return None                       # stocks / indices: no lot ladder to check
+        risk = 0.01 * abs(entry - stop) / ps * pv
+        cap = max(card_balances()) * 0.5 / 100
+        if risk > cap:
+            return f"stop too wide for the accounts (0.01 lot risks ${risk:,.2f} > ${cap:,.2f})"
+    except Exception:
+        return None
+    return None
+
+
 def card(sym: str, s: Dict) -> str:
     from routes.cbdr import px
     rs = s.get("role_stats")
     trig = s.get("trigger") or "1h CISD"
     conf = f" + {', '.join(s['confirmations'])}" if s.get("confirmations") else ""
+    mem = s["members"][:4] + ([f"+{len(s['members']) - 4} more"] if len(s["members"]) > 4 else [])
     lines = [f"🎯 *SNIPER {s['side']} — {sym}* ({trig}{conf} at the artillery's level)",
-             f"Zone {px(sym, s['zone'][0])}–{px(sym, s['zone'][1])}: " + ", ".join(s["members"]),
+             f"Zone {px(sym, s['zone'][0])}–{px(sym, s['zone'][1])}: " + ", ".join(mem),
              f"Roles: {', '.join(s['roles']) or '—'}"
              + (f" · {rs['role']} held {rs['held']}/{rs['n']} (recent {rs['recent_rate']:.0%})" if rs else ""),
              f"Entry {px(sym, s['entry'])} · SL {px(sym, s['stop'])} (sweep {px(sym, s['extreme'])})",
@@ -273,7 +301,7 @@ async def _record(sym: str, s: Dict) -> None:
 
 async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dict:
     from services import yearly_cbdr as yc, case_library as cl, trade_gate as tg
-    syms = symbols or [x.strip() for x in DEFAULT_SYMBOLS.split(",") if x.strip()]
+    syms = symbols or [x.strip() for x in (DEFAULT_SYMBOLS + "," + STOCKS).split(",") if x.strip()]
     resolved = await resolve_pending()
     stats_all = await cl.all_cases()
     out, sent = [], []
@@ -322,16 +350,31 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             from services import council as cn
             cv = await cn.convene(sym, c["side"], yearly=r, role_stats=rs)
             if cv["verdict"] != "GO":
-                g["reasons"].append(f"council {cv['verdict']} (score {cv['score']}"
-                                    + (f", veto {','.join(cv['veto'])}" if cv["veto"] else "") + ")")
+                g["reasons"].append(f"council {cv['verdict']}: " + (cv.get("need") or
+                                    (f"veto {','.join(cv['veto'])}" if cv["veto"] else f"score {cv['score']}")))
+            if g["reasons"]:
+                _held.add(f"{sym}:{c['side']}:{dt.date.today()}")      # watch it for promotion
+            fit = account_fit(sym, sig["entry"], stop)
+            if fit:
+                g["reasons"].append(fit)
             g["allow"] = not g["reasons"]
             row.update(entry=sig["entry"], extreme=sig["extreme"], stop=stop, targets=tps,
                        role_stats=rs, gate=g, council=cv)
             out.append(row)
-            if notify and g["allow"]:
+        # one card per market + side: the best-backed shot (most council votes, most anchors)
+        best: Dict[str, Dict] = {}
+        for row in [x for x in out if x.get("symbol") == sym and x.get("gate", {}).get("allow")]:
+            k = row["side"]
+            score = (row["council"]["for"], len(row["members"]))
+            if k not in best or score > (best[k]["council"]["for"], len(best[k]["members"])):
+                best[k] = row
+        for side, row in best.items():
+            if notify:
                 from services.realtime import alert_once
-                key = f"sniper:{sym}:{c['side']}:{c['low']}:{dt.date.today()}"
-                if await alert_once(key, card(sym, row), ttl_hours=24):
+                key = f"sniper:{sym}:{side}:{dt.date.today()}"
+                promoted = f"{sym}:{side}:{dt.date.today()}" in _held
+                text = ("⬆️ *PROMOTED* — held earlier, now 4 agents agree\n" if promoted else "") + card(sym, row)
+                if await alert_once(key, text, ttl_hours=24):
                     await _record(sym, row)
                     sent.append(sym)
     return {"resolved": resolved, "results": out, "notified": sent}

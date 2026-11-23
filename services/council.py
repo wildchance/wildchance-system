@@ -13,7 +13,9 @@ agent reads ONE intelligence source from cache and votes on a proposed side.
   mirofish   external MiroFish score when MIROFISH_BASE_URL is live (else abstains)
 
 Votes: +1 for the side, −1 against, 0 abstain. A LOCK (macro) against the side is a
-veto. verdict: GO (score ≥ COUNCIL_MIN_SCORE and no veto) · HOLD · VETO.
+veto. verdict: GO needs ≥ COUNCIL_MIN_FOR (4) agents FOR, ≤ COUNCIL_MAX_AGAINST (0)
+against and no veto (owner's rule) · HOLD — re-checked every hour, sent once promoted
+to GO · VETO.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ from typing import Dict, List, Optional
 from decouple import config
 
 MIN_SCORE = int(config("COUNCIL_MIN_SCORE", default="1"))
+MIN_FOR = int(config("COUNCIL_MIN_FOR", default="4"))          # owner: 4 verified agents
+MAX_AGAINST = int(config("COUNCIL_MAX_AGAINST", default="0"))  # …and none against
 
 
 def _v(agent: str, vote: int, why: str) -> Dict:
@@ -98,10 +102,14 @@ def vote_mirofish(m: Optional[Dict], side: str) -> Dict:
 def decide(votes: List[Dict]) -> Dict:
     score = sum(v["vote"] for v in votes)
     veto = [v["agent"] for v in votes if v.get("veto")]
-    verdict = "VETO" if veto else "GO" if score >= MIN_SCORE else "HOLD"
-    return {"verdict": verdict, "score": score, "veto": veto,
-            "for": sum(1 for v in votes if v["vote"] > 0),
-            "against": sum(1 for v in votes if v["vote"] < 0), "votes": votes}
+    n_for = sum(1 for v in votes if v["vote"] > 0)
+    n_against = sum(1 for v in votes if v["vote"] < 0)
+    ok = score >= MIN_SCORE and n_for >= MIN_FOR and n_against <= MAX_AGAINST
+    verdict = "VETO" if veto else "GO" if ok else "HOLD"
+    need = None if ok or veto else (f"needs {MIN_FOR} for / ≤{MAX_AGAINST} against "
+                                    f"(has {n_for} / {n_against}) — held until promoted")
+    return {"verdict": verdict, "score": score, "veto": veto, "for": n_for, "against": n_against,
+            "need": need, "votes": votes}
 
 
 async def convene(symbol: str, side: str, yearly: Optional[Dict] = None,

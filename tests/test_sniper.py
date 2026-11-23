@@ -72,3 +72,27 @@ def test_triggers_pick_fastest_and_list_confirmations():
               _b(1.0965, 1.1015, 1.0963, 1.1010)]
     t = sniper.triggers({"1h": one_h, "4h": four_h}, "BUY", (1.0955, 1.0970))
     assert t["primary"]["tf"] == "4h" and t["primary"]["type"] == "cisd"
+
+
+def test_entry_only_on_fast_timeframes_and_target_sanity():
+    weekly = [_b(1.100, 1.101, 1.099, 1.1005), _b(1.1005, 1.1008, 1.0990, 1.0992),
+              _b(1.0992, 1.0995, 1.0975, 1.0978), _b(1.0978, 1.0980, 1.0960, 1.0965),
+              _b(1.0965, 1.1015, 1.0963, 1.1010)]
+    t = sniper.triggers({"1h": [_b(1.1, 1.101, 1.099, 1.1)] * 5, "1week": weekly}, "BUY", (1.0955, 1.0970))
+    assert t["primary"] is None and t["confirmations"][0]["tf"] == "1week"   # W1 confirms only
+    r = {"clusters": [{"mid": -3213.0, "members": ["x"]}, {"mid": 40000.0, "members": ["far"]},
+                      {"mid": 58000.0, "members": ["ok"]}]}
+    tps = sniper.targets_from(r, "SELL", 61553.0, 62553.0)
+    assert [x["price"] for x in tps] == [58000.0]                          # no negatives, ≤12 %
+
+
+def test_account_fit_holds_unaffordable_stops():
+    assert "stop too wide" in sniper.account_fit("BTC/USD", 61553.40, 87457.22)
+    assert sniper.account_fit("EUR/USD", 1.1000, 1.0980) is None
+
+
+def test_stock_stop_floor_and_precision():
+    from services import trade_gate as tg
+    from routes.cbdr import px
+    assert tg.widen_stop("NVDA", "BUY", 200.0, 199.9) == 199.0             # 0.5 % floor
+    assert px("NVDA", 173.7312) == "173.73"

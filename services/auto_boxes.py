@@ -82,6 +82,7 @@ def chained(parents: Sequence[Dict], by_day: Dict[dt.date, Tuple[float, float]],
         rng = p["high"] - p["low"]
         if rng <= 0:
             continue
+        best = None
         for k in CHAIN_LEVELS:
             # down-move: child LOW on the fib's −k (low − k·range); up-move: child HIGH on +k
             for sign, lvl in ((-1, p["low"] - k * rng), (1, p["low"] + k * rng)):
@@ -89,10 +90,16 @@ def chained(parents: Sequence[Dict], by_day: Dict[dt.date, Tuple[float, float]],
                     if d <= pday:
                         continue
                     lo, hi = by_day[d]
-                    if abs((lo if sign < 0 else hi) - lvl) <= tol:
-                        out.append(_box(f"chain {p['year']} {'-' if sign < 0 else '+'}{k:g}", d, lo, hi,
+                    reached = lo <= lvl + tol if sign < 0 else hi >= lvl - tol
+                    if not reached:
+                        continue
+                    # the FIRST day price reaches the level: chain only if this box's edge sits on it
+                    if abs((lo if sign < 0 else hi) - lvl) <= tol / 3 and (best is None or d < best[0]):
+                        best = (d, _box(f"chain {p['year']} {'-' if sign < 0 else '+'}{k:g}", d, lo, hi,
                                         "auto-chain"))
-                        break
+                    break
+        if best:
+            out.append(best[1])               # one child per parent — no chain spam
     return out
 
 

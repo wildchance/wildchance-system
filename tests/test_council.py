@@ -11,8 +11,9 @@ def test_agents_vote_and_decide():
              cn.vote_macro(None, "BUY"), cn.vote_mirofish(None, "BUY")]
     assert [v["vote"] for v in votes] == [1, -1, 1, 1, 1, 0, 0]
     d = cn.decide(votes)
-    assert d["verdict"] == "GO" and d["score"] == 3 and d["for"] == 4
-    assert "Council *GO*" in cn.summary(d)
+    # 4 for but 1 against (sentiment) → HOLD under the owner's 4-for / 0-against rule
+    assert d["verdict"] == "HOLD" and d["score"] == 3 and d["for"] == 4 and d["against"] == 1
+    assert "Council *HOLD*" in cn.summary(d)
 
 
 def test_macro_lock_vetoes():
@@ -25,3 +26,12 @@ def test_mirofish_bands():
     assert cn.vote_mirofish({"score": 70}, "BUY")["vote"] == 1
     assert cn.vote_mirofish({"score": 50}, "BUY")["vote"] == 0
     assert cn.vote_mirofish({"score": 20}, "BUY")["vote"] == -1
+
+
+def test_four_for_zero_against_rule():
+    up = lambda a: {"agent": a, "vote": 1, "why": ""}          # noqa: E731
+    down = lambda a: {"agent": a, "vote": -1, "why": ""}       # noqa: E731
+    assert cn.decide([up("a"), up("b"), up("c"), up("d")])["verdict"] == "GO"
+    held = cn.decide([up("a"), up("b"), up("c"), up("d"), down("e")])
+    assert held["verdict"] == "HOLD" and "held until promoted" in held["need"]
+    assert cn.decide([up("a"), up("b"), up("c")])["verdict"] == "HOLD"

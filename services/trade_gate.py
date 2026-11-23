@@ -27,6 +27,7 @@ MIN_SL_GOLD_USD = float(config("MIN_SL_GOLD_USD", default="3.0"))
 # BTC mirrors gold's structure: a fixed USD floor. Gold's $3 ≈ 0.075 % of ~$4,000;
 # the same share of ~$60k BTC ≈ $45 → default $50.
 MIN_SL_BTC_USD = float(config("MIN_SL_BTC_USD", default="50"))
+MIN_SL_STOCK_PCT = float(config("MIN_SL_STOCK_PCT", default="0.5"))   # stocks: % of price
 WEEKLY_PRIOR_FALLBACK = str(config("WEEKLY_PRIOR_FALLBACK", default="true")).lower() in ("1", "true", "yes", "on")
 BLOCK_CBDR_FORMING = str(config("BLOCK_CBDR_FORMING", default="true")).lower() in ("1", "true", "yes", "on")
 
@@ -60,6 +61,9 @@ def min_stop_distance(symbol: str) -> float:
 def widen_stop(symbol: str, side: str, entry: float, stop: float) -> float:
     """Push the stop out to the minimum distance (never pull it in)."""
     need = min_stop_distance(symbol)
+    s = symbol.upper().replace("/", "")
+    if not need and s.isalpha() and len(s) <= 5:          # US stock ticker (NVDA, AAPL …)
+        need = entry * MIN_SL_STOCK_PCT / 100
     if abs(entry - stop) >= need:
         return stop
     return round(entry - need if side.upper() in ("BUY", "LONG") else entry + need, 5)
