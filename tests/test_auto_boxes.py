@@ -24,3 +24,10 @@ def test_chained_box_on_exhausted_minus_four():
     by_day = {dt.date(2026, 11, 2): (3866.0, 3905.0), dt.date(2026, 11, 3): (3950.0, 3990.0)}
     ch = ab.chained([parent], by_day, tol=15.0)
     assert any(c["year"].startswith("chain FOMC hold Oct-28 -4") and c["low"] == 3866.0 for c in ch)
+
+
+def test_one_child_per_parent():
+    parent = {"year": "FOMC hold Oct-28", "date": "2026-10-28", "low": 4033.198, "high": 4075.173}
+    by_day = {dt.date(2026, 11, 2): (3866.0, 3905.0), dt.date(2026, 11, 3): (3865.5, 3990.0),
+              dt.date(2026, 11, 9): (4220.0, 4180.0 + 22)}
+    assert len(ab.chained([parent], by_day, tol=15.0)) == 1
