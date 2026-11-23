@@ -201,28 +201,28 @@ async def _access_gate(request, call_next):
     return await call_next(request)
 
 
-@app.get("/", include_in_schema=False)
+@app.api_route("/", include_in_schema=False, methods=["GET", "HEAD"])
 async def home():
     """Public landing page (members website). API status moved to /status."""
     return _FileResponse("static/site/index.html")
 
 
-@app.get("/pricing", include_in_schema=False)
+@app.api_route("/pricing", include_in_schema=False, methods=["GET", "HEAD"])
 async def pricing_page():
     return _FileResponse("static/site/pricing.html")
 
 
-@app.get("/members", include_in_schema=False)
+@app.api_route("/members", include_in_schema=False, methods=["GET", "HEAD"])
 async def members_page():
     return _FileResponse("static/site/members.html")
 
 
-@app.get("/status")
+@app.api_route("/status", methods=["GET", "HEAD"])
 async def status_json():
     return {"message": "Wildchance API is live 🚀", "status": "Server running"}
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])
 async def health_check():
     """Deep health check — proves the app is actually WIRED, not just 'up'.
 
