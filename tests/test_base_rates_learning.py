@@ -61,3 +61,34 @@ def test_feed_health_and_base_rates_persist(tmp_path, monkeypatch):
         loop.run_until_complete(go())
     finally:
         loop.close()
+
+
+def test_index_base_rates_fall_back_to_etf_proxy(monkeypatch):
+    from services import data_feeds as df
+    yc._auto_hist.clear()
+
+    async def no_store(key):
+        return None, None
+
+    async def put(key, v):
+        return True
+    from services import data_store
+    monkeypatch.setattr(data_store, "get", no_store)
+    monkeypatch.setattr(data_store, "put", put)
+    bars = []
+    d = dt.date(2010, 1, 4)
+    while d.year < 2020:                       # Q1 range 100–110, rest of year runs to 125
+        if d.weekday() < 5:
+            c = 100 + (10 * (d.timetuple().tm_yday / 90) if d.month <= 3 else 10 + 15 * (d.month - 3) / 9)
+            bars.append((d, c, c + 0.5, c - 0.5, c))
+        d += dt.timedelta(days=1)
+
+    async def chain(sym, min_bars=200):
+        return (bars, "twelvedata") if sym == "QQQ" else ([], None)
+    monkeypatch.setattr(df, "daily_chain", chain)
+    loop = asyncio.new_event_loop()
+    try:
+        r = loop.run_until_complete(yc.auto_history("NAS100"))
+    finally:
+        loop.close()
+    assert r and r["source"] == "auto-twelvedata (QQQ proxy)" and r["years"] >= 5
