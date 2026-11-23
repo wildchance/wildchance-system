@@ -23,7 +23,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.51"
+#property version   "4.52"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -161,6 +161,7 @@ input group "=== 8. SEND DATA TO THE APP (EA -> /bridge) ==="
 input bool     InpSendData          = true;   // Push closed bars + account snapshot to the app
 input string   InpAppUrl            = "https://your-app.onrender.com"; // Add it in Tools > Options > Expert Advisors > WebRequest
 input string   InpBridgeToken       = "";     // = BRIDGE_TOKEN (or EXECUTION_TOKEN) in the app env
+input bool     InpPushDeals         = true;   // send closed trades → profit flash cards (winners only)
 input string   InpAppSymbol         = "";     // Name to send (blank = chart symbol; app strips suffixes)
 input string   InpSendTFs           = "M15,H1,H4,D1,W1";
 input int      InpInitialBars       = 300;    // First push per timeframe; afterwards the last 3 bars
@@ -198,6 +199,7 @@ ENUM_TIMEFRAMES g_sendTF[];
 datetime g_sentBar[];
 bool     g_sentInit[];
 datetime g_lastAcctPush=0, g_lastCalPush=0;
+datetime g_lastDealCheck=0, g_lastDealPush=0;
 string   g_sendStatus="OFF";
 
 //----------------------------------------------------------------- lunar state
@@ -289,6 +291,63 @@ void OnTimer()
   {
    CheckPropGuard();
    if(InpSendData && !MQLInfoInteger(MQL_TESTER)) PushData();
+   if(InpSendData && InpPushDeals && !MQLInfoInteger(MQL_TESTER) && TimeCurrent() - g_lastDealPush >= 30)
+     {
+      g_lastDealPush = TimeCurrent();
+      PushClosedDeals();
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Closed trades → app (profit flash cards). Whole account, any source |
+//| (EA, signals, manual). First run backfills today; the app posts each |
+//| ticket once and only for net-profitable closes.                      |
+//+------------------------------------------------------------------+
+void PushClosedDeals()
+  {
+   if(InpBridgeToken == "") return;
+   datetime from = (g_lastDealCheck > 0) ? g_lastDealCheck : iTime(_Symbol, PERIOD_D1, 0);
+   datetime to   = TimeCurrent() + 60;
+   if(!HistorySelect(from - 30 * 86400, to)) return;      // wide window so opening deals are found
+   int total = HistoryDealsTotal();
+   string arr = ""; int n = 0; datetime newest = from;
+   for(int i = 0; i < total; i++)
+     {
+      ulong t = HistoryDealGetTicket(i);
+      if(t == 0) continue;
+      long entry = HistoryDealGetInteger(t, DEAL_ENTRY);
+      if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY) continue;
+      datetime ct = (datetime)HistoryDealGetInteger(t, DEAL_TIME);
+      if(ct < from) continue;
+      long   pos    = HistoryDealGetInteger(t, DEAL_POSITION_ID);
+      string sym    = HistoryDealGetString(t, DEAL_SYMBOL);
+      double cprice = HistoryDealGetDouble(t, DEAL_PRICE);
+      double vol    = HistoryDealGetDouble(t, DEAL_VOLUME);
+      double net    = HistoryDealGetDouble(t, DEAL_PROFIT) + HistoryDealGetDouble(t, DEAL_COMMISSION)
+                    + HistoryDealGetDouble(t, DEAL_SWAP);
+      long   dtype  = HistoryDealGetInteger(t, DEAL_TYPE);   // a SELL deal closes a BUY position
+      double oprice = 0; datetime ot = 0;
+      for(int j = 0; j < total; j++)
+        {
+         ulong u = HistoryDealGetTicket(j);
+         if(u == 0) continue;
+         if(HistoryDealGetInteger(u, DEAL_POSITION_ID) == pos && HistoryDealGetInteger(u, DEAL_ENTRY) == DEAL_ENTRY_IN)
+           { oprice = HistoryDealGetDouble(u, DEAL_PRICE); ot = (datetime)HistoryDealGetInteger(u, DEAL_TIME); break; }
+        }
+      if(oprice <= 0) continue;
+      int dg = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+      if(n > 0) arr += ",";
+      arr += StringFormat("{\"ticket\":%I64u,\"symbol\":\"%s\",\"side\":\"%s\",\"volume\":%.2f,"
+                          "\"open_price\":%s,\"close_price\":%s,\"open_time\":%I64d,\"close_time\":%I64d,"
+                          "\"net\":%.2f}",
+                          t, sym, (dtype == DEAL_TYPE_SELL ? "BUY" : "SELL"), vol,
+                          DoubleToString(oprice, dg), DoubleToString(cprice, dg),
+                          (long)ot, (long)ct, net);
+      n++;
+      if(ct > newest) newest = ct;
+     }
+   if(n == 0) return;
+   if(PostJson("/bridge/deals", "{\"deals\":[" + arr + "]}")) g_lastDealCheck = newest + 1;
   }
 
 void OnTick()

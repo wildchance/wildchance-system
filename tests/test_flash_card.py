@@ -49,3 +49,52 @@ def test_head_requests_on_public_pages():
     c = TestClient(main.app)
     for path in ("/", "/pricing", "/members", "/status"):
         assert c.head(path).status_code == 200, path
+
+
+TODAY = [  # owner's MT5 history, 2026-11-23 (screenshot)
+    {"ticket": 1, "symbol": "USDCHFb.Z", "side": "BUY", "volume": 0.10, "open_price": 0.83954, "close_price": 0.84124, "net": 20.21, "close_time": 1795450000},
+    {"ticket": 2, "symbol": "USDCHFb.Z", "side": "BUY", "volume": 0.01, "open_price": 0.83889, "close_price": 0.84390, "net": 5.94, "close_time": 1795450100},
+    {"ticket": 3, "symbol": "EURUSDb.Z", "side": "SELL", "volume": 0.01, "open_price": 1.09818, "close_price": 1.08887, "net": 9.31, "close_time": 1795451000},
+    {"ticket": 4, "symbol": "EURUSDb.Z", "side": "SELL", "volume": 0.01, "open_price": 1.09831, "close_price": 1.08884, "net": 9.47, "close_time": 1795451000},
+    {"ticket": 5, "symbol": "EURUSDb.Z", "side": "SELL", "volume": 0.01, "open_price": 1.09838, "close_price": 1.08885, "net": 9.53, "close_time": 1795451000},
+    {"ticket": 6, "symbol": "EURUSDb.Z", "side": "BUY", "volume": 0.01, "open_price": 1.10, "close_price": 1.09, "net": -10.0, "close_time": 1795451000},
+]
+
+
+def test_deals_group_into_one_card_per_symbol_side():
+    g = {(x["symbol"], x["side"]): x for x in fc.group_deals(TODAY)}
+    eu = g[("EURUSD", "SELL")]
+    assert eu["lots"] == 0.03 and eu["tickets"] == ["3", "4", "5"] and round(eu["net"], 2) == 28.31
+    assert round(fc.pips("EURUSD", "SELL", eu["open"], eu["close"]), 1) == 94.4
+    ch = g[("USDCHF", "BUY")]
+    assert ch["lots"] == 0.11 and round(fc.pips("USDCHF", "BUY", ch["open"], ch["close"]), 1) == 20.0
+
+
+def test_post_from_deals_winners_only_and_once(monkeypatch):
+    import asyncio
+    from services import data_store
+    store, sent = {}, []
+
+    async def get(k):
+        return store.get(k), None
+
+    async def put(k, v):
+        store[k] = v
+        return True
+
+    async def post(sym, side, o, c, when=None):
+        sent.append((sym, side))
+        return {"sent": True}
+    monkeypatch.setattr(data_store, "get", get)
+    monkeypatch.setattr(data_store, "put", put)
+    monkeypatch.setattr(fc, "post", post)
+    monkeypatch.setattr(fc, "FROM_DEALS", True)
+    loop = asyncio.new_event_loop()
+    try:
+        r1 = loop.run_until_complete(fc.post_from_deals(TODAY))
+        r2 = loop.run_until_complete(fc.post_from_deals(TODAY))          # EA re-sends → nothing new
+    finally:
+        loop.close()
+    assert sorted(sent) == [("EURUSD", "SELL"), ("USDCHF", "BUY")]       # the losing EURUSD buy is skipped
+    assert any(s["why"] == "not a winning close" for s in r1["skipped"])
+    assert r2["new"] == 0 and r2["posted"] == []

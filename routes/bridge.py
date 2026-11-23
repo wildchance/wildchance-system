@@ -2,6 +2,7 @@
 
   POST /bridge/bars              {"symbol":"XAUUSD.r","timeframe":"H1","bars":[{t,o,h,l,c,v}]}
   POST /bridge/account           {"login":…, "balance":…, "equity":…, "guard":"ACTIVE", …}
+  POST /bridge/deals             closed trades → profit flash cards (winners only, once each)
   GET  /bridge/status           what has arrived, how fresh, last account snapshots
 
 Auth: BRIDGE_TOKEN (falls back to EXECUTION_TOKEN) in the X-Bridge-Token HEADER only —
@@ -60,6 +61,22 @@ async def account(snapshot: Dict,
     key = str(snapshot.get("login") or "default")
     _accounts[key] = {**snapshot, "received_utc": dt.datetime.now(dt.timezone.utc).isoformat()}
     return {"ok": True}
+
+
+class DealsIn(BaseModel):
+    deals: List[Dict] = Field(default_factory=list)
+
+
+@router.post("/deals")
+async def deals(body: DealsIn, background: BackgroundTasks,
+                x_bridge_token: Optional[str] = Header(None)):
+    """Closed trades from MT5 history → profit flash cards (winners only, once each).
+    deal: {ticket, symbol, side (BUY/SELL of the POSITION), volume, open_price,
+           close_price, open_time, close_time (unix), net (profit+commission+swap)}"""
+    _auth(x_bridge_token)
+    from services.flash_card import post_from_deals
+    background.add_task(post_from_deals, body.deals)
+    return {"ok": True, "received": len(body.deals)}
 
 
 @router.get("/status")

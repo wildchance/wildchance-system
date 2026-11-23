@@ -144,3 +144,61 @@ async def post(symbol: str, side: str, open_price: float, close_price: float,
         return {"sent": r.status_code == 200, "status": r.status_code}
     except Exception as e:
         return {"sent": False, "reason": str(e)[:120]}
+
+
+
+FROM_DEALS = str(config("FLASH_FROM_DEALS", default="true")).lower() in ("1", "true", "yes", "on")
+
+
+def group_deals(deals) -> list:
+    """Closed broker deals → one entry per symbol + side in this batch (split positions,
+    e.g. three EURUSD 0.01 sells, become ONE card). Volume-weighted open / close prices;
+    net = profit + commission + swap."""
+    from services.broker_feed import canon
+    groups = {}
+    for d in deals or []:
+        try:
+            sym = canon(d["symbol"])
+            side = str(d["side"]).upper()
+            vol = float(d.get("volume") or 0) or 0.01
+            g = groups.setdefault((sym, side), {"symbol": sym, "side": side, "vol": 0.0, "o": 0.0, "c": 0.0,
+                                                "net": 0.0, "tickets": [], "close_time": 0})
+            g["vol"] += vol
+            g["o"] += vol * float(d["open_price"])
+            g["c"] += vol * float(d["close_price"])
+            g["net"] += float(d.get("net") or 0)
+            g["tickets"].append(str(d["ticket"]))
+            g["close_time"] = max(g["close_time"], int(d.get("close_time") or 0))
+        except (KeyError, TypeError, ValueError):
+            continue
+    out = []
+    for g in groups.values():
+        out.append({"symbol": g["symbol"], "side": g["side"], "open": g["o"] / g["vol"],
+                    "close": g["c"] / g["vol"], "net": round(g["net"], 2), "lots": round(g["vol"], 2),
+                    "tickets": g["tickets"], "close_time": g["close_time"]})
+    return out
+
+
+async def post_from_deals(deals) -> dict:
+    """Flash cards from the trader's REAL broker closes (any source — sniper, other
+    signals, manual). Only net-profitable groups with positive pips; each ticket is
+    posted once ever (remembered in Neon)."""
+    if not FROM_DEALS:
+        return {"posted": 0, "reason": "FLASH_FROM_DEALS off"}
+    from services import data_store
+    seen, _ = await data_store.get("flash_tickets")
+    seen = list(seen or [])
+    fresh = [d for d in deals or [] if str(d.get("ticket")) not in set(seen)]
+    posted, skipped = [], []
+    for g in group_deals(fresh):
+        if g["net"] <= 0 or pips(g["symbol"], g["side"], g["open"], g["close"]) <= 0:
+            skipped.append({"symbol": g["symbol"], "side": g["side"], "why": "not a winning close"})
+            continue
+        when = dt.datetime.fromtimestamp(g["close_time"], dt.timezone.utc) if g["close_time"] else None
+        r = await post(g["symbol"], g["side"], g["open"], g["close"], when)
+        (posted if r.get("sent") else skipped).append({"symbol": g["symbol"], "side": g["side"],
+                                                       "pips": pips(g["symbol"], g["side"], g["open"], g["close"]),
+                                                       **({} if r.get("sent") else {"why": r.get("reason")})})
+    seen = (seen + [str(d.get("ticket")) for d in fresh])[-2000:]
+    await data_store.put("flash_tickets", seen)
+    return {"received": len(deals or []), "new": len(fresh), "posted": posted, "skipped": skipped}
