@@ -46,7 +46,8 @@ def jobs() -> List[Job]:
     hourly = [(P, "/intraday/scan"), (G, "/zconfluence/scan?notify=true"), (P, "/gold/monitor"),
               (P, "/gold/zones/digest?touch_only=true"), (P, "/gold/recon?armed_only=true"),
               (P, "/gold/retracement"), (P, "/gold/confirm?deploy=true"),
-              (P, "/gold/levels/refresh?interval=4h"), (P, "/gold/alerter/scan?notify=true")]
+              (P, "/gold/levels/refresh?interval=4h"), (P, "/gold/alerter/scan?notify=true"),
+              (P, "/sniper/scan?notify=true")]
     exec_token = config("EXECUTION_TOKEN", default=None)
     if exec_token:
         hourly.insert(1, (P, f"/execution/reconcile?token={exec_token}"))
@@ -159,7 +160,7 @@ import re as _re
 
 _ENTRY = _re.compile(r"execute=true|deploy=true|/stratops/deploy|/gold/scan|/gold/intraday|"
                      r"/gold/alerter|/swing/scan|/zconfluence|/cbdr/limits|/gold/prelondon|"
-                     r"/gold/recon|/candlerange/crt|/autoalert")
+                     r"/gold/recon|/candlerange/crt|/autoalert|/sniper/scan")
 _DIGEST = _re.compile(r"/alerts/session|/intraday/scan|/cbdr/alert|/candlerange/(scan|friday)|"
                       r"/gold/zones/digest|/gold/kingdom-report|/gold/dxy/flip|/usdjpy/scan|/yearly/alert")
 
