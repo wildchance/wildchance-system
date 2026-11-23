@@ -70,13 +70,18 @@ async def live_cases(limit: int = 500) -> List[Dict]:
                     ).scalars().all()
     except Exception:
         return []
+    import json
     out = []
     for r in rows:
+        try:
+            votes = json.loads(r.council) if getattr(r, "council", None) else {}
+        except ValueError:
+            votes = {}
         for role in (r.roles or "").split("|"):
             if role:
                 out.append({"date": (r.created_at or dt.datetime.now(dt.timezone.utc)).date(),
                             "symbol": r.symbol, "role": role, "outcome": r.status or "pending",
-                            "source": "live"})
+                            "source": "live", "votes": votes, "case_id": r.id})
     return out
 
 

@@ -287,8 +287,11 @@ def card(sym: str, s: Dict) -> str:
                                 + (f", {t['pct']}%" if "pct" in t else "")
                                 + (f", hist {t['hist']}%" if t.get("hist") is not None else "") + ")"
                                 for t in s["targets"])]
-    if s.get("trade_type") != "position" and any(t["name"] == "TP1" and t.get("level") == "1R"
-                                                 for t in s["targets"]):
+    if s.get("trade_type") == "position" and any(t.get("level") == "1R" for t in s["targets"]):
+        lines.append("🧭 Plan: ⅓ at TP1 (1R) → stop to breakeven · scale out at each P level · "
+                     "hold the rest for the yearly objective")
+    elif s.get("trade_type") != "position" and any(t["name"] == "TP1" and t.get("level") == "1R"
+                                                   for t in s["targets"]):
         sw = s.get("sweet") or {}
         z = sw.get("zone")
         lines.append("🧭 Plan: ⅓ at TP1 (1R) → stop to breakeven · ⅓ at TP2 (2R) · runner to TP3"
@@ -374,7 +377,9 @@ async def _record(sym: str, s: Dict) -> None:
         from database.db import AsyncSessionLocal
         from models.case_model import LiveCase
         async with AsyncSessionLocal() as db:
-            db.add(LiveCase(symbol=sym, side=s["side"], roles="|".join(s["roles"]),
+            import json
+            votes = {v["agent"]: v["vote"] for v in (s.get("council") or {}).get("votes") or []}
+            db.add(LiveCase(symbol=sym, side=s["side"], roles="|".join(s["roles"]), council=json.dumps(votes),
                             zone=f"{s['zone'][0]}-{s['zone'][1]}", entry=s["entry"], stop=s["stop"],
                             tp1=s["targets"][0]["price"], status="pending",
                             note=", ".join(s["members"])[:500]))
@@ -388,6 +393,13 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
     syms = symbols or [x.strip() for x in (DEFAULT_SYMBOLS + "," + STOCKS).split(",") if x.strip()]
     resolved = await resolve_pending()
     stats_all = await cl.all_cases()
+    from services import council as _cn                   # grade agents once per scan
+    seen, live = set(), []
+    for c in stats_all:                                   # one entry per live shot (not per role)
+        if c.get("source") == "live" and c.get("case_id") not in seen:
+            seen.add(c.get("case_id"))
+            live.append(c)
+    agent_scores = _cn.agent_scores(live)
     out, sent = [], []
     for sym in syms:
         r = await yc.run(sym)
@@ -467,6 +479,10 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
                                    f"is under {MIN_RR}R from entry")
             if not tps and ptps:                # only yearly objectives → a POSITION trade
                 tps, trade_type = ptps, "position"
+                # bank ⅓ at 1R and move the stop to breakeven before the long hold
+                one_r = sig["entry"] + (1 if c["side"] == "BUY" else -1) * abs(sig["entry"] - stop)
+                if abs(one_r - sig["entry"]) < abs(tps[0]["price"] - sig["entry"]):
+                    tps = [{"name": "TP1", "price": one_r, "rr": 1.0, "level": "1R"}] + tps
             stats = cl.score(stats_all, symbol=None)
             rs = cl.best_role(stats, row["roles"])
             weekly = await tg.weekly_profile(sym)
@@ -478,7 +494,8 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             if rs and rs["n"] >= 3 and rs["recent_rate"] < MIN_RATE:
                 g["reasons"].append(f"role {rs['role']} recent hit-rate {rs['recent_rate']:.0%} < {MIN_RATE:.0%}")
             from services import council as cn
-            cv = await cn.convene(sym, c["side"], yearly=r, role_stats=rs, trade_type=trade_type)
+            cv = await cn.convene(sym, c["side"], yearly=r, role_stats=rs, trade_type=trade_type,
+                                  scores=agent_scores)
             if cv["verdict"] != "GO":
                 g["reasons"].append(f"council {cv['verdict']}: " + (cv.get("need") or
                                     (f"veto {','.join(cv['veto'])}" if cv["veto"] else f"score {cv['score']}")))

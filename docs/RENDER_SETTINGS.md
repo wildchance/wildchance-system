@@ -73,6 +73,11 @@ Webhook URLs to paste into the providers:
 | `MIN_SL_GOLD_USD` | `3` | Gold minimum stop ($). |
 | `MIN_SL_BTC_USD` | `50` | BTC minimum stop ($). |
 | `BTC_CONTRACT_SIZE` | `1` | Coins per lot at your broker. |
+| `INDEX_USD_PER_POINT` | `1` | Index CFDs: $ per full point per 1.00 lot (pip = 0.1 point). |
+| `STOCK_LOT_SHARES` | `1` | Stock CFDs: shares per 1.00 lot (pip = $0.01). |
+| `AGENT_MUTE_BELOW` / `AGENT_MUTE_MIN_N` | `0.40` / `8` | A council agent right < 40 % of the time over ≥ 8 resolved live shots is muted. |
+| `REALISTIC_MIN_HIST` | `25` | Targets only as far as ≥ 25 % of years travelled. |
+| `SWING_HORIZON_DAYS` | `5` | Expected-move horizon for the TP3 sweet spot. |
 | `BLOCK_CBDR_FORMING` | `true` | No entries 14:00–20:00 NY. |
 | `WEEKLY_PRIOR_FALLBACK` | `true` | Mondays use last week's profile. |
 | `ZC_NOTIFY_GRADES` | `A` | Z-score cards sent (e.g. `A,B` for more). |

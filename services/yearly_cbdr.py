@@ -605,6 +605,13 @@ def card(r: Dict) -> str:
     if mg:
         lines.append(f"🧲 magnet: {mg['year']} mean {px(s, mg['mean'])} — crossed {mg['crosses']}× "
                      f"on weekly closes; price is {mg['side']}")
+    try:
+        from services.cycles import card_line
+        cl = card_line(r.get("cycles"))
+        if cl:
+            lines.append(cl)
+    except Exception:
+        pass
     h = r.get("history")
     if h:
         lines.append(f"📚 {h['years']}y history ({h['span']}): median run {h['median_up']:g} / "
@@ -695,6 +702,12 @@ async def run(symbol: str, years_back: int = YEARS_BACK) -> Dict:
     r = analyse(symbol, daily, years_back=years_back, extra_events=auto)
     if r.get("ok") and not r.get("history"):          # no owner CSV → free long-history base rates
         r["history"] = await auto_history(symbol)
+    if r.get("ok"):
+        try:
+            from services import cycles
+            r["cycles"] = cycles.read(daily)              # presidential + Hurst, no extra calls
+        except Exception:
+            pass
     annotate_reach(r)
     p = r.get("plan") if r.get("ok") else None
     if p and p.get("status") == "limit":

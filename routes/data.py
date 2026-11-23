@@ -65,3 +65,12 @@ async def refresh(part: str = Query("sentiment", pattern="^(sentiment|macro)$"))
 @router.get("/sentiment/{base}/{quote}")
 async def sentiment(base: str, quote: str):
     return df.news_sentiment(f"{base}{quote}") or {"score": None, "note": "no recent read — refresh runs 6-hourly"}
+
+
+@router.get("/cycles/{base}/{quote}")
+async def cycles_read(base: str, quote: str):
+    """Presidential-cycle year + Hurst cycle phases from free long history (rough, v1)."""
+    from services import cycles
+    bars, src = await df.daily_chain(f"{base.upper()}/{quote.upper()}", min_bars=262 * 5)
+    return {"symbol": f"{base.upper()}/{quote.upper()}", "source": src, "years_of_data": round(len(bars) / 262, 1),
+            **cycles.read(bars)} if bars else {"note": "no history available"}
