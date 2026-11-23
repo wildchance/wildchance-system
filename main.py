@@ -102,6 +102,7 @@ from routes.yearly import router as yearly_router
 from routes.sniper import router as sniper_router
 from routes.stocks import router as stocks_router
 from routes.flash import router as flash_router
+from routes.data import router as data_router
 from routes.macro import router as macro_router
 from routes.billing import router as billing_router
 from routes.members import router as members_router
@@ -335,6 +336,7 @@ app.include_router(yearly_router)
 app.include_router(sniper_router)
 app.include_router(stocks_router)
 app.include_router(flash_router)
+app.include_router(data_router)
 app.include_router(macro_router)
 app.include_router(billing_router)
 app.include_router(members_router)

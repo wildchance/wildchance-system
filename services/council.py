@@ -10,6 +10,7 @@ agent reads ONE intelligence source from cache and votes on a proposed side.
   structure  yearly CBDR: swing leg (OTE side) and the magnet-mean side
   history    case library: how the zone's roles have held recently
   macro      owner's regime / manual locks (BUY_ONLY / SELL_ONLY)
+  news       Alpha Vantage + MarketAux news sentiment (refreshed 6-hourly, cache only)
   mirofish   external MiroFish score when MIROFISH_BASE_URL is live (else abstains)
 
 Votes: +1 for the side, −1 against, 0 abstain. A LOCK (macro) against the side is a
@@ -90,6 +91,16 @@ def vote_macro(lock: Optional[str], side: str) -> Dict:
     return {**_v("macro", 1 if ok else -1, lock), "veto": not ok}
 
 
+def vote_news(n: Optional[Dict], side: str) -> Dict:
+    """Alpha Vantage + MarketAux news sentiment (−1..+1; AV calls ≥0.15 bullish)."""
+    if not n or n.get("score") is None:
+        return _v("news", 0, "no recent news read")
+    s = n["score"]
+    if abs(s) < 0.15:
+        return _v("news", 0, f"neutral {s:+.2f}")
+    return _v("news", 1 if (s > 0) == (side == "BUY") else -1, f"{s:+.2f} ({', '.join(n.get('sources') or {})})")
+
+
 def vote_mirofish(m: Optional[Dict], side: str) -> Dict:
     if not m or m.get("score") is None:
         return _v("mirofish", 0, "offline")
@@ -117,7 +128,14 @@ async def convene(symbol: str, side: str, yearly: Optional[Dict] = None,
     """Gather every agent's vote from cached intelligence (no paid calls)."""
     sym = symbol.upper().replace("/", "")
     pair = f"{sym[:3]}/{sym[3:6]}" if len(sym) == 6 and sym.isalpha() else symbol
-    cot_row = sent = wk = lock = mf = None
+    cot_row = sent = wk = lock = mf = news = None
+    try:
+        from services.data_feeds import news_sentiment
+        news = news_sentiment(symbol)
+        if news and sym.startswith("USD") and len(sym) == 6:
+            news = {**news, "score": -news["score"]}       # AV scores the quote currency (FOREX:JPY)
+    except Exception:
+        pass
     try:
         from services.wildchance_service import get_latest_feed
         feed = await get_latest_feed() or {}
@@ -153,7 +171,7 @@ async def convene(symbol: str, side: str, yearly: Optional[Dict] = None,
             yearly = None
     votes = [vote_cot(cot_row, side), vote_sentiment(sent, side), vote_weekly(wk, side),
              vote_structure(yearly, side), vote_history(role_stats), vote_macro(lock, side),
-             vote_mirofish(mf, side)]
+             vote_news(news, side), vote_mirofish(mf, side)]
     return {"symbol": symbol, "side": side, **decide(votes)}
 
 

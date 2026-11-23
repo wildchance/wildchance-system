@@ -130,7 +130,11 @@ def history_stats(symbol: str) -> Optional[Dict]:
                 except (TypeError, ValueError, KeyError):
                     continue
         _stats.update(mtime=m, rows=rows)
-    ys = _stats["rows"].get(_sym(symbol))
+    return summarise(_stats["rows"].get(_sym(symbol)))
+
+
+def summarise(ys: Optional[List[Dict]], source: str = "csv") -> Optional[Dict]:
+    """Base rates from per-year runs [{'year','up','down','close'}] (box units)."""
     if not ys or len(ys) < 5:
         return None
     n = len(ys)
@@ -145,7 +149,30 @@ def history_stats(symbol: str) -> Optional[Dict]:
             "median_up": med([y["up"] for y in ys]), "median_down": med([y["down"] for y in ys]),
             "pct_reach_up": reach_up, "pct_reach_down": reach_dn,
             "pct_close_above_box": round(100 * sum(y["close"] > 1 for y in ys) / n),
-            "pct_close_below_box": round(100 * sum(y["close"] < 0 for y in ys) / n)}
+            "pct_close_below_box": round(100 * sum(y["close"] < 0 for y in ys) / n), "source": source}
+
+
+_auto_hist: Dict[str, Dict] = {}
+
+
+async def auto_history(symbol: str) -> Optional[Dict]:
+    """Base rates computed from a free long-history feed (Stooq / Tiingo / Binance) —
+    no CSV export needed. Cached a week."""
+    import time as _t
+    hit = _auto_hist.get(_sym(symbol))
+    if hit and _t.time() - hit["_t"] < 7 * 86400:
+        return hit["r"]
+    try:
+        from services.data_feeds import daily_chain
+        from wildchance.history_import import yearly_rows
+        bars, src = await daily_chain(symbol, min_bars=262 * 6)
+    except Exception:
+        return None
+    ys = [{"year": r["year"], "up": r["peak_up"], "down": r["peak_down"], "close": r["close_pos"]}
+          for r in yearly_rows(bars) if r["complete"] and r["peak_up"] is not None]
+    res = summarise(ys, source=f"auto-{src}") if src else None
+    _auto_hist[_sym(symbol)] = {"r": res, "_t": _t.time()}
+    return res
 
 
 def box_for(symbol: str, daily: Sequence[DatedOHLC], year: int) -> Optional[Dict]:
@@ -565,6 +592,13 @@ async def run(symbol: str, years_back: int = YEARS_BACK) -> Dict:
             daily = await _yahoo_ohlc(symbol, "1day", n)
         except Exception:
             daily = []
+    if not daily:                       # free long-history feeds, healthiest first
+        try:
+            from services.data_feeds import daily_chain
+            daily, _src = await daily_chain(symbol)
+            daily = daily[-n:]
+        except Exception:
+            daily = []
     if not daily:                       # stocks: Polygon daily bars (POLYGON_API_KEY)
         try:
             from services.stocks_service import daily as poly_daily
@@ -583,6 +617,8 @@ async def run(symbol: str, years_back: int = YEARS_BACK) -> Dict:
         except Exception:
             auto = []
     r = analyse(symbol, daily, years_back=years_back, extra_events=auto)
+    if r.get("ok") and not r.get("history"):          # no owner CSV → free long-history base rates
+        r["history"] = await auto_history(symbol)
     p = r.get("plan") if r.get("ok") else None
     if p and p.get("status") == "limit":
         weekly = await tg.weekly_profile(symbol)
