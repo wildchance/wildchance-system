@@ -84,3 +84,14 @@ def test_manual_box_overrides(tmp_path, monkeypatch):
     assert yc.box_for("EUR/USD", [], 2024) is None          # blank row → computed (none here)
     r = yc.analyse("EUR/USD", EU, today=D(2026, 11, 23), years_back=3)
     assert next(y for y in r["years"] if y["year"] == 2025)["source"] == "tv-oanda"
+
+
+def test_magnet_mean_counts_weekly_crosses():
+    box = {"year": 2020, "low": 1.0, "high": 1.2, "range": 0.2}
+    bars, d, i = [], D(2020, 4, 6), 0
+    while d < D(2021, 4, 1):                    # alternate above/below 1.10 every week
+        c = 1.12 if (i // 5) % 2 else 1.08
+        if d.weekday() < 5:
+            bars.append((d, c, c, c, c)); i += 1
+        d += dt.timedelta(days=1)
+    assert yc.mid_crosses(box, bars) >= 40

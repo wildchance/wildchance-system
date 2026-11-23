@@ -31,7 +31,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from decouple import config
 
 DatedOHLC = Tuple[dt.date, float, float, float, float]
-YEARS_BACK = int(config("YEARLY_CBDR_YEARS", default="4"))
+YEARS_BACK = int(config("YEARLY_CBDR_YEARS", default="7"))
 OTE_LOOKBACK = int(config("YEARLY_OTE_LOOKBACK_BARS", default="520"))
 DEVS = [x / 2 for x in range(-8, 9)]                   # −4 … +4 (TradingView fib-extension labels)
 INTERNAL = [0.236, 0.382, 0.5, 0.618, 0.705, 0.786]
@@ -177,6 +177,21 @@ def peak(box: Dict, daily: Sequence[DatedOHLC]) -> Dict:
             "up_raw": round(up, 2), "down_raw": round(dn, 2)}
 
 
+def mid_crosses(box: Dict, daily: Sequence[DatedOHLC]) -> int:
+    """Weekly closes crossing the box mean (0.5) since the box closed — the owner's
+    'price oscillates across the 2020 mean' read: the most-crossed mean is the magnet."""
+    mid = level(box, 0.5)
+    after = [b for b in daily if b[0] > dt.date(box["year"], 3, 31)]
+    weekly, seen = [], set()
+    for b in reversed(after):                                   # last close of each ISO week
+        wk = b[0].isocalendar()[:2]
+        if wk not in seen:
+            seen.add(wk)
+            weekly.append(b[4])
+    sides = [c > mid for c in reversed(weekly)]
+    return sum(1 for a, b in zip(sides, sides[1:]) if a != b)
+
+
 def ote(daily: Sequence[DatedOHLC], lookback: int = OTE_LOOKBACK) -> Optional[Dict]:
     bars = list(daily)[-lookback:]
     if len(bars) < 20:
@@ -239,9 +254,11 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
         pos = position(b, price)
         years.append({"year": b["year"], "source": b.get("source"), "box_low": _r(symbol, b["low"]), "box_high": _r(symbol, b["high"]),
                       "position": round(pos, 2), "position_dev": label(round(pos * 2) / 2),
-                      "peak": peak(b, daily),
+                      "peak": peak(b, daily), "mean": _r(symbol, level(b, 0.5)),
+                      "mean_crosses": mid_crosses(b, daily),
                       "levels": {label(k): _r(symbol, level(b, k)) for k in DEVS},
                       "internal": {f"{f:g}": _r(symbol, level(b, f)) for f in INTERNAL}})
+    magnet = max(years, key=lambda y: y["mean_crosses"]) if years else None
     control = next((y for y in reversed(years) if -4 <= y["position"] <= 4), None)
     levels = all_levels(boxes)
     cl = clusters(levels, tolerance(symbol))
@@ -255,6 +272,9 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
     res = {"symbol": symbol, "ok": True, "price": _r(symbol, price), "as_of": daily[-1][0].isoformat(),
            "forming": today.year if today <= dt.date(today.year, 3, 31) else None,
            "years": years, "control": control and control["year"],
+           "magnet": magnet and magnet["mean_crosses"] >= 6 and
+           {"year": magnet["year"], "mean": magnet["mean"], "crosses": magnet["mean_crosses"],
+            "side": "above" if price > magnet["mean"] else "below"},
            "clusters": cl,
            "ote": o and {k: (_r(symbol, v) if isinstance(v, float) else v) for k, v in o.items()},
            "plan": plan(symbol, price, levels, cl, o),
@@ -320,6 +340,10 @@ def card(r: Dict) -> str:
         src = " ✍️" if y.get("source") not in (None, "computed") else ""
         lines.append(f"`{y['year']}`{src} box {px(s, y['box_low'])}–{px(s, y['box_high'])} · "
                      f"now at {y['position_dev']}{pk_txt}")
+    mg = r.get("magnet")
+    if mg:
+        lines.append(f"🧲 magnet: {mg['year']} mean {px(s, mg['mean'])} — crossed {mg['crosses']}× "
+                     f"on weekly closes; price is {mg['side']}")
     h = r.get("history")
     if h:
         lines.append(f"📚 {h['years']}y history ({h['span']}): median run {h['median_up']:g} / "
