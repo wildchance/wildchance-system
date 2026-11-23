@@ -41,12 +41,16 @@ def _sym(symbol: str) -> str:
     return symbol.upper().replace("/", "")
 
 
-CRYPTO = ("BTC", "ETH", "SOL", "XRP", "LTC", "BNB")
+CRYPTO = ("BTC", "ETH", "SOL", "XRP", "LTC", "BNB", "DOGE", "ADA")
+# pegged / tight-band pairs: the FX default (30 pips) would swallow the whole band
+TIGHT_TOL = {"USDHKD": 0.0005, "USDCNH": 0.0030, "USDSAR": 0.0003, "USDAED": 0.0003}
 
 
 def tolerance(symbol: str, price: Optional[float] = None) -> float:
     """Cluster width: FX 30 pips, JPY 0.30, gold $15; indices/crypto 0.3% of price."""
     s = _sym(symbol)
+    if s[:6] in TIGHT_TOL:
+        return TIGHT_TOL[s[:6]]
     if s.startswith(CRYPTO) or not (s.startswith(("XAU", "GOLD")) or s[:6].isalpha()):
         return 0.003 * price if price else 0.0
     if s.startswith(("XAU", "GOLD")):
@@ -60,6 +64,8 @@ def tolerance(symbol: str, price: Optional[float] = None) -> float:
 
 def _r(symbol: str, v: float) -> float:
     s = _sym(symbol)
+    if s.startswith(CRYPTO) and abs(v) < 1000:          # DOGE 0.0553, ADA 0.71, SOL 140
+        return round(v, 6 if abs(v) < 1 else 4)
     return round(v, 2 if s.startswith(("XAU", "GOLD") + CRYPTO) or len(s) < 6 or not s[:6].isalpha()
                  else 3 if s[3:6] == "JPY" else 5)
 

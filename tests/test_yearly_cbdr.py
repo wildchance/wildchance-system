@@ -154,3 +154,12 @@ def test_inverted_anchor_and_key_levels():
 
 def test_crypto_tolerance_is_relative():
     assert yc.tolerance("BTC/USD", 60000) == 180.0
+
+
+def test_crypto_precision_and_pegged_tolerance():
+    from routes.cbdr import px
+    assert yc._r("DOGE/USD", 0.0553221) == 0.055322 and px("DOGE/USD", 0.0553221) == "0.055322"
+    assert px("ETH/USD", 1719.6) == "1719.60" and yc._r("BTC/USD", 61629.494) == 61629.49
+    assert yc.tolerance("USD/HKD", 7.84) == 0.0005          # the whole peg band is only 0.10
+    eth = yc.box_for("ETH/USD", [], 2021)
+    assert abs(yc.level(eth, 3.5) - 4919.71) < 0.05           # owner's label
