@@ -171,6 +171,12 @@ async def auto_history(symbol: str) -> Optional[Dict]:
         from services.data_feeds import daily_chain
         from wildchance.history_import import yearly_rows
         bars, src = await daily_chain(symbol, min_bars=262 * 6)
+        proxy = INDEX_PROXY.get(_sym(symbol))
+        if len(bars) < 262 * 6 and proxy:
+            # base rates are in BOX UNITS (scale-free) → the tracking ETF gives the same read
+            pbars, psrc = await daily_chain(proxy, min_bars=262 * 6)
+            if len(pbars) > len(bars):
+                bars, src = pbars, f"{psrc} ({proxy} proxy)"
     except Exception:
         return None
     ys = [{"year": r["year"], "up": r["peak_up"], "down": r["peak_down"], "close": r["close_pos"]}
@@ -181,6 +187,9 @@ async def auto_history(symbol: str) -> Optional[Dict]:
         await data_store.put(f"baserates:{_sym(symbol)}", res)
     return res
 
+
+INDEX_PROXY = {"NAS100": "QQQ", "NDX": "QQQ", "US30": "DIA", "DJI": "DIA",
+               "SPX500": "SPY", "SPX": "SPY", "US500": "SPY"}
 
 UP_STEPS = (1.5, 2.0, 2.5, 3.0, 4.0)
 DOWN_STEPS = (-0.5, -1.0, -1.5, -2.0, -3.0)
