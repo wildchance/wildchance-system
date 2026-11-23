@@ -191,6 +191,26 @@ async def auto_history(symbol: str) -> Optional[Dict]:
 INDEX_PROXY = {"NAS100": "QQQ", "NDX": "QQQ", "US30": "DIA", "DJI": "DIA",
                "SPX500": "SPY", "SPX": "SPY", "US500": "SPY"}
 
+def annotate_reach(r: Dict, min_hist: int = 25) -> None:
+    """Yearly plan: tag every target / objective with how often history reached it,
+    and drop TARGETS below ``min_hist`` % (objectives stay, labelled as long shots)."""
+    p, hist, box = r.get("plan"), r.get("history"), (r.get("years") or [None])[-1]
+    if not (p and hist and box and p.get("status") == "limit"):
+        return
+    rng = box["box_high"] - box["box_low"]
+    if not rng:
+        return
+    k_of = lambda price: (price - box["box_low"]) / rng          # noqa: E731
+    for t in p.get("targets") or []:
+        t["hist"] = reach_pct(hist, k_of(t["price"]))
+    for o in p.get("objectives") or []:
+        o["hist"] = reach_pct(hist, k_of(o["price"]))
+    kept = [t for t in p.get("targets") or [] if t["hist"] is None or t["hist"] >= min_hist]
+    if kept != p.get("targets"):
+        p["trimmed"] = [t["name"] for t in p["targets"] if t not in kept]
+        p["targets"] = kept
+
+
 UP_STEPS = (1.5, 2.0, 2.5, 3.0, 4.0)
 DOWN_STEPS = (-0.5, -1.0, -1.5, -2.0, -3.0)
 
@@ -608,11 +628,15 @@ def card(r: Dict) -> str:
     p = r.get("plan")
     if p and p.get("status") == "limit":
         lines.append(f"\n🎯 *{p['side']} LIMIT* {px(s, p['entry'])} · SL {px(s, p['stop'])}")
-        lines.append("   " + " · ".join(f"{t['name']} {px(s, t['price'])} ({t['level']}, {t['rr']}R)"
+        lines.append("   " + " · ".join(f"{t['name']} {px(s, t['price'])} ({t['level']}, {t['rr']}R"
+                                         + (f", hist {t['hist']}%" if t.get("hist") is not None else "") + ")"
                                          for t in p["targets"]))
+        if p.get("trimmed"):
+            lines.append(f"   _trimmed {', '.join(p['trimmed'])} — reached in < 25% of years_")
         if p.get("objectives"):
-            lines.append("   yearly objective: " + " · ".join(f"{o['level']} {px(s, o['price'])}"
-                                                            for o in p["objectives"]))
+            lines.append("   yearly objective: " + " · ".join(
+                f"{o['level']} {px(s, o['price'])}" + (f" (hist {o['hist']}%)" if o.get("hist") is not None else "")
+                for o in p["objectives"]))
         try:
             from propfirm.target_lots import card_lines
             lines += card_lines(s, p["entry"], p["stop"], p["targets"])
@@ -671,6 +695,7 @@ async def run(symbol: str, years_back: int = YEARS_BACK) -> Dict:
     r = analyse(symbol, daily, years_back=years_back, extra_events=auto)
     if r.get("ok") and not r.get("history"):          # no owner CSV → free long-history base rates
         r["history"] = await auto_history(symbol)
+    annotate_reach(r)
     p = r.get("plan") if r.get("ok") else None
     if p and p.get("status") == "limit":
         weekly = await tg.weekly_profile(symbol)

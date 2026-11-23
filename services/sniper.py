@@ -32,7 +32,8 @@ LOOKBACK = int(config("SNIPER_LOOKBACK_H", default="12"))
 DEFAULT_SYMBOLS = str(config("SNIPER_SYMBOLS", default="EUR/USD,GBP/USD,USD/JPY,XAU/USD,BTC/USD"))
 STOCKS = str(config("SNIPER_STOCKS", default="NVDA"))           # US stocks (TwelveData / Polygon)
 ENTRY_TFS = tuple(x.strip() for x in str(config("SNIPER_ENTRY_TFS", default="1h,4h")).split(","))
-POSITION_MIN_HIST = int(config("POSITION_MIN_HIST_PCT", default="15"))   # P1 must be reached ≥15 % of years
+POSITION_MIN_HIST = int(config("POSITION_MIN_HIST_PCT", default="15"))   # (kept for compatibility)
+REALISTIC_MIN_HIST = int(config("REALISTIC_MIN_HIST", default="25"))   # aim only as far as ≥25 % of years go
 MAX_TARGET_PCT = float(config("SNIPER_MAX_TARGET_PCT", default="0.12"))   # swing horizon;
 #   anything further is a POSITION target from the yearly CBDR ranges (position_targets)
 
@@ -200,6 +201,33 @@ def position_targets(r: Dict, side: str, entry: float, stop: float, n: int = 3) 
     return out
 
 
+def realistic_cap(r: Dict, side: str, min_hist: int = None) -> Optional[Dict]:
+    """The furthest yearly level history says is REALISTIC: the largest box multiple
+    reached in ≥ min_hist % of years, priced on the latest yearly box. None without
+    base rates. EUR/USD up → 1.5 (33 %), gold up → 3 (28 %), USD/JPY down → −0.5."""
+    from services.yearly_cbdr import UP_STEPS, DOWN_STEPS
+    min_hist = REALISTIC_MIN_HIST if min_hist is None else min_hist
+    hist = r.get("history")
+    box = (r.get("years") or [None])[-1]
+    if not hist or not box:
+        return None
+    if side == "BUY":
+        table, steps = hist.get("pct_reach_up") or {}, UP_STEPS
+    else:
+        table, steps = hist.get("pct_reach_down") or {}, DOWN_STEPS
+    ok = [t for t in steps if (table.get(f"{t:g}") or 0) >= min_hist]
+    k = (max(ok) if side == "BUY" else min(ok)) if ok else (1.0 if side == "BUY" else 0.0)
+    pct = table.get(f"{k:g}", 100)
+    rng = box["box_high"] - box["box_low"]
+    return {"k": k, "price": box["box_low"] + k * rng, "hist": pct, "year": box["year"]}
+
+
+def apply_cap(targets: List[Dict], cap: Optional[Dict], side: str) -> List[Dict]:
+    if not cap:
+        return targets
+    return [t for t in targets if (t["price"] <= cap["price"] if side == "BUY" else t["price"] >= cap["price"])]
+
+
 def targets_from(r: Dict, side: str, entry: float, stop: float) -> List[Dict]:
     from services.trade_gate import MIN_RR
     risk = abs(entry - stop)
@@ -258,6 +286,10 @@ def card(sym: str, s: Dict) -> str:
                                 + (f", {t['pct']}%" if "pct" in t else "")
                                 + (f", hist {t['hist']}%" if t.get("hist") is not None else "") + ")"
                                 for t in s["targets"])]
+    if s.get("cap"):
+        cp = s["cap"]
+        lines.append(f"📏 Realistic reach: {cp['year']} box {cp['k']:g} = {px(sym, cp['price'])} "
+                     f"(reached in {cp['hist']}% of years) — targets beyond it trimmed")
     if s.get("trade_type") == "position":
         lines.append("   _yearly CBDR objectives — a long-term hold; scale out at each P level_")
     elif s.get("position_targets"):
@@ -385,15 +417,29 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             tps = targets_from(r, c["side"], sig["entry"], stop)
             ptps = position_targets(r, c["side"], sig["entry"], stop)
             trade_type = "swing"
+            # NEARER TARGETS: aim only as far as history usually travels (owner: still
+            # trade the setup — just don't target what almost never happens)
+            cap = realistic_cap(r, c["side"])
+            tps = apply_cap(tps, cap, c["side"])
+            ptps = apply_cap(ptps, cap, c["side"])
+            held_reason = None
+            if not tps and not ptps and cap:
+                from services.trade_gate import MIN_RR
+                move = (cap["price"] - sig["entry"]) * (1 if c["side"] == "BUY" else -1)
+                risk = abs(sig["entry"] - stop)
+                if move > 0 and risk and move / risk >= MIN_RR:
+                    t = {"name": "TP1", "price": cap["price"], "rr": round(move / risk, 2),
+                         "pct": round(100 * move / sig["entry"], 1), "hist": cap["hist"],
+                         "level": f"{cap['year']} {cap['k']:g} (realistic cap)"}
+                    if t["pct"] <= MAX_TARGET_PCT * 100:
+                        tps = [t]
+                    else:
+                        ptps = [{**t, "name": "P1"}]
+                else:
+                    held_reason = (f"realistic cap {cap['year']} {cap['k']:g} (hist {cap['hist']}%) "
+                                   f"is under {MIN_RR}R from entry")
             if not tps and ptps:                # only yearly objectives → a POSITION trade
                 tps, trade_type = ptps, "position"
-            if trade_type == "position" and tps[0].get("hist") is not None \
-                    and tps[0]["hist"] < POSITION_MIN_HIST:
-                # history says P1 is rarely reached → keep it a tactical trade, not a hold
-                held_reason = (f"position P1 reached in only {tps[0]['hist']}% of years "
-                               f"(< {POSITION_MIN_HIST}%)")
-            else:
-                held_reason = None
             stats = cl.score(stats_all, symbol=None)
             rs = cl.best_role(stats, row["roles"])
             weekly = await tg.weekly_profile(sym)
@@ -415,7 +461,7 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             if fit:
                 g["reasons"].append(fit)
             g["allow"] = not g["reasons"]
-            row.update(trade_type=trade_type,
+            row.update(trade_type=trade_type, cap=cap,
                        position_targets=ptps if trade_type == "swing" else [],
                        entry=sig["entry"], extreme=sig["extreme"], stop=stop, targets=tps,
                        role_stats=rs, gate=g, council=cv)

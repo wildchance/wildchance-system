@@ -92,3 +92,38 @@ def test_index_base_rates_fall_back_to_etf_proxy(monkeypatch):
     finally:
         loop.close()
     assert r and r["source"] == "auto-twelvedata (QQQ proxy)" and r["years"] >= 5
+
+
+EURUSD = {"years": 18, "median_up": 1.27, "pct_reach_up": {"1.5": 33, "2": 17, "2.5": 6, "3": 6, "4": 0},
+          "pct_reach_down": {"-0.5": 56, "-1": 33, "-1.5": 17, "-2": 11, "-3": 6},
+          "pct_close_above_box": 33, "pct_close_below_box": 44}
+
+
+def test_realistic_caps_from_live_base_rates():
+    from services import sniper
+    eu = {"history": EURUSD, "years": [{"year": 2026, "box_low": 1.14162, "box_high": 1.20369}]}
+    up, down = sniper.realistic_cap(eu, "BUY"), sniper.realistic_cap(eu, "SELL")
+    assert up["k"] == 1.5 and up["hist"] == 33 and abs(up["price"] - 1.234725) < 1e-6
+    assert down["k"] == -1.0 and down["hist"] == 33
+    gold = {"history": GOLD, "years": [{"year": 2026, "box_low": 4318.18, "box_high": 5430.54}]}
+    assert sniper.realistic_cap(gold, "BUY")["k"] == 3.0                    # 28 % ≥ 25 %
+    assert sniper.realistic_cap(gold, "SELL")["k"] == -0.5                  # 28 %
+    assert sniper.realistic_cap({"history": None, "years": []}, "BUY") is None
+
+
+def test_apply_cap_trims_far_targets():
+    from services import sniper
+    cap = {"price": 1.2347}
+    t = [{"price": 1.20}, {"price": 1.23}, {"price": 1.30}]
+    assert [x["price"] for x in sniper.apply_cap(t, cap, "BUY")] == [1.20, 1.23]
+    assert [x["price"] for x in sniper.apply_cap(t, {"price": 1.21}, "SELL")] == [1.23, 1.30]
+    assert sniper.apply_cap(t, None, "BUY") == t
+
+
+def test_yearly_plan_trims_unlikely_targets():
+    r = {"history": EURUSD, "years": [{"year": 2026, "box_low": 1.14162, "box_high": 1.20369}],
+         "plan": {"status": "limit", "targets": [{"name": "TP1", "price": 1.21}, {"name": "TP2", "price": 1.27}],
+                  "objectives": [{"level": "2025 4", "price": 1.39}]}}
+    yc.annotate_reach(r)
+    assert [t["name"] for t in r["plan"]["targets"]] == ["TP1"] and r["plan"]["trimmed"] == ["TP2"]
+    assert r["plan"]["objectives"][0]["hist"] == 0                     # EUR/USD box 4: 0 % of years
