@@ -41,10 +41,13 @@ def _sym(symbol: str) -> str:
     return symbol.upper().replace("/", "")
 
 
+CRYPTO = ("BTC", "ETH", "SOL", "XRP", "LTC", "BNB")
+
+
 def tolerance(symbol: str, price: Optional[float] = None) -> float:
     """Cluster width: FX 30 pips, JPY 0.30, gold $15; indices/crypto 0.3% of price."""
     s = _sym(symbol)
-    if not (s.startswith(("XAU", "GOLD")) or s[:6].isalpha()):
+    if s.startswith(CRYPTO) or not (s.startswith(("XAU", "GOLD")) or s[:6].isalpha()):
         return 0.003 * price if price else 0.0
     if s.startswith(("XAU", "GOLD")):
         return 15.0
@@ -236,7 +239,7 @@ def event_boxes(symbol: str, today: dt.date, max_days: int = EVENT_MAX_DAYS) -> 
                 lo, hi = float(r["low"]), float(r["high"])
             except (KeyError, TypeError, ValueError):
                 continue
-            if hi > lo and 0 <= (today - d).days <= max_days:
+            if hi != lo and 0 <= (today - d).days <= max_days:
                 out.append({"year": f"{r.get('label') or 'event'} {d:%b-%d}", "date": d.isoformat(),
                             "low": lo, "high": hi, "range": hi - lo, "source": r.get("source") or "manual"})
     return out
@@ -304,6 +307,27 @@ def ladder_name(k: float) -> Optional[str]:
 ANCHORS_CSV = str(config("ANCHOR_BOXES_CSV", default="data/anchor_boxes.csv"))
 
 
+KEYS_CSV = str(config("KEY_LEVELS_CSV", default="data/key_levels.csv"))
+
+
+def key_levels(symbol: str) -> List[Dict]:
+    """Single key levels (12m / 6m / 3m order blocks, origins, all-time extremes)
+    from data/key_levels.csv — annotated onto the clusters they sit in."""
+    import csv
+    import os
+    if not os.path.exists(KEYS_CSV):
+        return []
+    out = []
+    with open(KEYS_CSV, newline="") as f:
+        for r in csv.DictReader(f):
+            try:
+                if _sym(r["symbol"]) == _sym(symbol):
+                    out.append({"label": r["label"], "price": float(r["price"])})
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
 def anchor_boxes(symbol: str) -> List[Dict]:
     """Long-lived anchor boxes (multi-decade / cycle / swing consolidations) that never
     expire, e.g. EUR/USD's monthly master box (2008 top = 4, 2022 low = −4) or gold's
@@ -321,7 +345,7 @@ def anchor_boxes(symbol: str) -> List[Dict]:
                 lo, hi = float(r["low"]), float(r["high"])
             except (KeyError, TypeError, ValueError):
                 continue
-            if hi > lo:
+            if hi != lo:          # 'low' = the fib's 0, 'high' = its 1 — inverted fibs allowed
                 out.append({"year": f"⚓{r.get('label') or 'anchor'}", "low": lo, "high": hi,
                             "range": hi - lo, "source": r.get("source") or "manual", "anchor": True})
     return out
@@ -377,14 +401,18 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
                       "internal": {f"{f:g}": _r(symbol, level(b, f)) for f in INTERNAL}})
     magnet = max(years, key=lambda y: y["mean_crosses"]) if years else None
     control = next((y for y in reversed(years) if -4 <= y["position"] <= 4), None)
-    events = event_boxes(symbol, today) + anchor_boxes(symbol)
+    events = [e for e in event_boxes(symbol, today) + anchor_boxes(symbol)   # skip a box already
+              if not any(abs(e["low"] - b["low"]) <= 1e-6 * abs(b["low"] or 1)   # loaded as a year
+                         and abs(e["high"] - b["high"]) <= 1e-6 * abs(b["high"] or 1) for b in boxes)]
     levels = all_levels(boxes + events)
     cl = clusters(levels, tolerance(symbol, price))
     o = ote(daily)
     ipda = ipda_levels(daily)
+    keys = key_levels(symbol)
     for c in cl:
         t0 = tolerance(symbol, price)
         c["ipda"] = [x["label"] for x in ipda if c["low"] - t0 <= x["price"] <= c["high"] + t0]
+        c["keys"] = [x["label"] for x in keys if c["low"] - t0 <= x["price"] <= c["high"] + t0]
         t = tolerance(symbol, price)        # overlap with the OTE (± tolerance) counts as golden
         c["in_ote"] = bool(o and c["low"] <= o["zone_top"] + t and c["high"] >= o["zone_bottom"] - t)
         c["distance"] = _r(symbol, c["mid"] - price)
@@ -489,7 +517,8 @@ def card(r: Dict) -> str:
     for c in near:
         lines.append(f"{'✨' if c['in_ote'] else '•'} {px(s, c['low'])}–{px(s, c['high'])}: "
                      + ", ".join(c["members"])
-                     + (f" + IPDA {', '.join(c['ipda'])}" if c.get("ipda") else ""))
+                     + (f" + IPDA {', '.join(c['ipda'])}" if c.get("ipda") else "")
+                     + (f" + 🔑 {', '.join(c['keys'])}" if c.get("keys") else ""))
     p = r.get("plan")
     if p and p.get("status") == "limit":
         lines.append(f"\n🎯 *{p['side']} LIMIT* {px(s, p['entry'])} · SL {px(s, p['stop'])}")

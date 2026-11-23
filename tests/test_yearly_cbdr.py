@@ -141,3 +141,16 @@ def test_anchor_boxes_master_levels():
 def test_prev_week_month_levels():
     labels = [x["label"] for x in yc.ipda_levels(EU)]
     assert {"now prev week high", "now prev month low", "now 3-month high"} <= set(labels)
+
+
+def test_inverted_anchor_and_key_levels():
+    eu = {b["year"]: b for b in yc.anchor_boxes("EUR/USD")}
+    inv = eu["⚓2009 top fib (inverted)"]
+    assert inv["range"] < 0 and abs(yc.level(inv, 2) - 1.07077) < 2e-4     # owner's '2 (1.07077)'
+    assert abs(yc.position(inv, 1.07077) - 2) < 0.01
+    keys = yc.key_levels("DXY")
+    assert any(k["label"].startswith("12m ob + origin") for k in keys)
+
+
+def test_crypto_tolerance_is_relative():
+    assert yc.tolerance("BTC/USD", 60000) == 180.0

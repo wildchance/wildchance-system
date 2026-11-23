@@ -1,3 +1,4 @@
 symbol,date,label,low,high,source
 XAU/USD,2026-09-16,FOMC hike,4252.927,4359.772,manual-tv-oanda-4h
 XAU/USD,2026-10-28,FOMC hold,4033.198,4075.173,manual-tv-oanda-4h
+USD/JPY,2026-11-13,Nov-13 4h box,159.567,159.958,owner-4h-oanda
