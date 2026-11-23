@@ -102,3 +102,6 @@ date,symbol,anchor,level,role,price,side,outcome,source,note
 1985-02-26,GBP/USD,1972 top fib B (inverted),4,extreme 3 · TP4,1.0566,BUY,held,owner-3M-ice,1985 low 1.0502 (A 2 = 1.0490)
 2008-07-11,USOIL,origin box O1 + O2 2,4,extreme 3 · TP4,147.69,SELL,held,owner-3M-tvc,2008 top 147.27 (O2 2 = 147.20)
 2026-01-29,XAU/USD,origin box G1,2,equilibrium,5593.8,SELL,held,owner-3M-ice,ATH 5598.75; G2 4 = 5565.4 same zone
+2021-11-10,ETH/USD,2021 Q1 box,3.5,extreme 2 · TP3,4919.71,SELL,held,owner-1W-oanda,2021 ATH ~4868 then -80%
+2025-08-24,ETH/USD,2021 Q1 box,3.5,extreme 2 · TP3,4919.71,SELL,held,owner-1W-oanda,2025 high ~4956 rejected at the same 2021 level
+2024-12-08,DOGE/USD,2024 Q1 box,3,extreme 1 · TP2,0.506797,SELL,held,owner-1W-crypto,Dec-2024 high ~0.484 front-ran 3 then fell

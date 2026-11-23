@@ -50,3 +50,10 @@ USOIL,74.16,12m ob,owner-3M-tvc
 USOIL,61.12,12m ob,owner-3M-tvc
 USOIL,53.85,3m ob,owner-3M-tvc
 USOIL,42.62,12m ob wick,owner-3M-tvc
+USD/HKD,7.85000,HKMA weak-side peg (convertibility),hkma
+USD/HKD,7.75000,HKMA strong-side peg (convertibility),hkma
+ETH/USD,1431.30,owner level,owner-1W-oanda
+ETH/USD,1011.30,owner level,owner-1W-oanda
+ETH/USD,863.54,owner level,owner-1W-oanda
+DOGE/USD,0.050422,owner level,owner-1W-crypto
+DOGE/USD,0.031892,owner level,owner-1W-crypto
