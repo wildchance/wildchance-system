@@ -214,6 +214,41 @@ def ote(daily: Sequence[DatedOHLC], lookback: int = OTE_LOOKBACK) -> Optional[Di
             "zone_bottom": lo + 0.618 * rng, "sweet": lo + 0.705 * rng, "zone_top": lo + 0.786 * rng}
 
 
+EVENTS_CSV = str(config("EVENT_BOXES_CSV", default="data/event_boxes.csv"))
+EVENT_MAX_DAYS = int(config("EVENT_BOX_MAX_DAYS", default="120"))
+
+
+def event_boxes(symbol: str, today: dt.date, max_days: int = EVENT_MAX_DAYS) -> List[Dict]:
+    """Event-candle boxes (FOMC decision day etc.) from data/event_boxes.csv — the
+    owner's gold read: price reversed at the −3.5 of BOTH the Sep-16 and Oct-28 2026
+    FOMC boxes, then topped at the Oct box's 2.5. Recent ones join the cluster map."""
+    import csv
+    import os
+    if not os.path.exists(EVENTS_CSV):
+        return []
+    out = []
+    with open(EVENTS_CSV, newline="") as f:
+        for r in csv.DictReader(f):
+            try:
+                if _sym(r["symbol"]) != _sym(symbol):
+                    continue
+                d = dt.date.fromisoformat(r["date"])
+                lo, hi = float(r["low"]), float(r["high"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if hi > lo and 0 <= (today - d).days <= max_days:
+                out.append({"year": f"{r.get('label') or 'event'} {d:%b-%d}", "date": d.isoformat(),
+                            "low": lo, "high": hi, "range": hi - lo, "source": r.get("source") or "manual"})
+    return out
+
+
+def ladder_name(k: float) -> Optional[str]:
+    """Owner's target names by distance beyond the box edge: 1.5 TP1, 2 TP2/extreme 1,
+    2.5 TP3/extreme 2, 3 TP4/extreme 3 (i.e. labels 2.5/3/3.5/4 and −1.5/−2/−2.5/−3)."""
+    d = k - 1 if k > 1 else -k if k < 0 else 0
+    return {1.5: "TP1", 2.0: "TP2 · extreme 1", 2.5: "TP3 · extreme 2", 3.0: "TP4 · extreme 3"}.get(d)
+
+
 def all_levels(boxes: List[Dict]) -> List[Dict]:
     out = []
     for b in boxes:
@@ -223,10 +258,11 @@ def all_levels(boxes: List[Dict]) -> List[Dict]:
 
 
 def clusters(levels: List[Dict], tol: float) -> List[Dict]:
-    """Groups of levels from ≥2 different years within ``tol`` of each other."""
+    """Groups of levels from ≥2 different years: chained within ``tol`` of the
+    previous level, the whole group at most 1.5 × tol wide."""
     out, cur = [], []
     for lv in levels:
-        if cur and lv["price"] - cur[0]["price"] > tol:
+        if cur and (lv["price"] - cur[-1]["price"] > tol or lv["price"] - cur[0]["price"] > 1.5 * tol):
             if len({x["year"] for x in cur}) >= 2:
                 out.append(cur)
             cur = []
@@ -236,7 +272,7 @@ def clusters(levels: List[Dict], tol: float) -> List[Dict]:
     return [{"low": min(x["price"] for x in c), "high": max(x["price"] for x in c),
              "mid": sum(x["price"] for x in c) / len(c),
              "members": [f"{x['year']} {x['dev']}" for x in c],
-             "years": sorted({x["year"] for x in c})} for c in out]
+             "years": sorted({x["year"] for x in c}, key=str)} for c in out]
 
 
 def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = None,
@@ -263,7 +299,8 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
                       "internal": {f"{f:g}": _r(symbol, level(b, f)) for f in INTERNAL}})
     magnet = max(years, key=lambda y: y["mean_crosses"]) if years else None
     control = next((y for y in reversed(years) if -4 <= y["position"] <= 4), None)
-    levels = all_levels(boxes)
+    events = event_boxes(symbol, today)
+    levels = all_levels(boxes + events)
     cl = clusters(levels, tolerance(symbol, price))
     o = ote(daily)
     for c in cl:
@@ -275,6 +312,9 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
     res = {"symbol": symbol, "ok": True, "price": _r(symbol, price), "as_of": daily[-1][0].isoformat(),
            "forming": today.year if today <= dt.date(today.year, 3, 31) else None,
            "years": years, "control": control and control["year"],
+           "events": [{"event": e["year"], "box_low": _r(symbol, e["low"]), "box_high": _r(symbol, e["high"]),
+                       "position": round(position(e, price), 2),
+                       "levels": {label(k): _r(symbol, level(e, k)) for k in DEVS}} for e in events],
            "magnet": magnet and magnet["mean_crosses"] >= 6 and
            {"year": magnet["year"], "mean": magnet["mean"], "crosses": magnet["mean_crosses"],
             "side": "above" if price > magnet["mean"] else "below"},
@@ -316,7 +356,8 @@ def plan(symbol: str, price: float, levels: List[Dict], cl: List[Dict], o: Optio
         if move < MIN_RR * risk or (tps and abs(l["price"] - last) < risk):
             continue
         tps.append({"name": f"TP{len(tps) + 1}", "price": _r(symbol, l["price"]),
-                    "level": f"{l['year']} {l['dev']}", "rr": round(move / risk, 2)})
+                    "level": f"{l['year']} {l['dev']}", "rr": round(move / risk, 2),
+                    "ladder": ladder_name(l["k"])})
         last = l["price"]
         if len(tps) == 3:
             break
@@ -352,6 +393,8 @@ def card(r: Dict) -> str:
         lines.append(f"📚 {h['years']}y history ({h['span']}): median run {h['median_up']:g} / "
                      f"{h['median_down']:g} · reach 2.5 in {h['pct_reach_up']['2.5']}% · "
                      f"reach 4 in {h['pct_reach_up']['4']}% · reach −1 in {h['pct_reach_down']['-1']}%")
+    for e in r.get("events") or []:
+        lines.append(f"⚡ {e['event']} box {px(s, e['box_low'])}–{px(s, e['box_high'])} · now at {e['position']:g}")
     o = r.get("ote")
     if o:
         lines.append(f"OTE ({o['leg']} leg {o['from']}→{o['to']}): {px(s, o['zone_bottom'])}–"
