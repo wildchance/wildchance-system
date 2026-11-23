@@ -9,7 +9,7 @@ from fastapi import APIRouter, Query
 from services import yearly_cbdr as yc
 
 router = APIRouter(prefix="/yearly", tags=["yearly"])
-DEFAULT = "EUR/USD,GBP/USD,USD/JPY,XAU/USD"
+DEFAULT = "EUR/USD,GBP/USD,USD/JPY,XAU/USD,NAS100"
 
 
 @router.get("/cbdr/{base}/{quote}")

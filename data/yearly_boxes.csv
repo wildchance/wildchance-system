@@ -83,13 +83,13 @@ DXY,2023,,,
 DXY,2024,,,
 DXY,2025,,,
 DXY,2026,,,
-NAS100,2020,,,
-NAS100,2021,,,
-NAS100,2022,,,
-NAS100,2023,,,
-NAS100,2024,,,
-NAS100,2025,,,
-NAS100,2026,,,
+NAS100,2020,6677.3,9744.5,manual-tv-pepperstone
+NAS100,2021,12361.1,13851.6,manual-tv-pepperstone
+NAS100,2022,13090.1,16492.4,manual-tv-pepperstone
+NAS100,2023,10740.2,13196.0,manual-tv-pepperstone
+NAS100,2024,16263.5,18351.6,manual-tv-pepperstone
+NAS100,2025,19077.2,22144.8,manual-tv-pepperstone
+NAS100,2026,22912.2,26178.6,manual-tv-pepperstone
 US30,2020,,,
 US30,2021,,,
 US30,2022,,,
@@ -111,3 +111,4 @@ BTC/USD,2023,,,
 BTC/USD,2024,,,
 BTC/USD,2025,,,
 BTC/USD,2026,,,
+NAS100,2019,6145.1,7486.3,manual-tv-pepperstone

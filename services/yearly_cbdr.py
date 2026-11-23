@@ -41,8 +41,11 @@ def _sym(symbol: str) -> str:
     return symbol.upper().replace("/", "")
 
 
-def tolerance(symbol: str) -> float:
+def tolerance(symbol: str, price: Optional[float] = None) -> float:
+    """Cluster width: FX 30 pips, JPY 0.30, gold $15; indices/crypto 0.3% of price."""
     s = _sym(symbol)
+    if not (s.startswith(("XAU", "GOLD")) or s[:6].isalpha()):
+        return 0.003 * price if price else 0.0
     if s.startswith(("XAU", "GOLD")):
         return 15.0
     if s[3:6] == "JPY":
@@ -261,10 +264,10 @@ def analyse(symbol: str, daily: Sequence[DatedOHLC], today: Optional[dt.date] = 
     magnet = max(years, key=lambda y: y["mean_crosses"]) if years else None
     control = next((y for y in reversed(years) if -4 <= y["position"] <= 4), None)
     levels = all_levels(boxes)
-    cl = clusters(levels, tolerance(symbol))
+    cl = clusters(levels, tolerance(symbol, price))
     o = ote(daily)
     for c in cl:
-        t = tolerance(symbol)        # overlap with the OTE (± tolerance) counts as golden
+        t = tolerance(symbol, price)        # overlap with the OTE (± tolerance) counts as golden
         c["in_ote"] = bool(o and c["low"] <= o["zone_top"] + t and c["high"] >= o["zone_bottom"] - t)
         c["distance"] = _r(symbol, c["mid"] - price)
         for k in ("low", "high", "mid"):
@@ -293,7 +296,7 @@ def plan(symbol: str, price: float, levels: List[Dict], cl: List[Dict], o: Optio
                 "note": "no multi-year cluster inside the OTE on the right side of price"}
     c = min(cand, key=lambda c: abs(c["mid"] - price))
     from services.trade_gate import min_stop_distance, widen_stop
-    tol = tolerance(symbol)
+    tol = tolerance(symbol, price)
     entry = c["high"] if side == "BUY" else c["low"]
     if side == "BUY":
         below = [l["price"] for l in levels if l["price"] < c["low"] - tol / 3]
@@ -390,6 +393,12 @@ async def run(symbol: str, years_back: int = YEARS_BACK) -> Dict:
     from services import trade_gate as tg
     n = min(5000, 262 * (years_back + 1) + 60)
     daily = await fetch_ohlc(symbol, "1day", n, broker=False)
+    if not daily:                       # indices (NAS100, US30, SPX) aren't on TwelveData free
+        try:
+            from services.ohlc_service import _yahoo_ohlc
+            daily = await _yahoo_ohlc(symbol, "1day", n)
+        except Exception:
+            daily = []
     r = analyse(symbol, daily, years_back=years_back)
     p = r.get("plan") if r.get("ok") else None
     if p and p.get("status") == "limit":
