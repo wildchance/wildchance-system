@@ -13,3 +13,86 @@ date,symbol,anchor,level,role,price,side,outcome,source,note
 2026-02-06,BTC/USD,cycle box,1.5,buy/sell limit,60263.22,BUY,held,journal-1W,low ~60k
 2026-10-01,NAS100,2025 Q1 box,4,extreme 3 · TP4,31347.8,SELL,held,owner-chart,top 31305.7 (date approx)
 2026-10-01,NAS100,2026 Q1 box,2.5,TP1,31078.3,SELL,held,owner-chart,top 31305.7 overshoot 0.07
+2025-10-17,XAU/USD,Gold Q1-2025 box,3.5,extreme 2 · TP3,4344.293,SELL,held,agent-002.jpeg,ATH 4381.44 overshot 3.5 by ~37 then dropped to ~3;886 (~1 box width)
+2025-11-21,BTC/USD,BTC Oct-2025 top box,2.5,TP1,82234.46,BUY,held,agent-006.jpeg,price tagged 2.5 (low ~80.6k on 4h; see 011) next to Eq 80;178.70 and bounced; 1;1.5;2 wer
+2025-10-17,XAG/USD,Silver Q1-2025 box,3,extreme 1 · TP2,53.265,SELL,held,agent-007.jpeg,Oct 2025 peak ~54.4 (between Q1 3 53.265 and Q2 3.5 55.588) reversed to ~45.6 (Q1 2 45.142
+2025-11-28,XAG/USD,Silver Q2-2025 box,3.5,extreme 2 · TP3,55.588,BUY,broke,agent-007.jpeg,Nov 28 2025 broke above 3.5 and Q1 3 to new high 56.544 (bos)
+2025-10-28,XAU/USD,Gold Q1-2025 box,2.5,TP1,3855.276,BUY,held,agent-010.jpeg,low stayed ~30 above 2.5/Tp1 3;855.024 and rallied
+2025-12-22,XAU/USD,Gold Q1-2025 box,3.5,extreme 2 · TP3,4344.293,BUY,broke,agent-010.jpeg,Dec 2025 ran through 3.5 to 4;497.685 heading to 4 (4;588.802)
+2025-11-21,BTC/USD,BTC main box (Eq label),2,equilibrium,79791.69,BUY,held,agent-011.jpeg,Nov 21 low 80;619.96 just above Eq 79;791.69; rallied to ~94.5k
+2025-10-06,BTC/USD,BTC 2024 box,4,extreme 3 · TP4,124823,SELL,held,agent-012.jpeg,ATH 126;272 overshot 4 by ~1.4k; then fell to ~80.6k (>2 box widths)
+2025-10-28,XAU/USD,Gold Oct-16-2025 box,-4,extreme 3 · TP4,3910.96,BUY,held,agent-013.jpeg,late-Oct low ~3;89x-3;90x at -4 (axis 3;908.88); rally back above 0
+2025-12-26,XAU/USD,Gold Oct-16-2025 box,2.5,TP1,4506.86,SELL,held,agent-013.jpeg,high 4;525.75 just above TP1 (4;505.00 axis); next days pulled back (see 017: fell to ~4;2
+2025-10-28,XAU/USD,Gold early-Nov-2025 4h box,-1.5,buy/sell limit,3897.17,BUY,held,agent-014.jpeg,Low 3;886.64 wicked ~10 under -1.5 inside 'Indecision' box; then rally (>2 box widths)
+2025-12-22,XAU/USD,Gold early-Nov-2025 4h box,4,extreme 3 · TP4,4405.09,BUY,broke,agent-014.jpeg,price ran through +4 to 4;525.96
+2025-11-13,XAU/USD,Gold early-Nov-2025 4h box,2.5,TP1,4266.57,SELL,held,agent-014.jpeg,mid-Nov highs ~4;24x-4;25x just under 2.5; dropped back toward 0
+2025-12-30,XAU/USD,Gold Dec-29-2025 14:00 box,3.5,extreme 2 · TP3,4400.219,SELL,held,agent-016.jpeg,Dec 30 ~07H high ~4;40x at 3.5/S2 4;407; sold off ~5 box widths
+2025-12-31,XAU/USD,Gold Dec-29-2025 14:00 box,-2,equilibrium,4289.112,BUY,held,agent-016.jpeg,Dec 31 00:00 spike low ~4;28x near -2 / S10 4;287 then bounce to 4;311.87
+2025-12-29,XAU/USD,Gold Nov-Dec 2025 swing,0.5,bull mean,4272.19,BUY,held,agent-017.jpeg,drop from ATH stopped at ~4;275 (≈0.5) and bounced to ~4;40x
+2025-12-30,XAU/USD,Gold Dec-29-2025 14:00 box,3,extreme 1 · TP2,4390.119,SELL,held,agent-018.jpeg,short position tool: entry ~4;390.897 (S3); stop ~4;423 (S1); target 4;258.648 (~-3.5); pr
+2026-01-13,XAU/USD,Gold Jan-2026 box A,3.5,extreme 2 · TP3,4620.154,SELL,held,agent-019.jpeg,mid-Jan consolidation capped ~4;62x-4;64x (A 3.5 / B 1.5 4;639.236 confluence) until Jan 2
+2026-01-20,XAU/USD,Gold Jan-2026 box C,2,equilibrium,4777.248,BUY,broke,agent-019.jpeg,Jan 20 4h candles ran through C1.5/C2/C2.5 (4;763.370 dotted line)
+2026-01-21,XAU/USD,Gold Jan-2026 box C,3,extreme 1 · TP2,4875.353,SELL,held,agent-020.jpeg,wick ~4;88x into B4/C3 confluence; projected spike to 3.5 then drop to ~4;73x; see 022 for
+2026-01-21,XAU/USD,Gold Jan-2026 box C,2,equilibrium,4777.248,BUY,held,agent-022.jpeg,pullback low ~4;76x near C2 / 4;763.370 line then rally
+2026-01-22,XAU/USD,Gold Jan-2026 box C,3.5,extreme 2 · TP3,4924.405,BUY,broke,agent-022.jpeg,broke 3.5; approaching C4 4;973.457
+2026-01-23,XAU/USD,Gold first-week-2026 box,3.5,extreme 2 · TP3,4953.365,BUY,broke,agent-027.jpeg,week of Jan 19 closed above 3.5; heading to 4 (5;042.176) / extreme1+tp2 5;070.061
+2025-11-21,BTC/USD,BTC Aug-Oct 2025 top box,2.5,TP1,79039.89,BUY,held,agent-028.jpeg,Nov 2025 low ~80.6k just above 2.5/Eq; bounced to ~97.9k
+2026-02-05,BTC/USD,BTC Aug-Oct 2025 top box,2.5,TP1,79039.89,SELL,broke,agent-028.jpeg,Feb 2026 ran through 2.5/Eq to 3
+2025-10-06,BTC/USD,BTC main box,3,extreme 1 · TP2,120546.63,SELL,held,agent-029.jpeg,ATH 126k overshot ~0.14 box; then -45%
+2026-02-05,BTC/USD,BTC main box,2,equilibrium,80357.69,SELL,broke,agent-029.jpeg,Feb 2026 broke Eq (79;791.69) toward buy/sell limit 60;094.65
+2025-10-06,BTC/USD,BTC Q1-2024 box,2.5,TP1,122650.15,SELL,held,agent-030.jpeg,2025 ATH ~126k ~0.1 box above; then major decline
+2026-02-05,BTC/USD,BTC Q1-2024 box,1,range high,72870.84,SELL,broke,agent-030.jpeg,Feb 2026 broke '1.5 buy limit' 77;250 and Q1-24 1
+2025-10-06,BTC/USD,BTC Q1-2021 box,3,extreme 1 · TP2,125574.17,SELL,held,agent-034.jpeg,ATH ~126k at Q1-2021 3 - near-exact
+2026-02-05,BTC/USD,BTC Q1-2021 box,1.5,buy/sell limit,77245.5,SELL,broke,agent-034.jpeg,Feb 2026 closed through 1.5
+2026-02-17,XAU/USD,Gold Feb-16-2026 candle box,-1.5,buy/sell limit,4843.785,BUY,held,agent-038.jpeg,low wicked exactly to -1.5 (dotted 4;843.785) and bounced to ~4;886
+2025-01-13,DXY,DXY Sep/Oct-2024 box,4,extreme 3 · TP4,109.97,SELL,held,agent-039.jpeg,Jan 2025 top ~110.2 then fell ~6 box widths
+2026-02-13,XAU/USD,Gold Jan-2026 week-4 candle,0.5,bull mean,5142.57,SELL,held,agent-040.jpeg,Feb weekly highs ~5;1xx capped below jan W4 mean; then -2.7% week
+2026-01-27,DXY,DXY Jan-2025 top box,3,extreme 1 · TP2,96.903,SELL,broke,agent-041.jpeg,Jan 2026 broke 3 to 95.555 then reclaimed to 97.1
+2022-09-26,DXY,DXY 2021 main box,4,extreme 3 · TP4,114.77,SELL,held,agent-043.jpeg,2022 top printed exactly at main-box 4; -15% afterwards
+2025-10-06,BTC/USD,BTC macro box,1.5,buy/sell limit,121175.12,SELL,held,agent-045.jpeg,ATH ~126k at macro 1.5 + main 3 confluence
+2026-01-29,XAU/USD,Gold Oct-Nov 2025 box,3.5,extreme 2 · TP3,5536.64,SELL,held,agent-047.jpeg,ATH 5;598.14 overshot ~0.13 box then crashed to wick ~4;40x
+2026-04-14,XAU/USD,Apr 14 15m box,2.5,TP1,4871.123,SELL,held,agent-056.jpeg,Single wick tagged 2.5 exactly (dotted line) and price sold ~80 pts to ~4786
+2026-04-15,XAU/USD,Apr 14 15m box,-3,extreme 1 · TP2,4790.24,BUY,held,agent-056.jpeg,Wicks into -3/-3.5 zone (~4786); first bounce to ~4830 (~3 box widths); second tag at time
+2026-04-16,DXY,Box B Apr 10 (confluence Box C -1.5 97.860),-4,extreme 3 · TP4,97.818,BUY,held,agent-057.jpeg,Low ~97.83 at dotted -4 line; bounced to 98.225 (~2 Box-B widths); A -1 98.015 briefly bro
+2026-04-17,XAU/USD,Feb-Mar retracement,0.5,bull mean,4892.1,SELL,held,agent-060.jpeg,April rally wicked just under 0.5 / April 20-day high 4842.14 zone then fell to ~4512
+2026-03-30,SPX500,Jan-Mar 2026 SPX box,0,central limit,6367.87,BUY,held,agent-064.jpeg,Brief sweep below 0 and red 6407.65 line; then V-reversal rally of >1000 pts through box h
+2026-06-04,SPX500,Jan-Mar 2026 SPX box,2,equilibrium,7633.59,SELL,held,agent-064.jpeg,Top just under 2 / dotted 7584.32; dropped to 7368.63 (~0.4 box width so far); trader's sh
+2026-06-01,NAS100,NAS100 big box (labels only),3.5,extreme 2 · TP3,29580.66,SELL,broke,agent-065.jpeg,Price ran ~1;100 pts through extreme 2 + TP3 (top ~30;700; visual approx); then a -5.21% d
+2026-04-17,XAU/USD,Role-line set (MAIN central 5280.946),-1.5,buy/sell limit,4912.564,SELL,held,agent-070.jpeg,April rally topped just under buy/sell limit (box -1.5 ~4910.8) and fell
+2026-05-14,XAU/USD,Role-line set / Jan-29 box,-2,equilibrium,4780.664,SELL,held,agent-070.jpeg,May rally rejected at equilibrium 4780.664 / box -2 (4;79x.202) with D1 OB; dropped >600 p
+2026-06-05,XAU/USD,Jan-29 box,-4,extreme 3 · TP4,4302.767,SELL,broke,agent-070.jpeg,Price broke 4500.000; extreme 2 +tp3 4420.521 and extreme 3 +tp4 4302.767; dashed projecti
+2026-01-29,XAU/USD,Box L Apr 2025 range,4,extreme 3 · TP4,5510.0,SELL,held,agent-072.jpeg,ATH overshot k=4 (5510) by ~100 then gold collapsed ~1500 pts (to 4119); measure tool 33;7
+2026-06-05,XAU/USD,Box R range H&L,2.5,TP1,4371.92,SELL,broke,agent-072.jpeg,Ran through R2.5 with 3mob 4355
+2026-03-30,US30,Dec-Mar Dow box,0,central limit,45038.8,BUY,held,agent-073.jpeg,Sweep just below box low (dotted ~44;800) then rally >7;000 pts through box high
+2026-06-10,XAU/USD,Box A Jun 9-10,-3.5,extreme 2 · TP3,4035.306,BUY,held,agent-074.jpeg,Low ~4029-4030 (Box B 0) between A -3.5 and -4; long from CBDR mean 4072.305; stop 4025.71
+2026-06-11,XAU/USD,Box B Jun 10,2,equilibrium,4202.003,BUY,broke,agent-074.jpeg,Ran through B 2 toward B 2.5 target 4244.97
+2026-06-11,XAU/USD,Box B Jun 10,2.5,TP1,4244.974,SELL,held,agent-077.jpeg,Rally stopped exactly at B 2.5 / TP 4244.614 (long trade TP hit) and pulled back to ~4180 
+2026-06-11,XAU/USD,Box B Jun 10,0,central limit,4030.117,BUY,held,agent-078.jpeg,Long position (entry 4057.552-4072.305 CBDR mean; SL 4025.719; TP 4244.614) - TP hit at B 
+2026-06-29,XAU/USD,Q2 2026 quarterly range,0,central limit,4070.0,BUY,held,agent-089.jpeg,Weekly wick swept Q2 low into ssl pool + D1 ob 3980 / 3930 (low ~3945); closed back above 
+2026-06-17,XAU/USD,Q1 2026 quarterly range,0,central limit,4377.43,SELL,held,agent-093.jpeg,Mid-June bounce filled up to Q1 low (~4390 wick) and was rejected; new low followed
+2026-07-05,XAU/USD,Jul 2 30m box,3.5,extreme 2 · TP3,4201.82,SELL,held,agent-096.jpeg,Two highs tagged 3.5 exactly (dotted line ~4202) and price dropped to 2 (4161.077); ~1.5 b
+2026-07-03,XAU/USD,Jul 2 30m box,2,equilibrium,4161.077,BUY,held,agent-096.jpeg,Range floor at 2 held repeatedly (wick ~4156) on Jul 3; with range ceiling at 2.5-3
+2026-07-02,XAU/USD,Box E Jul 1,3,extreme 1 · TP2,4143.959,SELL,held,agent-097.jpeg,First spike capped at E 3 and pulled back to ~4103 (~1.1 E widths); forming Box D
+2026-07-03,XAU/USD,Box E Jul 1 + Box D Jul 2,3.5,extreme 2 · TP3,4162.619,BUY,held,agent-097.jpeg,Confluence E 3.5 / D 2 (~4161-4163) was the floor of the Jul 3-5 range; E 4 4181.280 ~ cei
+2026-07-01,XAU/USD,Box E Jul 1,2,equilibrium,4106.638,SELL,held,agent-099.jpeg,Initial Jul 1 impulse wicked ~4117 just above E 2 and returned to the box (~4040s) before 
+2026-07-05,XAU/USD,Box F Jul 5,-0.5,bear mean,4162.495,SELL,broke,agent-100.jpeg,After double top at F 1 / D 3.5 (~4202); price lost F 0 and the -0.5 bear mean; next F -1 
+2026-07-07,XAU/USD,Jul-6 small box,-3.5,extreme 2 · TP3,4117.53,BUY,held,agent-113.jpeg,The 1 am low sat on -3.5 (~4;117). Price rallied to ~4;180; more than 5 box widths.
+2026-07-07,XAU/USD,Jul-6 small box,2,equilibrium,4178.175,SELL,held,agent-113.jpeg,The spike to ~4;180 (4;180 grid + H4 rto) was rejected at +2. Price fell to ~4;142; about 
+2026-07-06,XAU/USD,Jul-6 box (B),-1.5,buy/sell limit,4137.241,BUY,held,agent-115.jpeg,On Jul 6 price fell to about -1.5 of box B (~4;130 low) and bounced to ~4;165.
+2026-07-08,XAU/USD,'14 hours' box Tue Jul 7,0,central limit,4097.982,SELL,broke,agent-116.jpeg,The overnight drop ran straight through the box low and -0.5 (4;073.246) to ~4;042; just b
+2026-07-08,XAU/USD,'14 hours' box Tue Jul 7,-1,range low,4048.51,BUY,held,agent-120.jpeg,Price bottomed at ~4;041 (weak low; inside the grey area) and bounced to 4;076 by the 7 am
+2026-07-08,XAU/USD,'14 hours' box Tue Jul 7,-0.5,bear mean,4073.246,SELL,held,agent-123.jpeg,The bounce wicked above -0.5 (~4;086; 7 am high ~4;078) and failed. Price fell to ~4;029; 
+2026-07-08,XAU/USD,'14 hours' box Tue Jul 7,-1,range low,4048.51,SELL,broke,agent-123.jpeg,The second test broke -1 and headed toward -1.5 (4;023.774) / w1 ob 4;018.613.
+2026-07-08,XAU/USD,'14 hours WEDNESDAY' box,-1.5,buy/sell limit,4023.496,BUY,held,agent-133.jpeg,The low (~4;020) tagged -1.5 plus w1 ob 4;023.685 and 4;031.284. Price rallied to ~4;105; 
+2026-07-09,XAU/USD,'14 hours Thursday' box,-0.5,bear mean,4053.888,BUY,held,agent-133.jpeg,The midnight dip (~4;055) held above -0.5. Price then broke box high 1 (4;088.525) and rea
+2026-09-07,XAU/USD,Fri Sep 4 14:00 box,-1.5,buy/sell limit,4388.025,BUY,held,agent-140.jpeg,The low (~4;383) was near -1.5. Price rallied to ~4;442 by Tue morning.
+2026-09-08,XAU/USD,Mon Sep 7 14:00 box,1.5,buy/sell limit,4437.993,SELL,held,agent-140.jpeg,The ~4;442 top at Mon-box 1.5 reversed to ~4;345; more than 4 box widths.
+2026-09-17,XAU/USD,Gold CBDR box Sep-16,0.5,bull mean,4306.468,BUY,held,agent-158.jpeg,Price dipped below cbdr mean to '15$ mean' 4;280 then reclaimed and pushed to ~4;330 (abov
+2026-09-28,XAU/USD,Gold 15m box A,-3.5,extreme 2 · TP3,4114.48,BUY,held,agent-166.jpeg,~180-pt selloff from box A ran to -3.5 (4;114.48) and based there (box B formed with 0 = 4
+2026-09-28,XAU/USD,Gold 15m box A,-2.5,TP1,4155.039,BUY,broke,agent-166.jpeg,Price consolidated around -2.5/-2.5..-3 (4;155-4;135) then pushed lower to -3.5
+2026-10-28,XAU/USD,Gold 'main' box,1.5,buy/sell limit,4075.0,SELL,held,agent-186.jpeg,Pullback wicked ~4;083 into 'W1 OB + 1.5 main' 4;075 and was rejected with a large bearish
+2026-10-30,XAU/USD,Gold 'rate hike' event box,-3.5,extreme 2 · TP3,3878.968,BUY,held,agent-191.jpeg,6-week decline from the Sep rate-hike box ended at -3.5 (3;878.97; low 3;875.645 per 192);
+2026-11-05,XAU/USD,Gold 'rates unchanged' event box,2.5,TP1,4138.134,SELL,held,agent-191.jpeg,Rebound topped at 2.5 (tag 4;137.973) and dropped to 4;056 (~2 box widths)
+2026-10-30,XAU/USD,Gold 'rates unchanged' event box,-3.5,extreme 2 · TP3,3886.288,BUY,held,agent-192.jpeg,Low 3;875.645 between -3.5 (3;886.288) and -4 (3;865.301); H1 ob 3;883.588 / H4 ob 3;896.5
+2026-11-10,XAU/USD,Gold 15m box Nov-10,2.5,TP1,4062.467,SELL,held,agent-198.jpeg,Rebound topped ~4;066 between 2.5 and 3 (4;069.485); then fell ~95 (~7 box widths)
+2026-11-11,XAU/USD,Gold 15m box Nov-10,-4,extreme 3 · TP4,3971.242,BUY,held,agent-198.jpeg,Low ~3;968-3;970 at -4 with daily fib 0.618 3;976.242 confluence; bounced to ~4;000 (-2) ~

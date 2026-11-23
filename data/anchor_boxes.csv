@@ -6,3 +6,32 @@ XAU/USD,Jan-26 main box,5281.066,5531.580,journal-1D-oanda
 XAU/USD,century 3M box,26.204,1712.895,journal-3M-ice
 NAS100,dot-com master,-26.34,8426.43,journal-1M-fxcm
 BTC/USD,cycle box,-20.18,40168.75,journal-1W-index
+XAU/USD,Oct-25 top week box,4114.622,4378.993,agent-001-1W
+XAU/USD,Oct-16-25 day box,4277.665,4369.34,agent-013-1D
+XAU/USD,first week 2026 candle,4331.69,4509.311,agent-027-1W
+XAU/USD,Jan-26 W4 candle,4692.06,5594.49,agent-040-1W
+XAU/USD,Jan-Mar-26 box,4369.14,5415.07,agent-060-1D
+XAU/USD,ATH to Mar-26 low,4119.27,5616.64,agent-072-1D
+XAU/USD,Q2-26 quarter,4070.0,4842.5,agent-089-1W
+XAU/USD,H1-26 yearly box,4318.18,5430.54,agent-144-1D
+XAU/USD,main box (inferred),1813.15,3320.04,agent-181-1D-inferred
+XAU/USD,secular blue box,44.436,3402.707,agent-004-12M
+XAU/USD,1980 secular box,17.225,864.561,agent-004-12M
+BTC/USD,2017-high box,-9.93,20007.39,agent-029-1W
+BTC/USD,macro box,377.66,80909.3,agent-045-1W
+BTC/USD,cycle box large,71,129683,agent-155-1W
+BTC/USD,Q1-21 box,28916.83,61135.94,agent-034-1W
+BTC/USD,2024 Bitstamp box,49434,68281,agent-012-1D
+BTC/USD,Aug-Oct-25 top box,107306.83,126151.45,agent-028-1D
+BTC/USD,2025 year range,74560.4,126350.4,agent-164-1D
+DXY,2021 main box,89.21,95.6,agent-039-1D
+DXY,Sep-22 top box,108.37,114.76,agent-043-1W
+DXY,Jan-25 top box,105.747,110.17,agent-041-1D
+DXY,Sep-Oct-24 box,100.665,102.99,agent-039-1D
+DXY,2008-14 base box,70.861,83.289,agent-044-3M
+XAG/USD,Nov-25 range,48.672,56.544,agent-007-1D
+US30,Dec-25 to Mar-26 range,45038.8,50489.12,agent-073-1D
+SPX500,2026 swing box,6367.87,7000.73,agent-064-1D
+NVDA,macro box A,0.4494,138.5,agent-201-1M
+NVDA,macro box B,0.2865,69.84,agent-201-1M
+NVDA,macro box C,0.1813,34.78,agent-201-1M
