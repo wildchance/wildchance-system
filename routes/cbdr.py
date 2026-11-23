@@ -101,10 +101,13 @@ async def cbdr_limits(symbol: str, window: str = Query("prelondon"),
         lines = [f"🎯 *Pre-London limits — {symbol}*  ({out['session']})", ""]
         for o in plan["orders"]:
             arrow = "🟢 BUY" if o["side"] == "long" else "🔴 SELL"
-            lines.append(f"{arrow} limit `{px(symbol, o['entry'])}`  ({o['level']}) — {o['reason']}")
+            kind = "stop" if o.get("kind", "").endswith("stop") else "limit"
+            level = o["level"].replace("_stop", " stop")       # '_' would open Telegram italics
+            lines.append(f"{arrow} {kind} `{px(symbol, o['entry'])}`  ({level}) — {o['reason']}")
         g = plan["grey_zone"]
+        zone = lambda pair: "–".join(px(symbol, v) for v in pair if v is not None)   # noqa: E731
         lines += ["", f"⚪ Grey {g['sd_band'][0]:g}–{g['sd_band'][1]:g}SD "
-                  f"buy {g['buy_grey']}  ·  sell {g['sell_grey']}", f"_{g['note']}_"]
+                  f"buy {zone(g['buy_grey'])}  ·  sell {zone(g['sell_grey'])}", f"_{g['note']}_"]
         result["sent"] = await _send("\n".join(lines))
     return result
 

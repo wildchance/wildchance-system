@@ -63,6 +63,46 @@ async def recent(db, limit: int = 50) -> List[Dict]:
              "text": r.text} for r in rows]
 
 
+import re as _re
+
+_FLOAT_NOISE = _re.compile(r"(?<![\w.])(-?\d+\.\d{6,})(?![\d])")
+
+
+def tidy_numbers(text: str) -> str:
+    """Round float noise (≥6 decimals, e.g. 3501.0123300000005) to the instrument's
+    normal precision: ≥1000 → 2 dp (gold, indices, BTC), ≥10 → 3 dp (JPY pairs ~150,
+    silver), else 5 dp (FX). Real FX quotes have ≤5 decimals, so they're never touched."""
+    def fix(m):
+        v = float(m.group(1))
+        dp = 2 if abs(v) >= 1000 else 3 if abs(v) >= 10 else 5
+        return f"{v:.{dp}f}"
+    return _FLOAT_NOISE.sub(fix, text) if text else text
+
+
+def _tidy_request(request):
+    """Same Telegram sendMessage request with its text tidied (JSON or form body)."""
+    import json as _json
+    from urllib.parse import parse_qsl
+    import httpx
+    ctype = request.headers.get("content-type", "")
+    raw = request.content or b""
+    headers = {k: v for k, v in request.headers.items()
+               if k.lower() not in ("content-length", "content-type")}
+    if "json" in ctype:
+        d = _json.loads(raw or b"{}")
+        if isinstance(d, dict) and isinstance(d.get("text"), str):
+            new = tidy_numbers(d["text"])
+            if new != d["text"]:
+                return httpx.Request(request.method, request.url, json={**d, "text": new}, headers=headers)
+    elif "form" in ctype:
+        d = dict(parse_qsl(raw.decode()))
+        if "text" in d:
+            new = tidy_numbers(d["text"])
+            if new != d["text"]:
+                return httpx.Request(request.method, request.url, data={**d, "text": new}, headers=headers)
+    return request
+
+
 def install() -> None:
     if _installed["done"]:
         return
@@ -70,6 +110,11 @@ def install() -> None:
     orig = httpx.AsyncClient.send
 
     async def send(self, request, *args, **kwargs):
+        try:                               # one choke point: no float noise on any card
+            if request.url.host == "api.telegram.org" and request.url.path.endswith("/sendMessage"):
+                request = _tidy_request(request)
+        except Exception:
+            pass
         resp = await orig(self, request, *args, **kwargs)
         try:
             if request.url.host == "api.telegram.org" and request.url.path.endswith("/sendMessage") \
