@@ -1,0 +1,15 @@
+date,symbol,anchor,level,role,price,side,outcome,source,note
+2008-07-15,EUR/USD,monthly master,4,extreme 3 · TP4,1.59808,SELL,held,journal-1M,2008 top 1.6038
+2022-09-28,EUR/USD,monthly master,-4,extreme 3 · TP4,0.95256,BUY,held,journal-1M,2022 low 0.9536
+2026-02-10,EUR/USD,2025 Q1 box (ICE),2.5,TP1,1.19990,SELL,held,owner-chart,overshoot to 2.62 then failed below 3
+2026-01-29,XAU/USD,Apr-Jul-25 box,4,extreme 3 · TP4,5600,SELL,held,journal-1D,ATH 5598
+2026-01-30,XAU/USD,Oct-25 box,2.5,TP1,5058.8,SELL,held,journal-account,100-lot sells 5058 closed ~4771
+2026-03-23,XAU/USD,Jan-26 main box,-2.5,TP1,4656.789,BUY,broke,journal-1D,no hold - ran to ~4100
+2026-03-23,XAU/USD,Jan-26 main box,-4,extreme 3 · TP4,4280.138,BUY,broke,journal-1D,low ~4100
+2026-10-30,XAU/USD,FOMC Sep-16 + Oct-28 boxes,-3.5,extreme 2 · TP3,3882.6,BUY,held,owner-chart,low ~3870 then +270
+2026-11-05,XAU/USD,FOMC Oct-28 box,2.5,TP1,4138.13,SELL,held,owner-chart,high 4137.97
+2026-11-11,XAU/USD,Apr-Jul-25 box,1.5,buy/sell limit,3850,BUY,held,journal-1D,low 3889 front-ran the level
+2025-10-06,BTC/USD,cycle box,3,extreme 1 · TP2,120546.63,SELL,held,journal-1W,top 126k (3.14)
+2026-02-06,BTC/USD,cycle box,1.5,buy/sell limit,60263.22,BUY,held,journal-1W,low ~60k
+2026-10-01,NAS100,2025 Q1 box,4,extreme 3 · TP4,31347.8,SELL,held,owner-chart,top 31305.7 (date approx)
+2026-10-01,NAS100,2026 Q1 box,2.5,TP1,31078.3,SELL,held,owner-chart,top 31305.7 overshoot 0.07
