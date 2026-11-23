@@ -37,6 +37,8 @@ def min_body(symbol: str) -> float:
     s = symbol.upper().replace("/", "")
     if s.startswith(("XAU", "GOLD")):
         return 1.0
+    if s.startswith(("BTC", "XBT")):
+        return 25.0
     if len(s) >= 6 and s[3:6] == "JPY":
         return 0.03
     return 0.0003 if len(s) >= 6 and s[:6].isalpha() else 0.0

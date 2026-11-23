@@ -23,7 +23,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.50"
+#property version   "4.51"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -859,6 +859,7 @@ double PipSize()
    if(InpPipSize>0) return InpPipSize;
    int digits=(int)SymbolInfoInteger(_Symbol,SYMBOL_DIGITS);
    string s=_Symbol; StringToUpper(s);
+   if(StringFind(s,"BTC")>=0 || StringFind(s,"XBT")>=0) return 1.0;   // BTC like gold: $ pip ($1)
    if(digits==3 || digits==5) return _Point*10.0;
    if(StringFind(s,"XAU")>=0 || StringFind(s,"GOLD")>=0) return _Point*10.0;
    return _Point;

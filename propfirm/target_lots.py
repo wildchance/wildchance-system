@@ -21,12 +21,19 @@ from typing import Dict, List, Optional
 
 RUNGS_R = (1.3, 1.95, 2.6, 3.25, 3.9, 4.55, 5.2)     # multiples of 0.65R
 TARGET_PCT = 0.52 / 100                                # $13 on 2.5k (sheet); 5k ≈ $25-26
+# BTC follows gold's structure: a USD pip and a per-lot contract (broker spec; most
+# prop CFDs: 1 lot = 1 BTC, so $1 move = $1 per lot).
+from decouple import config as _config
+BTC_PIP = float(_config("BTC_PIP", default="1.0"))
+BTC_CONTRACT_SIZE = float(_config("BTC_CONTRACT_SIZE", default="1"))
 
 
 def pip_value_per_lot(symbol: str, price: Optional[float] = None) -> Optional[float]:
     """USD value of 1 pip for 1.00 standard lot. USD-quoted pairs = $10; USDxxx needs
     the price (10 / price × … ); crosses need a conversion → None (pass it explicitly)."""
     s = symbol.upper().replace("/", "")[:6]
+    if s.startswith(("BTC", "XBT")):                       # 1 lot = N coins, pip = $1
+        return BTC_CONTRACT_SIZE * BTC_PIP
     if s.endswith("USD"):
         return 10.0
     if s.startswith("USD") and price:
@@ -39,6 +46,8 @@ def pip_size(symbol: str) -> Optional[float]:
     s = symbol.upper().replace("/", "")
     if s.startswith(("XAU", "GOLD")):
         return 0.1
+    if s.startswith(("BTC", "XBT")):
+        return BTC_PIP
     if len(s) >= 6 and s[3:6] == "JPY":
         return 0.01
     if len(s) >= 6 and s[:6].isalpha():

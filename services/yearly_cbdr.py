@@ -60,7 +60,7 @@ def tolerance(symbol: str, price: Optional[float] = None) -> float:
 
 def _r(symbol: str, v: float) -> float:
     s = _sym(symbol)
-    return round(v, 2 if s.startswith(("XAU", "GOLD")) or not s[:6].isalpha()
+    return round(v, 2 if s.startswith(("XAU", "GOLD") + CRYPTO) or not s[:6].isalpha()
                  else 3 if s[3:6] == "JPY" else 5)
 
 

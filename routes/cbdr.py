@@ -116,7 +116,7 @@ def px(symbol: str, v) -> str:
     except (TypeError, ValueError):
         return str(v)
     s = symbol.upper().replace("/", "")
-    d = 2 if s.startswith(("XAU", "GOLD")) or not s[:6].isalpha() else 3 if s[3:6] == "JPY" else 5
+    d = 2 if s.startswith(("XAU", "GOLD", "BTC", "XBT", "ETH")) or not s[:6].isalpha() else 3 if s[3:6] == "JPY" else 5
     return f"{v:.{d}f}"
 
 
