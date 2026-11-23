@@ -30,3 +30,13 @@ async def cases(symbol: Optional[str] = Query(None)):
 async def council(base: str, quote: str, side: str = Query("BUY", pattern="^(BUY|SELL)$")):
     from services import council as cn
     return await cn.convene(f"{base.upper()}/{quote.upper()}", side)
+
+
+@router.get("/levels/{base}/{quote}")
+async def levels(base: str, quote: str):
+    """Session time levels, the fixed grid and option strikes for today (NY time)."""
+    from services import session_levels as sl
+    from services.sniper import _bars_1h
+    sym = f"{base.upper()}/{quote.upper()}"
+    bars = await _bars_1h(sym, 48, tz="America/New_York")
+    return {"symbol": sym, "levels": sorted(sl.all_levels(sym, bars), key=lambda x: -x["price"])}
