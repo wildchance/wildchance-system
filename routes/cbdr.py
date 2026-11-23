@@ -101,12 +101,23 @@ async def cbdr_limits(symbol: str, window: str = Query("prelondon"),
         lines = [f"🎯 *Pre-London limits — {symbol}*  ({out['session']})", ""]
         for o in plan["orders"]:
             arrow = "🟢 BUY" if o["side"] == "long" else "🔴 SELL"
-            lines.append(f"{arrow} limit `{o['entry']}`  ({o['level']}) — {o['reason']}")
+            lines.append(f"{arrow} limit `{px(symbol, o['entry'])}`  ({o['level']}) — {o['reason']}")
         g = plan["grey_zone"]
         lines += ["", f"⚪ Grey {g['sd_band'][0]:g}–{g['sd_band'][1]:g}SD "
                   f"buy {g['buy_grey']}  ·  sell {g['sell_grey']}", f"_{g['note']}_"]
         result["sent"] = await _send("\n".join(lines))
     return result
+
+
+def px(symbol: str, v) -> str:
+    """Price at the instrument's normal precision (no 1.1013199999999999 floats)."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return str(v)
+    s = symbol.upper().replace("/", "")
+    d = 2 if s.startswith(("XAU", "GOLD")) or not s[:6].isalpha() else 3 if s[3:6] == "JPY" else 5
+    return f"{v:.{d}f}"
 
 
 @router.post("/alert/{symbol:path}")
@@ -118,11 +129,11 @@ async def cbdr_alert(symbol: str, window: str = Query("prelondon")):
     lines = [
         f"📦 *CBDR — {out['window_label']}*  ({symbol}, {out['session']})",
         "",
-        f"High {box['high']}   Mid {round(box['mid'], 5)}   Low {box['low']}",
+        f"High {px(symbol, box['high'])}   Mid {px(symbol, box['mid'])}   Low {px(symbol, box['low'])}",
         f"Range {round(box['range'], 5)}  ·  {out['bars_used']} bars",
         "",
-        "*Sell ceilings:*  " + "  ".join(f"{k} {lvl[k]}" for k in ("+1SD", "+2SD", "+3SD") if k in lvl),
-        "*Buy floors:*     " + "  ".join(f"{k} {lvl[k]}" for k in ("-1SD", "-2SD", "-3SD") if k in lvl),
+        "*Sell ceilings:*  " + "  ".join(f"{k} {px(symbol, lvl[k])}" for k in ("+1SD", "+2SD", "+3SD") if k in lvl),
+        "*Buy floors:*     " + "  ".join(f"{k} {px(symbol, lvl[k])}" for k in ("-1SD", "-2SD", "-3SD") if k in lvl),
     ]
     if "bias" in out:
         lines += ["", f"_Now {out['price']} — {out['bias']['note']}_"]
