@@ -110,6 +110,7 @@ async def scan(symbols: str = Query(None), force: bool = Query(False)):
         r = await crs.analyze_symbol(sym)
         if r is None:
             continue
+        r = await crs.add_plans(r)
         text = crs.format_alert(r)
         if text:
             hits.append({"symbol": sym, "result": r})
