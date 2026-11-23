@@ -84,6 +84,8 @@ def test_entry_only_on_fast_timeframes_and_target_sanity():
                       {"mid": 58000.0, "members": ["ok"]}]}
     tps = sniper.targets_from(r, "SELL", 61553.0, 62553.0)
     assert [x["price"] for x in tps] == [58000.0]                          # no negatives, ≤12 %
+    pos = sniper.position_targets(r, "SELL", 61553.0, 62553.0)
+    assert [x["price"] for x in pos] == [40000.0] and pos[0]["pct"] == 35.0  # beyond 12 % → position
 
 
 def test_account_fit_holds_unaffordable_stops():
@@ -96,3 +98,14 @@ def test_stock_stop_floor_and_precision():
     from routes.cbdr import px
     assert tg.widen_stop("NVDA", "BUY", 200.0, 199.9) == 199.0             # 0.5 % floor
     assert px("NVDA", 173.7312) == "173.73"
+
+
+def test_position_card_when_only_yearly_targets():
+    row = {"side": "SELL", "trade_type": "position", "zone": [61000.0, 61200.0], "members": ["2025 2"],
+           "roles": ["equilibrium"], "entry": 61553.4, "stop": 62600.0, "extreme": 62500.0,
+           "targets": [{"name": "P1", "price": 47300.0, "rr": 13.6, "pct": 23.2, "level": "B3 3"}]}
+    txt = sniper.card("BTC/USD", row)
+    assert txt.startswith("📈 *POSITION TRADE SELL — BTC/USD*") and "23.2%" in txt
+    row.update(trade_type="swing", targets=[{"name": "TP1", "price": 58000.0, "rr": 3.4}],
+               position_targets=[{"name": "P1", "price": 47300.0, "pct": 23.2}])
+    assert "Position runner (yearly CBDR): P1 47300.00 (23.2%)" in sniper.card("BTC/USD", row)

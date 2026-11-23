@@ -32,7 +32,8 @@ LOOKBACK = int(config("SNIPER_LOOKBACK_H", default="12"))
 DEFAULT_SYMBOLS = str(config("SNIPER_SYMBOLS", default="EUR/USD,GBP/USD,USD/JPY,XAU/USD,BTC/USD"))
 STOCKS = str(config("SNIPER_STOCKS", default="NVDA"))           # US stocks (TwelveData / Polygon)
 ENTRY_TFS = tuple(x.strip() for x in str(config("SNIPER_ENTRY_TFS", default="1h,4h")).split(","))
-MAX_TARGET_PCT = float(config("SNIPER_MAX_TARGET_PCT", default="0.12"))
+MAX_TARGET_PCT = float(config("SNIPER_MAX_TARGET_PCT", default="0.12"))   # swing horizon;
+#   anything further is a POSITION target from the yearly CBDR ranges (position_targets)
 
 
 def roles_of(members: Sequence[str]) -> List[str]:
@@ -167,6 +168,30 @@ def candidates(r: Dict, bars: Sequence[Dict]) -> List[Dict]:
     return out
 
 
+def position_targets(r: Dict, side: str, entry: float, stop: float, n: int = 3) -> List[Dict]:
+    """Yearly-CBDR levels BEYOND the swing horizon (> SNIPER_MAX_TARGET_PCT): the
+    position-trade objectives — yearly ranges move long-term, so they are held, not
+    scalped. Next clusters in the trade direction, ≥ 1R apart, prices > 0."""
+    risk = abs(entry - stop)
+    if risk <= 0:
+        return []
+    far = sorted((c for c in r.get("clusters") or []
+                  if (c["mid"] > entry if side == "BUY" else c["mid"] < entry)
+                  and c["mid"] > 0 and abs(c["mid"] - entry) > MAX_TARGET_PCT * entry),
+                 key=lambda c: abs(c["mid"] - entry))
+    out, last = [], None
+    for c in far:
+        if last is not None and abs(c["mid"] - last) < risk:
+            continue
+        move = abs(c["mid"] - entry)
+        out.append({"name": f"P{len(out) + 1}", "price": c["mid"], "rr": round(move / risk, 2),
+                    "pct": round(100 * move / entry, 1), "level": ", ".join(c["members"][:2])})
+        last = c["mid"]
+        if len(out) == n:
+            break
+    return out
+
+
 def targets_from(r: Dict, side: str, entry: float, stop: float) -> List[Dict]:
     from services.trade_gate import MIN_RR
     risk = abs(entry - stop)
@@ -215,12 +240,19 @@ def card(sym: str, s: Dict) -> str:
     trig = s.get("trigger") or "1h CISD"
     conf = f" + {', '.join(s['confirmations'])}" if s.get("confirmations") else ""
     mem = s["members"][:4] + ([f"+{len(s['members']) - 4} more"] if len(s["members"]) > 4 else [])
-    lines = [f"🎯 *SNIPER {s['side']} — {sym}* ({trig}{conf} at the artillery's level)",
+    head = ("📈 *POSITION TRADE" if s.get("trade_type") == "position" else "🎯 *SNIPER")
+    lines = [f"{head} {s['side']} — {sym}* ({trig}{conf} at the artillery's level)",
              f"Zone {px(sym, s['zone'][0])}–{px(sym, s['zone'][1])}: " + ", ".join(mem),
              f"Roles: {', '.join(s['roles']) or '—'}"
              + (f" · {rs['role']} held {rs['held']}/{rs['n']} (recent {rs['recent_rate']:.0%})" if rs else ""),
              f"Entry {px(sym, s['entry'])} · SL {px(sym, s['stop'])} (sweep {px(sym, s['extreme'])})",
-             "   " + " · ".join(f"{t['name']} {px(sym, t['price'])} ({t['rr']}R)" for t in s["targets"])]
+             "   " + " · ".join(f"{t['name']} {px(sym, t['price'])} ({t['rr']}R"
+                                + (f", {t['pct']}%" if "pct" in t else "") + ")" for t in s["targets"])]
+    if s.get("trade_type") == "position":
+        lines.append("   _yearly CBDR objectives — a long-term hold; scale out at each P level_")
+    elif s.get("position_targets"):
+        lines.append("📈 Position runner (yearly CBDR): " + " · ".join(
+            f"{t['name']} {px(sym, t['price'])} ({t['pct']}%)" for t in s["position_targets"]))
     if s.get("intraday"):
         lines.append("⏱ also at: " + ", ".join(s["intraday"]))
     if s.get("council"):
@@ -339,6 +371,10 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             stop = sig["extreme"] - buf if c["side"] == "BUY" else sig["extreme"] + buf
             stop = tg.widen_stop(sym, c["side"], sig["entry"], stop)
             tps = targets_from(r, c["side"], sig["entry"], stop)
+            ptps = position_targets(r, c["side"], sig["entry"], stop)
+            trade_type = "swing"
+            if not tps and ptps:                # only yearly objectives → a POSITION trade
+                tps, trade_type = ptps, "position"
             stats = cl.score(stats_all, symbol=None)
             rs = cl.best_role(stats, row["roles"])
             weekly = await tg.weekly_profile(sym)
@@ -358,7 +394,9 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             if fit:
                 g["reasons"].append(fit)
             g["allow"] = not g["reasons"]
-            row.update(entry=sig["entry"], extreme=sig["extreme"], stop=stop, targets=tps,
+            row.update(trade_type=trade_type,
+                       position_targets=ptps if trade_type == "swing" else [],
+                       entry=sig["entry"], extreme=sig["extreme"], stop=stop, targets=tps,
                        role_stats=rs, gate=g, council=cv)
             out.append(row)
         # one card per market + side: the best-backed shot (most council votes, most anchors)
