@@ -22,3 +22,4 @@ class LiveCase(Base):
     status = Column(String, index=True, default="pending")   # pending | held | broke
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     note = Column(Text)
+    council = Column(Text)                    # JSON {agent: vote} at the time of the shot

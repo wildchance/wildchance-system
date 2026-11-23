@@ -52,7 +52,8 @@ def test_card_lines_eurusd_first_signal():
     assert lines[0].startswith("*Lots*") and "SL 10.0 pips" in lines[0]
     assert "`2.5k`: TP 0.03 (+$13.65/−$3)" in lines[1]
     assert "`5k`: TP 0.06" in lines[2]
-    assert card_lines("US500", 6000, 5950, [{"name": "TP", "price": 6100}]) == []   # not FX
+    idx = card_lines("US500", 6000, 5950, [{"name": "TP", "price": 6100}])         # indices now sized
+    assert idx and "SL 500.0 pips" in idx[0]                                         # 50 pts = 500 pips
 
 
 def test_card_lines_jpy_and_cap():

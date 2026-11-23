@@ -25,12 +25,31 @@ TARGET_PCT = 0.52 / 100                                # $13 on 2.5k (sheet); 5k
 # prop CFDs: 1 lot = 1 BTC, so $1 move = $1 per lot).
 from decouple import config as _config
 BTC_PIP = float(_config("BTC_PIP", default="1.0"))
+# Index CFDs: pip = 0.1 point (the owner's flash cards: US30 +306.43 pts = +3,064.3 pips),
+# 1 lot = INDEX_USD_PER_POINT dollars per full point. Stock CFDs: pip = $0.01,
+# 1 lot = STOCK_LOT_SHARES shares. Set both to your broker's contract spec.
+INDEX_USD_PER_POINT = float(_config("INDEX_USD_PER_POINT", default="1"))
+STOCK_LOT_SHARES = float(_config("STOCK_LOT_SHARES", default="1"))
+INDICES = ("NAS100", "US30", "SPX500", "US500", "SPX", "GER40", "DE40", "UK100", "JP225", "US2000", "DXY")
+
+
+def is_index(symbol: str) -> bool:
+    return symbol.upper().replace("/", "").startswith(INDICES)
+
+
+def is_stock(symbol: str) -> bool:
+    s = symbol.upper().replace("/", "")
+    return s.isalpha() and len(s) <= 5 and not is_index(s)
 BTC_CONTRACT_SIZE = float(_config("BTC_CONTRACT_SIZE", default="1"))
 
 
 def pip_value_per_lot(symbol: str, price: Optional[float] = None) -> Optional[float]:
     """USD value of 1 pip for 1.00 standard lot. USD-quoted pairs = $10; USDxxx needs
     the price (10 / price × … ); crosses need a conversion → None (pass it explicitly)."""
+    if is_index(symbol):
+        return INDEX_USD_PER_POINT * 0.1                   # pip = 0.1 point
+    if is_stock(symbol):
+        return STOCK_LOT_SHARES * 0.01                     # pip = $0.01 per share
     s = symbol.upper().replace("/", "")[:6]
     if s.startswith(("BTC", "XBT")):                       # 1 lot = N coins, pip = $1
         return BTC_CONTRACT_SIZE * BTC_PIP
@@ -44,6 +63,10 @@ def pip_value_per_lot(symbol: str, price: Optional[float] = None) -> Optional[fl
 
 def pip_size(symbol: str) -> Optional[float]:
     s = symbol.upper().replace("/", "")
+    if is_index(s):
+        return 0.1
+    if is_stock(s):
+        return 0.01
     if s.startswith(("XAU", "GOLD")):
         return 0.1
     if s.startswith(("BTC", "XBT")):

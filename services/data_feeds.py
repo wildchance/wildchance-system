@@ -65,6 +65,9 @@ async def ensure_loaded() -> None:
         return
     _persist["loaded"] = True
     from services import data_store
+    macro, _ = await data_store.get("macro")
+    if isinstance(macro, dict) and not _macro:
+        _macro.update(macro)
     saved, _ = await data_store.get("feed_health")
     for src, h in (saved or {}).items():
         if src not in _health and isinstance(h, dict):
@@ -382,8 +385,68 @@ async def yahoo_daily(symbol: str) -> List[Bar]:
     return bars
 
 
+# ---- Dukascopy (Swiss bank) — LZMA-compressed binary daily candles, FX + metals ~2003→
+DUKA_START = 2003
+
+
+def duka_point(symbol: str) -> float:
+    s = _s(symbol)
+    return 1e-3 if s.endswith("JPY") or s.startswith(("XAU", "XAG")) else 1e-5
+
+
+def parse_duka_candles(raw: bytes, year: int, point: float) -> List[Bar]:
+    """One yearly BID_candles_day_1.bi5: LZMA, then 24-byte big-endian records
+    (seconds-from-Jan-1 uint32, open, close, low, high as uint32 × point, volume float)."""
+    import lzma
+    import struct
+    if not raw:
+        return []
+    try:
+        data = lzma.decompress(raw)
+    except lzma.LZMAError:
+        return []
+    start = dt.datetime(year, 1, 1, tzinfo=dt.timezone.utc)
+    out = []
+    for off in range(0, len(data) - 23, 24):
+        t, o, c, lo, hi, vol = struct.unpack(">IIIIIf", data[off:off + 24])
+        if not (o and c and lo and hi) or vol <= 0:           # weekends / holidays are empty
+            continue
+        d = (start + dt.timedelta(seconds=t)).date()
+        out.append((d, round(o * point, 6), round(hi * point, 6), round(lo * point, 6), round(c * point, 6)))
+    return out
+
+
+async def dukascopy_daily(symbol: str) -> List[Bar]:
+    s = _s(symbol)
+    if not (len(s) == 6 and s.isalpha()):                     # FX + XAUUSD / XAGUSD
+        return []
+    hit = _cached(f"duka:{s}", 7 * 86400)
+    if hit is not None:
+        return hit
+    bars: List[Bar] = []
+    point = duka_point(s)
+    t0 = time.time()
+    try:
+        async with httpx.AsyncClient(timeout=20, headers=UA) as c:
+            for y in range(DUKA_START, dt.date.today().year + 1):
+                r = await c.get(f"https://datafeed.dukascopy.com/datafeed/{s}/{y}/BID_candles_day_1.bi5")
+                if r.status_code == 200:
+                    bars += parse_duka_candles(r.content, y, point)
+                elif r.status_code != 404:
+                    record("dukascopy", False, err=f"HTTP {r.status_code} ({y})")
+                    break
+    except Exception as e:
+        record("dukascopy", False, err=f"{type(e).__name__}: {e}"[:160])
+        return []
+    record("dukascopy", bool(bars), (time.time() - t0) * 1000, "" if bars else "no rows")
+    bars = sorted(set(bars))
+    if bars:
+        _cache[f"duka:{s}"] = (time.time(), bars)
+    return bars
+
+
 DAILY_SOURCES = {"stooq": stooq_daily, "tiingo": tiingo_daily, "binance": binance_daily,
-                 "twelvedata": twelvedata_daily, "yahoo": yahoo_daily}
+                 "twelvedata": twelvedata_daily, "yahoo": yahoo_daily, "dukascopy": dukascopy_daily}
 
 
 async def daily_chain(symbol: str, min_bars: int = 200) -> Tuple[List[Bar], Optional[str]]:
@@ -512,6 +575,8 @@ async def refresh_macro() -> Dict:
         out["crypto_global"] = r
     if out:
         _macro.update(out, _t=time.time())
+        from services import data_store
+        await data_store.put("macro", {k: v for k, v in _macro.items() if k != "_t"})
     await persist(force=True)
     return {k: v for k, v in _macro.items() if k != "_t"}
 

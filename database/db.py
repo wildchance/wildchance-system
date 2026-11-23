@@ -113,6 +113,8 @@ _GOLD_POSITION_MIGRATIONS = [
     "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS account VARCHAR",
     # Members can log in with email + password (the API key still works).
     "ALTER TABLE saas_users ADD COLUMN IF NOT EXISTS password_hash VARCHAR",
+    # Council votes stored with each live sniper shot (agent scoring).
+    "ALTER TABLE live_cases ADD COLUMN IF NOT EXISTS council TEXT",
     # Partial scale-out + runner break-even metadata (the 250/500 exit plan).
     "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS group_id VARCHAR",
     "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS scale_role VARCHAR",

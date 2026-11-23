@@ -40,3 +40,17 @@ async def levels(base: str, quote: str):
     sym = f"{base.upper()}/{quote.upper()}"
     bars = await _bars_1h(sym, 48, tz="America/New_York")
     return {"symbol": sym, "levels": sorted(sl.all_levels(sym, bars), key=lambda x: -x["price"])}
+
+
+@router.get("/agents")
+async def agents():
+    """How each council agent has scored on resolved live shots (muted = proven wrong)."""
+    from services import council as cn
+    allc = await cl.all_cases()
+    seen, live = set(), []
+    for c in allc:
+        if c.get("source") == "live" and c.get("case_id") not in seen:
+            seen.add(c.get("case_id"))
+            live.append(c)
+    return {"resolved_shots": sum(1 for c in live if c["outcome"] in ("held", "broke")),
+            "mute_below": cn.MUTE_BELOW, "min_votes": cn.MUTE_MIN_N, "agents": cn.agent_scores(live)}
