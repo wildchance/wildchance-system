@@ -68,3 +68,11 @@ def test_signal_engine_card_includes_ladder():
     sig = build_manual("EUR/USD", "short", 1.09701, 1.09801, [1.09246], balance=2500)
     card = format_card(sig)
     assert "*Lots*" in card and "`2.5k`" in card
+
+
+def test_too_wide_stop_says_skip_not_zero_lots():
+    from propfirm.target_lots import card_lines
+    lines = card_lines("XAU/USD", 3601.38, 3571.69, [{"name": "TP2", "price": 3660.75}],
+                       balances=[2500, 25000])
+    assert "`2.5k`: ⛔ skip — stop too wide (0.01 lot risks $29.69 = 1.19% > 0.5%)" in lines
+    assert "`25k`: TP2 0.03 (+$178.11/−$89.07)" in lines             # big account can take it

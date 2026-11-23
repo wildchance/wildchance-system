@@ -80,7 +80,11 @@ def card_lines(symbol: str, entry: float, stop: float, targets: List[Dict],
             r = lot_for(b, tp_pips, sl_pips, pv, max_risk_pct=max_risk_pct)
             flag = "*" if r["capped"] else ""
             parts.append(f"{t.get('name', 'TP')} {r['lot']:.2f}{flag} (+${r['profit']:g}/−${r['risk']:g})")
-        if parts:
+        min_risk = round(0.01 * sl_pips * pv, 2)          # 0.01 lot at this stop
+        if parts and min_risk > b * max_risk_pct / 100:   # even the minimum lot over-risks
+            out.append(f"`{b / 1000:g}k`: ⛔ skip — stop too wide (0.01 lot risks ${min_risk:g} = "
+                       f"{100 * min_risk / b:.2f}% > {max_risk_pct}%)")
+        elif parts:
             out.append(f"`{b / 1000:g}k`: " + " · ".join(parts))
     if any("*" in l for l in out[1:]):
         out.append("_* capped by the risk limit — pays less than the target_")
