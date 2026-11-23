@@ -162,6 +162,11 @@ async def auto_history(symbol: str) -> Optional[Dict]:
     hit = _auto_hist.get(_sym(symbol))
     if hit and _t.time() - hit["_t"] < 7 * 86400:
         return hit["r"]
+    from services import data_store                      # survives Render restarts
+    saved, at = await data_store.get(f"baserates:{_sym(symbol)}")
+    if saved and at and (dt.datetime.now(dt.timezone.utc) - at.replace(tzinfo=at.tzinfo or dt.timezone.utc)).days < 7:
+        _auto_hist[_sym(symbol)] = {"r": saved, "_t": _t.time()}
+        return saved
     try:
         from services.data_feeds import daily_chain
         from wildchance.history_import import yearly_rows
@@ -172,7 +177,45 @@ async def auto_history(symbol: str) -> Optional[Dict]:
           for r in yearly_rows(bars) if r["complete"] and r["peak_up"] is not None]
     res = summarise(ys, source=f"auto-{src}") if src else None
     _auto_hist[_sym(symbol)] = {"r": res, "_t": _t.time()}
+    if res:
+        await data_store.put(f"baserates:{_sym(symbol)}", res)
     return res
+
+
+UP_STEPS = (1.5, 2.0, 2.5, 3.0, 4.0)
+DOWN_STEPS = (-0.5, -1.0, -1.5, -2.0, -3.0)
+
+
+def reach_pct(history: Optional[Dict], k: float) -> Optional[int]:
+    """How often (in % of years) a year's projection travelled to ``k`` box units —
+    conservative: uses the next threshold at or beyond k. None without base rates."""
+    if not history:
+        return None
+    if 0 <= k <= 1:
+        return 100
+    if k > 1:
+        steps, table = UP_STEPS, history.get("pct_reach_up") or {}
+        t = next((s for s in steps if s >= k - 1e-9), None)
+        if t is None:                                    # beyond 4: at most the 4 rate, halved
+            return round((table.get("4") or 0) / 2)
+    else:
+        steps, table = DOWN_STEPS, history.get("pct_reach_down") or {}
+        t = next((s for s in steps if s <= k + 1e-9), None)
+        if t is None:
+            return round((table.get("-3") or 0) / 2)
+    return table.get(f"{t:g}")
+
+
+def lean(history: Optional[Dict]) -> Optional[str]:
+    """Long-term direction of the asset from its yearly closes vs the Q1 box."""
+    if not history:
+        return None
+    edge = (history.get("pct_close_above_box") or 0) - (history.get("pct_close_below_box") or 0)
+    if edge >= 20 and (history.get("median_up") or 0) >= 1.0:
+        return "BUY"
+    if edge <= -20:
+        return "SELL"
+    return None
 
 
 def box_for(symbol: str, daily: Sequence[DatedOHLC], year: int) -> Optional[Dict]:

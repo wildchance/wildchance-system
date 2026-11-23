@@ -32,6 +32,7 @@ LOOKBACK = int(config("SNIPER_LOOKBACK_H", default="12"))
 DEFAULT_SYMBOLS = str(config("SNIPER_SYMBOLS", default="EUR/USD,GBP/USD,USD/JPY,XAU/USD,BTC/USD"))
 STOCKS = str(config("SNIPER_STOCKS", default="NVDA"))           # US stocks (TwelveData / Polygon)
 ENTRY_TFS = tuple(x.strip() for x in str(config("SNIPER_ENTRY_TFS", default="1h,4h")).split(","))
+POSITION_MIN_HIST = int(config("POSITION_MIN_HIST_PCT", default="15"))   # P1 must be reached ≥15 % of years
 MAX_TARGET_PCT = float(config("SNIPER_MAX_TARGET_PCT", default="0.12"))   # swing horizon;
 #   anything further is a POSITION target from the yearly CBDR ranges (position_targets)
 
@@ -179,13 +180,20 @@ def position_targets(r: Dict, side: str, entry: float, stop: float, n: int = 3) 
                   if (c["mid"] > entry if side == "BUY" else c["mid"] < entry)
                   and c["mid"] > 0 and abs(c["mid"] - entry) > MAX_TARGET_PCT * entry),
                  key=lambda c: abs(c["mid"] - entry))
+    from services.yearly_cbdr import position as _pos, reach_pct
+    box = (r.get("years") or [None])[-1]                # latest completed yearly box
+    hist = r.get("history")
     out, last = [], None
     for c in far:
         if last is not None and abs(c["mid"] - last) < risk:
             continue
         move = abs(c["mid"] - entry)
-        out.append({"name": f"P{len(out) + 1}", "price": c["mid"], "rr": round(move / risk, 2),
-                    "pct": round(100 * move / entry, 1), "level": ", ".join(c["members"][:2])})
+        p = {"name": f"P{len(out) + 1}", "price": c["mid"], "rr": round(move / risk, 2),
+             "pct": round(100 * move / entry, 1), "level": ", ".join(c["members"][:2])}
+        if box and hist:
+            k = _pos({"low": box["box_low"], "range": box["box_high"] - box["box_low"]}, c["mid"])
+            p["hist"] = reach_pct(hist, k)              # % of years that travelled this far
+        out.append(p)
         last = c["mid"]
         if len(out) == n:
             break
@@ -247,12 +255,16 @@ def card(sym: str, s: Dict) -> str:
              + (f" · {rs['role']} held {rs['held']}/{rs['n']} (recent {rs['recent_rate']:.0%})" if rs else ""),
              f"Entry {px(sym, s['entry'])} · SL {px(sym, s['stop'])} (sweep {px(sym, s['extreme'])})",
              "   " + " · ".join(f"{t['name']} {px(sym, t['price'])} ({t['rr']}R"
-                                + (f", {t['pct']}%" if "pct" in t else "") + ")" for t in s["targets"])]
+                                + (f", {t['pct']}%" if "pct" in t else "")
+                                + (f", hist {t['hist']}%" if t.get("hist") is not None else "") + ")"
+                                for t in s["targets"])]
     if s.get("trade_type") == "position":
         lines.append("   _yearly CBDR objectives — a long-term hold; scale out at each P level_")
     elif s.get("position_targets"):
         lines.append("📈 Position runner (yearly CBDR): " + " · ".join(
-            f"{t['name']} {px(sym, t['price'])} ({t['pct']}%)" for t in s["position_targets"]))
+            f"{t['name']} {px(sym, t['price'])} ({t['pct']}%"
+            + (f", hist {t['hist']}%" if t.get("hist") is not None else "") + ")"
+            for t in s["position_targets"]))
     if s.get("intraday"):
         lines.append("⏱ also at: " + ", ".join(s["intraday"]))
     if s.get("council"):
@@ -375,16 +387,25 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             trade_type = "swing"
             if not tps and ptps:                # only yearly objectives → a POSITION trade
                 tps, trade_type = ptps, "position"
+            if trade_type == "position" and tps[0].get("hist") is not None \
+                    and tps[0]["hist"] < POSITION_MIN_HIST:
+                # history says P1 is rarely reached → keep it a tactical trade, not a hold
+                held_reason = (f"position P1 reached in only {tps[0]['hist']}% of years "
+                               f"(< {POSITION_MIN_HIST}%)")
+            else:
+                held_reason = None
             stats = cl.score(stats_all, symbol=None)
             rs = cl.best_role(stats, row["roles"])
             weekly = await tg.weekly_profile(sym)
             g = tg.evaluate(sym, c["side"], sig["entry"], stop, [t["price"] for t in tps], weekly=weekly)
             if not tps:
                 g["reasons"].append("no target ≥ 1.3R")
+            if held_reason:
+                g["reasons"].append(held_reason)
             if rs and rs["n"] >= 3 and rs["recent_rate"] < MIN_RATE:
                 g["reasons"].append(f"role {rs['role']} recent hit-rate {rs['recent_rate']:.0%} < {MIN_RATE:.0%}")
             from services import council as cn
-            cv = await cn.convene(sym, c["side"], yearly=r, role_stats=rs)
+            cv = await cn.convene(sym, c["side"], yearly=r, role_stats=rs, trade_type=trade_type)
             if cv["verdict"] != "GO":
                 g["reasons"].append(f"council {cv['verdict']}: " + (cv.get("need") or
                                     (f"veto {','.join(cv['veto'])}" if cv["veto"] else f"score {cv['score']}")))

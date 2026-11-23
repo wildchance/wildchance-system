@@ -19,6 +19,7 @@ router = APIRouter(prefix="/data", tags=["data"])
 
 @router.get("/sources")
 async def sources():
+    await df.ensure_loaded()                 # scores survive restarts (saved in Neon)
     return df.status()
 
 
@@ -32,6 +33,19 @@ async def history(base: str, quote: str):
     from services.yearly_cbdr import auto_history
     return {"symbol": f"{base.upper()}/{quote.upper()}",
             "base_rates": await auto_history(f"{base.upper()}/{quote.upper()}")}
+
+
+@router.get("/base-rates")
+async def base_rates(symbols: Optional[str] = Query(None)):
+    """Historical base rates for every scanned market (cached a week, saved in Neon)."""
+    from services.sniper import DEFAULT_SYMBOLS, STOCKS
+    from services.yearly_cbdr import auto_history
+    syms = [s.strip().upper() for s in (symbols or DEFAULT_SYMBOLS + "," + STOCKS + ",NAS100,US30,ETH/USD").split(",")
+            if s.strip()]
+    out = {}
+    for s in syms:
+        out[s] = await auto_history(s)
+    return out
 
 
 @router.get("/macro")

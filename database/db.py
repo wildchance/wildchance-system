@@ -140,6 +140,7 @@ async def init_db():
     import models.cron_model                 # /cron/tick slot claims
     import models.signal_feed_model          # members' signal feed
     import models.case_model                 # sniper live cases (held / broke)
+    import models.data_cache_model           # persisted learning (feed health, base rates)
     async with engine.begin() as conn:
         # create_all only — never drop. The forward test accumulates months of
         # data; dropping on startup would silently wipe it. create_all is
