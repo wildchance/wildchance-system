@@ -133,6 +133,9 @@ def jobs() -> List[Job]:
             days=WEEKDAYS),
         Job("asia_london_b", NY, (3, 4, 5, 6, 7, 8, 9, 10, 11), 35, ((G, "/cbdr/session/run?notify=true"),),
             days=WEEKDAYS),
+        # Weekly walk-forward backtests (Sunday, before the open) → Telegram scorecards
+        Job("backtest_weekly", NY, (12,), 10, ((G, "/research/backtest/all?engine=z&notify=true"),
+                                              (G, "/research/backtest/all?engine=asia&notify=true")), days=(6,)),
         # Currency strength matrix + today's rotation, before London
         Job("fx_strength_morning", UTC, (6,), 40, ((G, "/fx/strength?notify=true"),), days=WEEKDAYS),
         # Economic calendar — refresh 4×/day, learn each release's move nightly, week card Sunday

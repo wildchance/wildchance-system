@@ -27,6 +27,8 @@ to GO · VETO.
 
 from __future__ import annotations
 
+import math
+
 import datetime as dt
 from typing import Dict, List, Optional
 
@@ -197,6 +199,12 @@ def vote_mirofish(m: Optional[Dict], side: str) -> Dict:
 
 MUTE_BELOW = float(config("AGENT_MUTE_BELOW", default="0.40"))   # accuracy floor
 MUTE_MIN_N = int(config("AGENT_MUTE_MIN_N", default="8"))         # votes before judging
+# Weighted council: each vote counts by the agent's MEASURED accuracy (log-odds), giving a
+# probability that TP1 comes before the stop. Enforced (GO needs ≥ MIN_PROB) only once the
+# graded history holds PROB_MIN_CASES resolved signals; the 4-for / 0-against floor stays.
+MIN_PROB = float(config("COUNCIL_MIN_PROB", default="0.60"))
+PROB_MIN_CASES = int(config("COUNCIL_PROB_MIN_CASES", default="20"))
+BASE_RATE = float(config("COUNCIL_BASE_RATE", default="0.50"))
 
 
 def agent_scores(cases: List[Dict]) -> Dict[str, Dict]:
@@ -216,6 +224,25 @@ def agent_scores(cases: List[Dict]) -> Dict[str, Dict]:
         a["accuracy"] = round((a["right"] + 1) / (a["n"] + 2), 2)
         a["muted"] = a["n"] >= MUTE_MIN_N and a["accuracy"] < MUTE_BELOW
     return out
+
+
+def probability(votes: List[Dict], scores: Optional[Dict[str, Dict]], base: float = BASE_RATE) -> Dict:
+    """P(TP1 before stop) = sigmoid(logit(base) + Σ vote · logit(agent accuracy)).
+    Unscored agents count at a weak 0.55; muted agents (vote 0) add nothing."""
+    def logit(p):
+        p = min(0.95, max(0.05, p))
+        return math.log(p / (1 - p))
+    x = logit(base)
+    graded = 0
+    for v in votes:
+        if not v.get("vote"):
+            continue
+        s = (scores or {}).get(v["agent"])
+        acc = s["accuracy"] if s and s.get("n", 0) >= 3 else 0.55
+        graded = max(graded, s.get("n", 0) if s else 0)
+        x += v["vote"] * logit(acc)
+    p = 1 / (1 + math.exp(-x))
+    return {"prob": round(p, 3), "graded": graded}
 
 
 def apply_scores(votes: List[Dict], scores: Optional[Dict[str, Dict]]) -> List[Dict]:
@@ -314,10 +341,17 @@ async def convene(symbol: str, side: str, yearly: Optional[Dict] = None,
              vote_plan(plans, side, price, tol),
              vote_mirofish(mf, side)]
     votes = apply_scores(votes, scores)
-    return {"symbol": symbol, "side": side, **decide(votes)}
+    d = decide(votes)
+    pr = probability(votes, scores)
+    cases = max((s.get("n", 0) for s in (scores or {}).values()), default=0)
+    d.update(prob=pr["prob"], prob_enforced=cases >= PROB_MIN_CASES)
+    if d["verdict"] == "GO" and d["prob_enforced"] and pr["prob"] < MIN_PROB:
+        d.update(verdict="HOLD", need=f"weighted council P(TP1) {pr['prob']:.0%} < {MIN_PROB:.0%}")
+    return {"symbol": symbol, "side": side, **d}
 
 
 def summary(c: Dict) -> str:
     icon = {1: "✅", -1: "❌", 0: "▫️"}
-    return (f"🏛 Council *{c['verdict']}* ({c['for']} for / {c['against']} against): "
+    p = (f" · P(TP1) {c['prob']:.0%}" + ("" if c.get("prob_enforced") else " (learning)")) if c.get("prob") is not None else ""
+    return (f"🏛 Council *{c['verdict']}* ({c['for']} for / {c['against']} against{p}): "
             + " ".join(f"{icon[v['vote']]}{v['agent']}" for v in c["votes"]))

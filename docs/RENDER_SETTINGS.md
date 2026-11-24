@@ -246,3 +246,14 @@ daily / weekly journal reports include the signal tracker's win / loss / breakev
   now measures 12 crosses on every release). Card once per event set per day.
 - `/fx/exposure` — open tracked signals netted per currency; a card that would push any currency beyond `EXPOSURE_MAX`
   (2) units is blocked in the council gate and the sniper. `STRENGTH_MIN_GAP` (0.5) = minimum score gap for a pairing.
+
+## Research layer (A–C)
+
+A. **Point-in-time store** — table `signal_snapshots`: every tracked card with what the system knew at send time
+(levels, council votes, currency strength + gap, blocked currencies, COT / retail read, options levels, VIX regime,
+next events, hour / weekday) and, once resolved, the result and realised R. Export: `/research/snapshots`.
+B. **Walk-forward backtests** — `/research/backtest?engine=z|asia&symbol=EUR/USD`, `/research/backtest/all?engine=…`;
+Sunday 12:10 NY scorecards on Telegram. Win rate, expectancy R, profit factor, max drawdown R, Sharpe, 4-fold stability.
+C. **Weighted council** — P(TP1 before stop) from each agent's measured accuracy (log-odds); shown on every card,
+enforced once agents have `COUNCIL_PROB_MIN_CASES` (20) graded signals: GO also needs ≥ `COUNCIL_MIN_PROB` (0.60).
+`COUNCIL_BASE_RATE` (0.50) = prior. The 4-for / 0-against floor stays. Calibration: `/research/council`.
