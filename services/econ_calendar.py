@@ -35,6 +35,9 @@ _meta: Dict = {"last_try": 0.0, "last_ok": 0.0, "blocked_until": 0.0}
 # markets used to measure each currency's event moves
 PROBES = {"USD": ("EUR/USD", "XAU/USD"), "EUR": ("EUR/USD",), "GBP": ("GBP/USD",), "JPY": ("USD/JPY",),
           "AUD": ("AUD/USD",), "NZD": ("NZD/USD",), "CAD": ("USD/CAD",), "CHF": ("USD/CHF",)}
+# crosses measured on EVERY high/medium release → the rotation knows which pairs sit still
+CROSS_PROBES = ("EUR/GBP", "EUR/CHF", "EUR/AUD", "GBP/AUD", "EUR/NZD", "GBP/NZD", "EUR/JPY", "GBP/JPY", "AUD/JPY",
+                "AUD/NZD", "EUR/CAD", "GBP/CHF")
 USD_ASSETS = ("XAU", "XAG", "BTC", "ETH", "NAS", "US30", "US100", "US500", "SPX", "US2000", "NVDA")
 
 _events: List[Dict] = []
@@ -190,7 +193,7 @@ async def learn(now: Optional[dt.datetime] = None) -> Dict:
     learned = []
     for e in todo:
         t = dt.datetime.fromisoformat(e["time_utc"])
-        for sym in PROBES.get(e["ccy"], ()):
+        for sym in PROBES.get(e["ccy"], ()) + CROSS_PROBES:
             if sym not in bars_cache:
                 try:
                     bars_cache[sym] = await fetch_ohlc_raw(sym, "1h", 96, timezone="UTC") or []

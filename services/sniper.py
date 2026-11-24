@@ -399,6 +399,13 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             syms += [s for s in hot_symbols() if s not in syms]
         except Exception:
             pass
+        try:                                   # hedge-fund rotation: strongest vs weakest, and away from event currencies
+            from services import fx_rotation
+            rot = await fx_rotation.rotation()
+            extra = fx_rotation.rotation_symbols(rot) or [p["symbol"] for p in (await fx_rotation.strength())["pairings"][:2]]
+            syms += [s for s in extra if s not in syms]
+        except Exception:
+            pass
     resolved = await resolve_pending()
     stats_all = await cl.all_cases()
     from services import council as _cn                   # grade agents once per scan
@@ -544,6 +551,9 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             if notify:
                 from services.realtime import alert_once
                 key = f"sniper:{sym}:{side}:{dt.date.today()}"
+                from services import fx_rotation as _fxr
+                if not (await _fxr.exposure_for(sym, side))["allow"]:
+                    continue                                       # same currency bet already on
                 promoted = f"{sym}:{side}:{dt.date.today()}" in _held
                 text = ("⬆️ *PROMOTED* — held earlier, now 4 agents agree\n" if promoted else "") + card(sym, row)
                 if await alert_once(key, text, ttl_hours=24):
