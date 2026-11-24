@@ -34,7 +34,7 @@ def ops_token() -> Optional[str]:
 # their own auth (audit Nov-24). The ops gate (or the scheduler's internal token) applies.
 PRIVATE_EXACT = {"/bridge/status", "/billing/expire", "/cron/jobs", "/execution/status",
                  "/execution/routing",
-                 "/journal/stats", "/journal/trades", "/journal/report"}
+                 "/journal/stats", "/journal/trades", "/journal/report"}  # /ops/* is never public
 
 
 def is_public(path: str) -> bool:
