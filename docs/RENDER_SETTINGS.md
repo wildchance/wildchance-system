@@ -224,3 +224,10 @@ Journal: `/signals/stats`, open: `/signals/open`.
 
 `data/retail_levels.csv` (owner paste of Myfxbook community outlook): trapped retail longs' / shorts' average entry
 prices become 'retail avg' zones for the sweeper and Asia→London targets.
+
+## Weekly data audit
+
+`/ops/data-audit` (also a line in `/ops/checklist`; sent privately to `OWNER_CHAT_ID` every Saturday 09:30 UTC):
+vol-screen strikes (future expiry left, screenshot age > `DATA_STALE_DAYS` (7), strike order, distance from live price
+vs 3× the expiry's implied move, interpolated / cropped screens), CME chains (bulletin age, strike count, put/call,
+front future vs live), Myfxbook paste age, calendar refresh, failing feeds.

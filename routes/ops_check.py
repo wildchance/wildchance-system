@@ -95,6 +95,9 @@ CHECKS: List[Tuple[str, str, Callable]] = [
         else ("❌", d.get("reason") or "no chain"))),
     ("gold weekly map", "/cbdr/week/XAU/USD", _judge_ok("ok", "Monday box found")),
     ("data sources", "/data/sources", _judge_any("health table")),
+    ("data audit (options, CME, retail)", "/ops/data-audit", lambda d: (
+        "✅" if "❌ 0" in d.get("summary", "") and "⚠️ 0" in d.get("summary", "")
+        else "❌" if "❌ 0" not in d.get("summary", "") else "⚠️", d.get("summary", ""))),
     ("council agents", "/sniper/agents", _judge_any("scores table")),
 ]
 
@@ -156,3 +159,15 @@ async def checklist(fresh: bool = False):
                        + (f" · {pending} still running — reload in a minute" if pending else "")
                        + f" · {len(missing)} settings missing",
             "todo": todo, "checks": results, "missing_settings": missing}
+
+
+
+@router.get("/data-audit")
+async def data_audit(notify: bool = False):
+    """Weekly audit of the options / CME / retail / calendar inputs (also sent to the owner)."""
+    from services import data_audit as da
+    rep = await da.run()
+    if notify:
+        from services.owner_notify import send
+        rep["sent"] = await send(da.message(rep))
+    return rep
