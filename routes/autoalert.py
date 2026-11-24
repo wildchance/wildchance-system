@@ -95,6 +95,9 @@ async def confluence_alerts(min_confidence: int = Query(None),
         card = se.format_card(sig)
         card = f"conf {s.get('confidence')} · {card}\n{cg['line']}"
         await _tg(card)
+        from services import signal_tracker
+        await signal_tracker.record(pair, side, sig["entry"], sig["stop_loss"],
+                                    [t["price"] for t in sig.get("targets") or []], "auto-cbdr")
         try:
             await wa_send(card.replace("*", "").replace("`", ""))
         except Exception:

@@ -124,6 +124,8 @@ def jobs() -> List[Job]:
         Job("cme_bulletin", UTC, (1, 14), 40, ((G, "/data/cme/refresh"),), days=WEEKDAYS),
         # weekend: privately remind the owner to upload Friday's bulletin if Render couldn't fetch it
         Job("cme_reminder_weekend", UTC, (9,), 15, ((G, "/data/cme/reminder?notify=true"),), days=(5, 6)),
+        # Signal tracker: every sent card followed to TP / SL, flash card on each TP (every 5 min)
+        *[Job(f"signal_track_{m:02d}", UTC, None, m, ((G, "/signals/check"),)) for m in range(0, 60, 5)],
         # Asian box → London trades (sweep-reclaim / breakout with Monday's bias), every 30 min
         Job("asia_london_a", NY, (3, 4, 5, 6, 7, 8, 9, 10, 11), 5, ((G, "/cbdr/session/run?notify=true"),),
             days=WEEKDAYS),

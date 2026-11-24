@@ -548,4 +548,7 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
                 if await alert_once(key, text, ttl_hours=24):
                     await _record(sym, row)
                     sent.append(sym)
+                    from services import signal_tracker
+                    await signal_tracker.record(sym, side, row["entry"], row["stop"],
+                                                [t["price"] for t in row["targets"]], "sniper")
     return {"resolved": resolved, "results": out, "notified": sent}

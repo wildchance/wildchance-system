@@ -231,6 +231,10 @@ async def scan(z_threshold: float = 2.0, notify: bool = False, max_age_s: int = 
             if cg["pass"] and await alert_once(
                     f"z:{r['symbol']}:{r['lean']}:{day}", card(r) + "\n" + cg["line"], ttl_hours=12):
                 sent.append(r["symbol"])
+                from services import signal_tracker
+                lv = r["levels"]
+                await signal_tracker.record(r["symbol"], r["lean"], lv["entry"], lv["stop"],
+                                            [lv.get("tp1"), lv.get("tp2")], "z-setup")
     return {"z_threshold": z_threshold, "cot_as_of": cot_latest(feed),
             "notify_grades": sorted(NOTIFY_GRADES), "setups": setups, "notified": sent,
             "held": [{"symbol": r["symbol"], "grade": r["grade"],
