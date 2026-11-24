@@ -73,6 +73,14 @@ async def _build(symbol: str, window: str, price: Optional[float]) -> dict:
     return out
 
 
+@router.get("/week/{base}/{quote}")
+async def week_map(base: str, quote: str, notify: bool = Query(False)):
+    """Monday's CBDR box → the week's SD map, direction from COT/retail (weekly profile
+    as tiebreak). Sent automatically Monday 20:10 New York."""
+    from services import weekly_map
+    return await weekly_map.run(f"{base.upper()}/{quote.upper()}", notify)
+
+
 @router.get("/windows")
 async def windows():
     return {k: {"label": w.label, "tz": w.tz, "interval": w.interval}

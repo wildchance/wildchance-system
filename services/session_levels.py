@@ -73,7 +73,8 @@ def grid(symbol: str, mean: Optional[float], n: int = GRID_N) -> List[Dict]:
             + [{"label": f"S{i}", "price": mean - i * step} for i in range(1, n + 1)])
 
 
-def option_strikes(symbol: str, today: Optional[dt.date] = None, path: str = STRIKES_CSV) -> List[Dict]:
+def option_strikes(symbol: str, today: Optional[dt.date] = None, path: str = STRIKES_CSV,
+                   price: Optional[float] = None) -> List[Dict]:
     today = today or dt.date.today()
     out: List[Dict] = []
     if os.path.exists(path):
@@ -91,6 +92,11 @@ def option_strikes(symbol: str, today: Optional[dt.date] = None, path: str = STR
                             out.append({"label": f"{name} {exp:%d-%b}", "price": float(r[col])})
                 except (KeyError, ValueError):
                     continue
+    try:                                   # free CBOE dealer levels (cached by the 6-hourly refresh)
+        from services.options_levels import cached_levels
+        out += [{"label": x["label"], "price": x["price"]} for x in cached_levels(symbol, price)]
+    except Exception:
+        pass
     if symbol.upper().replace("/", "").startswith("XAU"):
         try:
             from gold import options_flow as of
@@ -105,7 +111,8 @@ def option_strikes(symbol: str, today: Optional[dt.date] = None, path: str = STR
 def all_levels(symbol: str, bars_ny: Sequence[Dict], today: Optional[dt.date] = None) -> List[Dict]:
     s = session(bars_ny)
     mean = next((x["price"] for x in s if x["label"] == "midnight open"), None)
-    return s + grid(symbol, mean) + option_strikes(symbol, today)
+    last = bars_ny[-1]["close"] if bars_ny else None
+    return s + grid(symbol, mean) + option_strikes(symbol, today, price=last)
 
 
 def near(levels: Sequence[Dict], lo: float, hi: float, tol: float) -> List[str]:

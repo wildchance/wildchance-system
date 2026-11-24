@@ -119,3 +119,26 @@ async def snapshot(symbols: Optional[str] = Query(None)):
     macro = df.macro_cached()
     return {"as_of_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"), "prices": out,
             "vix": macro.get("vix"), "us_yields": macro.get("us_yields")}
+
+
+@router.get("/options-levels/{base}/{quote}")
+async def options_levels_pair(base: str, quote: str, price: Optional[float] = Query(None)):
+    return await _opt(f"{base.upper()}/{quote.upper()}", price)
+
+
+@router.get("/options-levels/{symbol}")
+async def options_levels_one(symbol: str, price: Optional[float] = Query(None)):
+    return await _opt(symbol.upper(), price)
+
+
+async def _opt(sym: str, price: Optional[float]):
+    """Dealer levels from CBOE's free delayed chains (GLD→gold, NDX→NAS100, DIA→US30)."""
+    from services import options_levels as ol
+    if price is None:
+        try:
+            from services.ohlc_service import fetch_ohlc_raw
+            bars = await fetch_ohlc_raw(sym, "1min", 2)
+            price = bars[-1]["close"] if bars else None
+        except Exception:
+            price = None
+    return await ol.run(sym, price)

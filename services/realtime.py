@@ -32,11 +32,15 @@ async def alert_once(key: str, text: str, ttl_hours: Optional[float] = None) -> 
     if key in _sent:
         return False
     _sent[key] = now
+    ok = None
     try:
         from services.telegram_service import send_telegram_message
-        await send_telegram_message(text)
+        ok = await send_telegram_message(text)
     except Exception:
-        pass
+        ok = False
+    if ok is False:                       # not delivered → forget it so the next tick retries
+        _sent.pop(key, None)
+        return False
     return True
 
 
