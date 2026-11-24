@@ -137,6 +137,12 @@ def evaluate(symbol: str, side: str, entry: float, stop: float, targets: List[fl
     if sb:
         reasons.append(sb)
     bo = blackout(symbol, now)
+    if not bo:
+        try:                                   # automatic calendar (Forex Factory export, adaptive)
+            from services.econ_calendar import blackout as cal_blackout
+            bo = cal_blackout(symbol, now)
+        except Exception:
+            bo = None
     if bo:
         reasons.append(bo)
     rr = best_rr(entry, stop, targets)

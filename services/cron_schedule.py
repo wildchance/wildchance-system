@@ -120,6 +120,11 @@ def jobs() -> List[Job]:
         # Trade journal summaries at the NY close (17:05) — daily on weekdays, weekly Friday
         Job("journal_daily", NY, (17,), 5, ((G, "/journal/report?period=day&notify=true"),), days=WEEKDAYS),
         Job("journal_weekly", NY, (17,), 10, ((G, "/journal/report?period=week&notify=true"),), days=(4,)),
+        # Economic calendar — refresh 4×/day, learn each release's move nightly, week card Sunday
+        Job("calendar_refresh", UTC, (0, 6, 12, 18), 15, ((G, "/data/calendar/refresh"),)),
+        Job("calendar_learn", UTC, (23,), 20, ((G, "/data/calendar/learn"),), days=WEEKDAYS),
+        Job("calendar_week_sun", NY, (17,), 30, ((G, "/data/calendar/refresh"), (G, "/data/calendar/week?notify=true")),
+            days=(6,)),
         # Sweeper drones — whole universe, 3×/day ahead of Asia, London and New York
         Job("sweeper_drones", UTC, (1, 9, 15), 30, ((P, "/sweep/run?notify=true"),), days=WEEKDAYS),
         # Monday's CBDR closes 20:00 NY → the week's map (SD ladder + COT direction)

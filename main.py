@@ -163,6 +163,15 @@ async def lifespan(app: FastAPI):
             _start()
         except Exception as e:
             _lg.warning("%s not started (%s) — core API unaffected", _name, e)
+    async def _calendar_boot():
+        from services import econ_calendar as _ec
+        await _ec.ensure_loaded()            # stored calendar → blackouts work right after a restart
+        if not _ec._events:
+            await _ec.refresh()
+    try:
+        asyncio.create_task(_calendar_boot())
+    except Exception as e:
+        _lg.warning("calendar not loaded (%s)", e)
     try:
         asyncio.create_task(polygon_stream.start())   # real-time Polygon.io + Redis
     except Exception as e:
