@@ -57,3 +57,28 @@ ETH/USD,1011.30,owner level,owner-1W-oanda
 ETH/USD,863.54,owner level,owner-1W-oanda
 DOGE/USD,0.050422,owner level,owner-1W-crypto
 DOGE/USD,0.031892,owner level,owner-1W-crypto
+NAS100,27800,lower-high sell zone low (Nov-24 plan),owner-dossier
+NAS100,28188.6,lower-high sell zone high / 0.382,owner-dossier
+NAS100,25539.3,0.618 demand (Nov low 25360.5),owner-1W
+NAS100,25210.5,demand floor / midterm long invalidation,owner-1W
+NAS100,23177.5,2027 buy floor high,owner-dossier
+NAS100,22086.1,2027 buy floor low,owner-dossier
+NAS100,31400,bear-case invalidation (weekly close),owner-dossier
+US30,51778.62,broken support flip (sell zone high),owner-1W
+US30,51000,sell zone low,owner-dossier
+US30,49277.41,monthly OB high,owner-1W
+US30,49060.49,monthly OB low,owner-1W
+US30,46606.90,2027 buy floor high,owner-dossier
+US30,45082.97,2027 buy floor low,owner-dossier
+US30,54750,bear-case invalidation (weekly close),owner-dossier
+SPX500,7816,sell zone high (0.382),owner-dossier
+SPX500,6558,2027 buy floor high,owner-dossier
+SPX500,6147,2027 buy floor low,owner-dossier
+BTC/USD,68000,liquidity-flush floor high,owner-dossier
+BTC/USD,65000,liquidity-flush floor low,owner-dossier
+BTC/USD,61000,invalidation,owner-dossier
+BTC/USD,104000,post-flush cycle target,owner-dossier
+XAU/USD,3950,accumulation zone high,owner-dossier
+XAU/USD,3850,accumulation zone low,owner-dossier
+XAU/USD,3700,invalidation,owner-dossier
+XAU/USD,4800,2027 expansion target,owner-dossier

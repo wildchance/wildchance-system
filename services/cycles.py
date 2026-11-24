@@ -49,6 +49,31 @@ def presidential(bars: Sequence[Bar], today: Optional[dt.date] = None) -> Option
             "by_term_year": table}
 
 
+def midterm_windows(bars: Sequence[Bar], today: Optional[dt.date] = None) -> Optional[Dict]:
+    """Return from the first close on/after Oct 1 of each midterm year to the last close
+    on/before Jun 30 next year (Fisher's window) — checked on THIS market's own data."""
+    today = today or (bars[-1][0] if bars else dt.date.today())
+    rows = []
+    for y in range(2002, today.year + 1, 4):
+        start = next((b for b in bars if b[0] >= dt.date(y, 10, 1)), None)
+        if not start or start[0] > dt.date(y, 10, 15):
+            continue
+        end_cut = min(dt.date(y + 1, 6, 30), today)
+        end = [b for b in bars if start[0] < b[0] <= end_cut]
+        if not end:
+            continue
+        rows.append({"midterm": y, "from": start[0].isoformat(), "to": end[-1][0].isoformat(),
+                     "return_pct": round(100 * (end[-1][4] / start[4] - 1), 1),
+                     "complete": end_cut == dt.date(y + 1, 6, 30)})
+    done = [r for r in rows if r["complete"]]
+    if not rows:
+        return None
+    return {"windows": rows, "completed": len(done),
+            "pct_positive": round(100 * sum(r["return_pct"] > 0 for r in done) / len(done)) if done else None,
+            "avg_return_pct": round(sum(r["return_pct"] for r in done) / len(done), 1) if done else None,
+            "current": next((r for r in rows if not r["complete"]), None)}
+
+
 def hurst(bars: Sequence[Bar]) -> List[Dict]:
     out = []
     for name, n in HURST:
@@ -66,7 +91,8 @@ def hurst(bars: Sequence[Bar]) -> List[Dict]:
 
 
 def read(bars: Sequence[Bar], today: Optional[dt.date] = None) -> Dict:
-    return {"presidential": presidential(bars, today), "hurst": hurst(bars)}
+    return {"presidential": presidential(bars, today), "midterm": midterm_windows(bars, today),
+            "hurst": hurst(bars)}
 
 
 def card_line(c: Optional[Dict]) -> Optional[str]:
@@ -76,6 +102,11 @@ def card_line(c: Optional[Dict]) -> Optional[str]:
     p = (c.get("presidential") or {}).get("now") or {}
     if p.get("n"):
         parts.append(f"🗳 {p['name']} year: avg {p['avg_pct']:+}% · up {p['pct_up']}% (n={p['n']})")
+    m = c.get("midterm") or {}
+    if m.get("completed"):
+        cur = m.get("current")
+        parts.append(f"🏛 midterm window Oct→Jun: {m['pct_positive']}% up, avg {m['avg_return_pct']:+}% "
+                     f"(n={m['completed']})" + (f" · this one {cur['return_pct']:+}% so far" if cur else ""))
     due = [h["cycle"] for h in c.get("hurst") or [] if h["state"] == "trough due"]
     if due:
         parts.append("🌀 Hurst trough due: " + ", ".join(due))

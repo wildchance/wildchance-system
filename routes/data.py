@@ -71,6 +71,29 @@ async def sentiment(base: str, quote: str):
 async def cycles_read(base: str, quote: str):
     """Presidential-cycle year + Hurst cycle phases from free long history (rough, v1)."""
     from services import cycles
-    bars, src = await df.daily_chain(f"{base.upper()}/{quote.upper()}", min_bars=262 * 5)
+    from services.yearly_cbdr import INDEX_PROXY
+    sym = f"{base.upper()}/{quote.upper()}"
+    bars, src = await df.daily_chain(sym, min_bars=262 * 5)
+    proxy = INDEX_PROXY.get(sym.replace("/", ""))
+    if len(bars) < 262 * 5 and proxy:
+        pb, ps = await df.daily_chain(proxy, min_bars=262 * 5)
+        if len(pb) > len(bars):
+            bars, src = pb, f"{ps} ({proxy} proxy)"
     return {"symbol": f"{base.upper()}/{quote.upper()}", "source": src, "years_of_data": round(len(bars) / 262, 1),
+            **cycles.read(bars)} if bars else {"note": "no history available"}
+
+
+@router.get("/cycles/{symbol}")
+async def cycles_single(symbol: str):
+    """Same for single-word symbols: NAS100, US30, SPX500, NVDA (index → ETF proxy)."""
+    from services import cycles
+    from services.yearly_cbdr import INDEX_PROXY
+    sym = symbol.upper()
+    bars, src = await df.daily_chain(sym, min_bars=262 * 5)
+    proxy = INDEX_PROXY.get(sym)
+    if len(bars) < 262 * 5 and proxy:
+        pb, ps = await df.daily_chain(proxy, min_bars=262 * 5)
+        if len(pb) > len(bars):
+            bars, src = pb, f"{ps} ({proxy} proxy)"
+    return {"symbol": sym, "source": src, "years_of_data": round(len(bars) / 262, 1),
             **cycles.read(bars)} if bars else {"note": "no history available"}
