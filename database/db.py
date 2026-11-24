@@ -144,6 +144,7 @@ async def init_db():
     import models.case_model                 # sniper live cases (held / broke)
     import models.data_cache_model           # persisted learning (feed health, base rates)
     import models.closed_trade_model         # trade journal (every broker close)
+    import models.signal_snapshot_model      # point-in-time research store
     async with engine.begin() as conn:
         # create_all only — never drop. The forward test accumulates months of
         # data; dropping on startup would silently wipe it. create_all is

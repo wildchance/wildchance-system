@@ -71,6 +71,8 @@ async def record(symbol: str, side: str, entry: float, stop: float, targets: Lis
                 return r
         rows.append(s)
         await _save(rows)
+        from services import snapshots
+        await snapshots.capture(s)                        # freeze what we knew at send time
         return s
     except Exception:
         return None
@@ -167,6 +169,8 @@ async def check() -> Dict:
                     posted.append({"symbol": sym, "tp": e["tp"], "sent": r.get("sent")})
                 elif e["kind"] in ("closed", "expired"):
                     closed.append({"symbol": sym, "result": e["result"], "pips": s["pips"]})
+                    from services import snapshots
+                    await snapshots.close(s)
     if open_rows:
         await _save(rows)
     return {"open": sum(1 for r in rows if r["result"] == "open"), "flash_cards": posted, "closed": closed}
