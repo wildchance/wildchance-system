@@ -37,9 +37,16 @@ async def send_telegram_message(payload):
     message = _format(payload)
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(
+            r = await client.post(
                 TELEGRAM_API,
                 json={"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"},
             )
+            if r.status_code == 400 and "parse" in r.text.lower():
+                # Markdown broke (an odd '_' or '*' in a card) → resend as plain text
+                r = await client.post(TELEGRAM_API, json={"chat_id": CHAT_ID, "text": message})
+            if r.status_code != 200:
+                print(f"[telegram] send failed: HTTP {r.status_code} {r.text[:120]}")
+            return r.status_code == 200
     except Exception as e:
         print(f"[telegram] send failed: {e}")
+        return False
