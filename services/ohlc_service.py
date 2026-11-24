@@ -102,17 +102,53 @@ async def time_series(params: dict, broker: bool = True) -> dict:
                                         params.get("timezone") or "UTC")
         if b:
             _fresh(params["symbol"], "broker")
+            try:
+                from services.price_pool import note_reference
+                note_reference(params["symbol"], float(b["values"][0]["close"]))
+            except Exception:
+                pass
             return b
     except Exception:
         pass
+    from services import price_pool
     if not TWELVEDATA_KEY:
+        return await price_pool.alt_values(params["symbol"], params["interval"], int(params.get("outputsize", 60)),
+                                           params.get("timezone") or "UTC") or {}
+    # 1) TwelveData only if a slot is free quickly (cache hits are instant)
+    data = await _td_call(params, wait=price_pool.POOL_TD_WAIT_S if price_pool.POOL_ENABLED else None)
+    if isinstance(data, dict) and data.get("values"):
+        return data
+    # 2) the free pool (Binance / Yahoo / Tiingo FX / basis-corrected gold proxies)
+    alt = await price_pool.alt_values(params["symbol"], params["interval"], int(params.get("outputsize", 60)),
+                                      params.get("timezone") or "UTC")
+    if alt:
+        _fresh(params["symbol"], alt["source"])
+        return alt
+    # 3) last resort: wait in the TwelveData queue as before
+    if price_pool.POOL_ENABLED and isinstance(data, dict) and str(data.get("code")) == "429":
+        data = await _td_call(params, wait=None)
+    return data
+
+
+async def _td_call(params: dict, wait: Optional[float]) -> dict:
+    from services.td_limiter import WAIT
+    tok = WAIT.set(wait)
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            data = (await client.get("https://api.twelvedata.com/time_series",
+                                     params={**params, "apikey": TWELVEDATA_KEY})).json()
+    except Exception:
         return {}
-    async with httpx.AsyncClient(timeout=15) as client:
-        data = (await client.get("https://api.twelvedata.com/time_series",
-                                 params={**params, "apikey": TWELVEDATA_KEY})).json()
+    finally:
+        WAIT.reset(tok)
     _td_error(data)
     if isinstance(data, dict) and data.get("values"):
         _fresh(params["symbol"], "twelvedata")
+        try:
+            from services.price_pool import note_reference
+            note_reference(params["symbol"], float(data["values"][0]["close"]))
+        except Exception:
+            pass
     return data
 
 

@@ -146,3 +146,15 @@ anything extra (hearings, OPEC, owner notes).
 | `CAL_PROMOTE_PIPS` | `25` | a medium event averaging this move (≥2 samples) is treated as high impact |
 
 Endpoints: `/data/calendar?days=7`, `/data/calendar/week?notify=true`, `/data/calendar/moves`, `/data/calendar/refresh`.
+
+## Price pool (free sources so TwelveData's 7/min limit never stalls the app)
+
+Every bar request: EA broker feed → TwelveData if a slot is free within `POOL_TD_WAIT_S` → free pool
+(Binance for crypto; Yahoo for FX, indices, stocks; Tiingo FX intraday if `TIINGO_API_KEY`; gold via Binance PAXG
+or COMEX futures, basis-corrected to the last real spot price and never used without one) → TwelveData full queue.
+Source health shows in `/data/sources` (`yahoo_intraday`, `binance`, `tiingo_fx`).
+
+| Key | Default | What it does |
+|---|---|---|
+| `PRICE_POOL_ENABLED` | `true` | `false` = old behaviour (TwelveData queue only) |
+| `POOL_TD_WAIT_S` | `3` | how long to wait for a TwelveData slot before using the free pool |

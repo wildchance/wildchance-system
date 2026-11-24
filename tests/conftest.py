@@ -16,3 +16,14 @@ def _lunar_gate_off(monkeypatch):
     except Exception:
         pass
     yield
+
+
+@pytest.fixture(autouse=True)
+def _price_pool_offline(monkeypatch):
+    """The free price pool calls Binance / Yahoo / Tiingo — keep unit tests offline."""
+    try:
+        import services.price_pool as pp
+        monkeypatch.setattr(pp, "POOL_ENABLED", False)
+    except Exception:
+        pass
+    yield

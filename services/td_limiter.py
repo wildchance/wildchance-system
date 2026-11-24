@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import contextvars
 import json
 import threading
 import time
@@ -34,6 +35,9 @@ DAILY_LIMIT = int(config("TD_DAILY_LIMIT", default="790"))
 HOST = "api.twelvedata.com"
 TTL = {"1week": 43200, "1month": 43200, "1day": 43200, "4h": 1800, "2h": 1200,
        "1h": 600, "30min": 300, "15min": 240, "5min": 120, "1min": 50}
+
+# per-call override of the queue wait (the price pool asks for a short wait first)
+WAIT: "contextvars.ContextVar[Optional[float]]" = contextvars.ContextVar("td_wait", default=None)
 
 _lock = threading.Lock()
 _slots: collections.deque = collections.deque(maxlen=200)    # reserved start times
@@ -164,7 +168,8 @@ def install() -> None:
         if body is not None:
             return httpx.Response(200, content=body, request=request,
                                   headers={"content-type": "application/json", "x-td-cache": "hit"})
-        if not await acquire(credits=credits_for(str(request.url))):
+        w = WAIT.get()
+        if not await acquire(max_wait=MAX_WAIT_S if w is None else w, credits=credits_for(str(request.url))):
             msg = {"status": "error", "code": 429,
                    "message": "local TwelveData limiter: queue/budget full — try later"}
             return httpx.Response(200, json=msg, request=request)
