@@ -13,7 +13,8 @@ from fastapi.responses import HTMLResponse
 
 router = APIRouter(prefix="/terminal", tags=["terminal"])
 WATCH = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "USD/CAD", "AUD/USD", "XAU/USD", "GBP/JPY", "EUR/JPY"]
-OPTION_SYMS = ["XAU/USD", "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "USD/CAD", "AUD/USD", "NAS100", "SPX500", "US30"]
+OPTION_SYMS = ["XAU/USD", "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "USD/CAD", "AUD/USD", "NZD/USD",
+               "NAS100", "SPX500", "US30", "GBP/JPY", "EUR/JPY", "EUR/GBP", "EUR/AUD", "EUR/CHF"]
 _PAGE = os.path.join(os.path.dirname(__file__), "..", "static", "terminal", "index.html")
 
 

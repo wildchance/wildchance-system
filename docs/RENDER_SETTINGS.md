@@ -296,3 +296,12 @@ signal tracker runs even while a long hourly bundle is still working, so TP flas
 - Terminal token: open `/terminal?token=…` once; it is stored in that browser, removed from the address bar, and sent
   as the `X-Ops-Token` header from then on.
 - Runtime: Python 3.12 (Docker + CI), python-telegram-bot 21.11.1, httpx 0.27.
+
+## Liquidity guard + vol-screen walls
+
+- `CME_MIN_OI` (2000): a CME chain with fewer contracts (calls + puts) is not drawn as walls — today that parks
+  the Dow (~100) and NZD/USD (~600, puts only). The data audit lists it as "too thin".
+- Pairs with no liquid listed options (FX crosses, NZD/USD, thin chains) use the owner's vol-screen strikes: the
+  nearest expiry with both sides → 10Δ/25Δ call ceilings, ATM pin, 25Δ/10Δ put floors. They show in the terminals,
+  the sniper zones and on event-rotation picks (`[walls floor / ceiling]`). Live today: GBP/JPY, EUR/JPY. Send
+  EUR/GBP, EUR/AUD, EUR/CHF, NZD/USD screens to light up those pairs.
