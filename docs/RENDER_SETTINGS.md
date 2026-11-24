@@ -182,3 +182,13 @@ Needs `pdftotext` (poppler-utils — installed by the Dockerfile). Endpoints: `/
 Currencies (same bulletin, sections 27–30 + 33–36): GBP/USD, USD/CAD, USD/JPY, USD/CHF futures-options OI by strike,
 monthly + weekly Friday expiries, converted to pair terms (yen/franc/CAD calls become USD/xxx puts). Band ±`CME_FX_BAND_PCT` (6%).
 `data/cme_fx_seed.json` holds the last owner-supplied bulletin; `/data/cme/fx/USD/JPY` shows the biggest strikes.
+
+## Asia → London session trader + Z-setup stop floor
+
+`/cbdr/session/run` (03:05–11:35 NY, every 30 min, weekdays): Asian box (19:00→02:45 NY) → SWEEP-reclaim or BREAKOUT
+on 15m closes, ONLY with Monday's weekly bias and never while the daily CBDR boxes are back across Monday's mean
+(REVERSING). TP1/TP2 inside the Asian ladder, TP3 at the nearest options-expiry level (pin / 25Δ) or dealer wall.
+`SESSION_SYMBOLS` (default EUR/USD, GBP/USD, USD/JPY, USD/CHF, USD/CAD, XAU/USD). One card per symbol per day.
+
+Z-setups: stop ≥ `ZC_MIN_RISK_ATR` (0.25) × daily ATR(14), ≥ `ZC_EVENT_RISK_ATR` (0.4) × ATR when a high-impact
+release for the pair is within 24 h — no more 10-pip stops inside a pre-PCE day's noise.

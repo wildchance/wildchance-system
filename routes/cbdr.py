@@ -73,6 +73,19 @@ async def _build(symbol: str, window: str, price: Optional[float]) -> dict:
     return out
 
 
+@router.get("/session/run")
+async def session_run(notify: bool = Query(False)):
+    """Asian box → London trades, steered by Monday's CBDR and options expiries."""
+    from services.session_trader import run
+    return await run(notify)
+
+
+@router.get("/session/{base}/{quote}")
+async def session_one(base: str, quote: str):
+    from services.session_trader import run_one
+    return await run_one(f"{base}/{quote}")
+
+
 @router.get("/week/{base}/{quote}")
 async def week_map(base: str, quote: str, notify: bool = Query(False)):
     """Monday's CBDR box → the week's SD map, direction from COT/retail (weekly profile

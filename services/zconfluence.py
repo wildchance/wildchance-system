@@ -29,6 +29,11 @@ from decouple import config
 from services import trade_gate as tg
 
 MIN_CONF_A = 70
+# a 1h σ on a quiet pre-event day is tiny → a 10-pip stop inside the day's noise. The stop
+# is pushed out to at least this share of the daily ATR(14) (more when a high-impact
+# release for the pair is within 24 h — the market prices that move in advance)
+MIN_RISK_ATR = float(config("ZC_MIN_RISK_ATR", default="0.25"))
+EVENT_RISK_ATR = float(config("ZC_EVENT_RISK_ATR", default="0.4"))
 NOTIFY_GRADES = set(str(config("ZC_NOTIFY_GRADES", default="A")).replace(" ", "").split(","))
 _PAIR = {"XAU/USD": "XAU/USD"}
 
@@ -54,11 +59,13 @@ def grade(lean: str, conf_row: Optional[Dict], weekly: str = "neutral") -> str:
 
 
 def levels(lean: str, last: float, mean: float, sd: float, z: float,
-           symbol: str = "") -> Optional[Dict]:
+           symbol: str = "", min_risk: float = 0.0) -> Optional[Dict]:
     if not sd or sd <= 0:
         return None
     sgn = -1 if lean == "SELL" else 1                  # SELL: price above mean, target down
     stop = mean - sgn * (abs(z) + 1) * sd
+    if min_risk and abs(last - stop) < min_risk:       # outside the day's noise (ATR floor)
+        stop = last - sgn * min_risk
     if symbol:                                         # never a noise stop (owner: ≥ 10 pips)
         stop = tg.widen_stop(symbol, lean, last, stop)
     tp1 = mean - sgn * sd
@@ -75,7 +82,7 @@ def levels(lean: str, last: float, mean: float, sd: float, z: float,
 
 def build(breaches: List[Dict], signals: List[Dict], cot_date: Optional[str],
           weekly: Optional[Dict[str, Dict]] = None, now=None,
-          locks: Optional[Dict[str, str]] = None) -> List[Dict]:
+          locks: Optional[Dict[str, str]] = None, min_risk: Optional[Dict[str, float]] = None) -> List[Dict]:
     by_pair = {s.get("pair"): s for s in signals or []}
     weekly = weekly or {}
     out = []
@@ -91,7 +98,7 @@ def build(breaches: List[Dict], signals: List[Dict], cot_date: Optional[str],
                      (lock == "SELL_ONLY" and b["lean"] == "BUY")):
             g = "X"                                    # against the Stage-0 macro lock
         lv = levels(b["lean"], float(b["last_close"]), float(b["mean"]), float(b["sd"]),
-                    float(b["z"]), b["symbol"])
+                    float(b["z"]), b["symbol"], (min_risk or {}).get(b["symbol"], 0.0))
         if not lv:
             continue
         gate = tg.evaluate(b["symbol"], b["lean"], lv["entry"], lv["stop"],
@@ -149,7 +156,7 @@ def card(r: Dict) -> str:
     w = r.get("weekly") or {}
     if w.get("bias"):
         lines.append(f"Weekly profile: {w['bias']} ({w.get('profile')}) → {w.get('verdict')}")
-    lines += ["", f"Entry: `{lv['entry']}`", f"Stop:  `{lv['stop']}`  (1σ beyond the extreme)"]
+    lines += ["", f"Entry: `{lv['entry']}`", f"Stop:  `{lv['stop']}`  (1σ beyond the extreme, ≥ {MIN_RISK_ATR:g}–{EVENT_RISK_ATR:g}× daily ATR)"]
     tps = []
     if lv["tp1"] is not None:
         lines.append(f"TP1:   `{lv['tp1']}`  (R {lv['r_tp1']}) back inside ±1σ")
@@ -161,6 +168,39 @@ def card(r: Dict) -> str:
     if lots:
         lines += [""] + lots
     return "\n".join(lines)
+
+
+def atr(bars: List, n: int = 14) -> Optional[float]:
+    """Daily ATR from (date, o, h, l, c) tuples, oldest-first."""
+    if len(bars) < n + 1:
+        return None
+    trs = [max(h - l, abs(h - bars[i - 1][4]), abs(l - bars[i - 1][4]))
+           for i, (_d, _o, h, l, _c) in enumerate(bars) if i > 0]
+    return sum(trs[-n:]) / n
+
+
+def event_soon(symbol: str, hours: float = 24) -> bool:
+    import datetime as _dt
+    try:
+        from services import econ_calendar as ec
+        now = _dt.datetime.now(_dt.timezone.utc)
+        ccys = ec.currencies(symbol)
+        return any(e["ccy"] in ccys and ec.is_blocking(e) and
+                   now <= _dt.datetime.fromisoformat(e["time_utc"]) <= now + _dt.timedelta(hours=hours)
+                   for e in ec._events)
+    except Exception:
+        return False
+
+
+async def risk_floor(symbol: str) -> float:
+    try:
+        from services.ohlc_service import fetch_ohlc
+        a = atr(await fetch_ohlc(symbol, "1day", 30))
+    except Exception:
+        a = None
+    if not a:
+        return 0.0
+    return a * (EVENT_RISK_ATR if event_soon(symbol) else MIN_RISK_ATR)
 
 
 async def scan(z_threshold: float = 2.0, notify: bool = False, max_age_s: int = 900) -> Dict:
@@ -175,8 +215,9 @@ async def scan(z_threshold: float = 2.0, notify: bool = False, max_age_s: int = 
     fired = sorted({b["symbol"] for b in results if b.get("ok") and b.get("fired")})
     weekly = {sym: await tg.weekly_profile(sym) for sym in fired}
     from services.swing_service import macro_bias
+    floors = {sym: await risk_floor(sym) for sym in fired}
     setups = build(results, feed.get("signals") or [], cot_latest(feed), weekly,
-                   locks=macro_bias())
+                   locks=macro_bias(), min_risk=floors)
     sent = []
     if notify:
         from services.realtime import alert_once
