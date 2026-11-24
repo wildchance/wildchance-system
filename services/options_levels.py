@@ -242,6 +242,42 @@ async def _tradier_chain(und: str) -> Dict:
     return parse_tradier(rows, spot, today) if rows else {}
 
 
+POLYGON_KEY = config("POLYGON_API_KEY", default=None)
+POLYGON_MAX_PAGES = int(config("POLYGON_OPT_PAGES", default="8"))
+
+
+def parse_polygon(results: List[Dict], today: Optional[dt.date] = None, max_days: int = MAX_DAYS) -> Dict:
+    """Polygon options snapshot rows → the per-strike shape (via the Tradier parser)."""
+    spot, rows = None, []
+    for r in results or []:
+        d = r.get("details") or {}
+        spot = spot or (r.get("underlying_asset") or {}).get("price")
+        rows.append({"expiration_date": d.get("expiration_date"), "strike": d.get("strike_price"),
+                     "option_type": d.get("contract_type"), "open_interest": r.get("open_interest"),
+                     "greeks": {"gamma": (r.get("greeks") or {}).get("gamma"), "mid_iv": r.get("implied_volatility")}})
+    return parse_tradier(rows, spot, today, max_days) if spot else {}
+
+
+async def _polygon_chain(und: str) -> Dict:
+    """Polygon /v3/snapshot/options (needs a Polygon plan that includes options)."""
+    from services.data_feeds import _get
+    sym = ("I:" + und.lstrip("_")) if und.startswith("_") else und
+    last = (dt.date.today() + dt.timedelta(days=MAX_DAYS)).isoformat()
+    url = f"https://api.polygon.io/v3/snapshot/options/{sym}"
+    params: Optional[Dict] = {"expiration_date.lte": last, "limit": 250, "apiKey": POLYGON_KEY}
+    rows: List[Dict] = []
+    for _ in range(POLYGON_MAX_PAGES):
+        d = await _get("polygon_options", url, params)
+        if not d:
+            break
+        rows += d.get("results") or []
+        nxt = d.get("next_url")
+        if not nxt:
+            break
+        url, params = nxt, {"apiKey": POLYGON_KEY}
+    return parse_polygon(rows) if rows else {}
+
+
 _cache: Dict[str, Tuple[float, Dict]] = {}
 
 
@@ -264,6 +300,11 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
             if TRADIER_TOKEN:
                 try:
                     chain = await _tradier_chain(und)
+                except Exception:
+                    chain = {}
+            if not chain.get("strikes") and POLYGON_KEY:
+                try:
+                    chain = await _polygon_chain(und)
                 except Exception:
                     chain = {}
             if not chain.get("strikes"):

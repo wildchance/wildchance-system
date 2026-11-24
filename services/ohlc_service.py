@@ -31,7 +31,8 @@ _last_td_warn = [0.0]
 def _td_error(data) -> None:
     """Log TwelveData's own error (bad key, out of credits, unknown symbol) at most once
     every 10 min. Without this the API silently returns [] and every signal goes quiet."""
-    if isinstance(data, dict) and data.get("status") == "error":
+    if isinstance(data, dict) and data.get("status") == "error" and "local TwelveData limiter" not in str(
+            data.get("message")):                  # local queue-full is normal now: the price pool takes over
         now = _time.time()
         if now - _last_td_warn[0] > 600:
             _last_td_warn[0] = now

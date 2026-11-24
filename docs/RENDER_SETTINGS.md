@@ -166,3 +166,7 @@ Source health shows in `/data/sources` (`yahoo_intraday`, `binance`, `tiingo_fx`
 | `TRADIER_TOKEN` | — | Tradier API access token (brokerage account → API Access, or developer sandbox token) |
 | `TRADIER_BASE` | `https://api.tradier.com/v1` | sandbox token → `https://sandbox.tradier.com/v1` (15-min delayed) |
 | `TRADIER_MAX_EXPIRIES` | `6` | chains read per underlying (≤ `OPT_MAX_DAYS`) |
+
+Polygon options: uses your existing `POLYGON_API_KEY` (`/v3/snapshot/options`, tried after Tradier, before CBOE).
+Needs a Polygon plan that includes OPTIONS (Options Starter or higher); on Stocks-only/free plans it fails
+quietly and `/data/sources` shows `polygon_options` with the error. `POLYGON_OPT_PAGES` (8) × 250 contracts max.

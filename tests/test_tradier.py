@@ -18,3 +18,16 @@ def test_parse_tradier_shape_and_levels():
     assert ch["atm_iv"] == 0.27 and ch["days"] == 10
     lv = ol.levels(ch)
     assert lv["inventory_ceiling"] == 340.0 and lv["primary_floor"] == 320.0
+
+
+def test_parse_polygon_maps_to_levels():
+    today = dt.date(2026, 11, 24)
+    res = [{"details": {"contract_type": "call", "expiration_date": "2026-12-04", "strike_price": 340},
+            "open_interest": 9000, "greeks": {"gamma": 0.01}, "implied_volatility": 0.27,
+            "underlying_asset": {"price": 331.0}},
+           {"details": {"contract_type": "put", "expiration_date": "2026-12-04", "strike_price": 320},
+            "open_interest": 7000, "greeks": {"gamma": 0.015}}]
+    ch = ol.parse_polygon(res, today)
+    lv = ol.levels(ch)
+    assert ch["spot"] == 331.0 and lv["inventory_ceiling"] == 340 and lv["primary_floor"] == 320
+    assert ol.parse_polygon([{"details": {}}]) == {}
