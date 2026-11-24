@@ -82,8 +82,18 @@ async def confluence_alerts(min_confidence: int = Query(None),
         if not (allowed or force):
             blocked.append(pair)
             continue
+        from services import trade_gate as tg
+        best = max((t.get("r") or 0) for t in sig.get("targets") or [{"r": 0}])
+        if best < tg.MIN_RR and not force:              # e.g. ATR-floored stop → TP3 only 1.05R
+            blocked.append(f"{pair} (best {best}R < {tg.MIN_RR}R)")
+            continue
+        from services import council_gate
+        cg = await council_gate.check(pair, side)
+        if not (cg["pass"] or force):
+            blocked.append(f"{pair} (council {cg['verdict']})")
+            continue
         card = se.format_card(sig)
-        card = f"conf {s.get('confidence')} · {card}"
+        card = f"conf {s.get('confidence')} · {card}\n{cg['line']}"
         await _tg(card)
         try:
             await wa_send(card.replace("*", "").replace("`", ""))

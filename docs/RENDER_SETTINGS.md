@@ -192,3 +192,11 @@ on 15m closes, ONLY with Monday's weekly bias and never while the daily CBDR box
 
 Z-setups: stop ≥ `ZC_MIN_RISK_ATR` (0.25) × daily ATR(14), ≥ `ZC_EVENT_RISK_ATR` (0.4) × ATR when a high-impact
 release for the pair is within 24 h — no more 10-pip stops inside a pre-PCE day's noise.
+
+## One council for every engine
+
+`COUNCIL_GATE_ALL` (default `true`): the auto CBDR "Wildchance Signal", swing fades, Z-setups and Asia→London cards
+all convene the same agent council as the sniper and only send on **GO** (≥ `COUNCIL_MIN_FOR` for, ≤ `COUNCIL_MAX_AGAINST`
+against); each card carries the 🏛 council line. `false` = append the line but send anyway.
+Auto CBDR signals also need their best target ≥ `MIN_RR` (1.3R). Asia→London: a trigger older than `SESSION_FRESH_MIN`
+(35) minutes, already through the stop / past TP1, or > 0.5R away from the entry is not sent.

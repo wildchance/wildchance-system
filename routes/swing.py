@@ -27,8 +27,12 @@ async def scan(symbols: Optional[str] = Query(None, description="comma list; def
         sent = []
         for r in out["results"]:
             if r.get("status") in ("ENTRY", "LIMIT"):
+                from services import council_gate
+                cg = await council_gate.check(r["symbol"], r["side"], "swing")
+                if not cg["pass"]:
+                    continue
                 if await alert_once(f"swing:{r['symbol']}:{r['side']}:{r['levels']['tp2_mean']:.4g}",
-                                    sw.format_alert(r)):
+                                    sw.format_alert(r) + "\n" + cg["line"]):
                     sent.append(r["symbol"])
         out["notified"] = sent
     return out

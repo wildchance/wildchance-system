@@ -59,3 +59,29 @@ def test_z_stop_floor_from_atr():
     assert round(lv["stop"] - lv["entry"], 4) == 0.0018            # pushed out from 1σ (5 pips) to 18 pips
     bars = [(None, 1, 1.0 + 0.01, 1.0, 1.0)] * 16
     assert round(zc.atr(bars), 4) == 0.01
+
+
+def test_stale_and_chased_triggers_are_not_sent():
+    s = {"side": "SELL", "time": "2026-11-24 03:15:00", "entry": 1.0919, "stop": 1.0929,
+         "targets": [{"price": 1.0908}]}
+    now = dt.datetime(2026, 11, 24, 3, 40)
+    fresh = [{"close": 1.0918}]
+    assert st.stale_reason(s, fresh, now) is None
+    assert "stale" in st.stale_reason(s, fresh, dt.datetime(2026, 11, 24, 7, 5))
+    assert "stop" in st.stale_reason(s, [{"close": 1.0931}], now)
+    assert "TP1" in st.stale_reason(s, [{"close": 1.0905}], now)
+    assert "0.5R" in st.stale_reason(s, [{"close": 1.0926}], now)
+
+
+def test_council_gate_side_and_pass(monkeypatch):
+    import asyncio
+    from services import council_gate as cg
+    assert cg.norm_side("short") == "SELL" and cg.norm_side("long") == "BUY"
+
+    async def convene(*a, **k):
+        return {"verdict": "HOLD", "for": 2, "against": 1, "votes": [], "score": 1, "veto": [], "need": "x"}
+    import services.council as cn
+    monkeypatch.setattr(cn, "convene", convene)
+    monkeypatch.setattr(cg, "_agent_scores", lambda: asyncio.sleep(0, result={}))
+    r = asyncio.new_event_loop().run_until_complete(cg.check("EUR/USD", "short"))
+    assert r["verdict"] == "HOLD" and r["pass"] is False and "HOLD" in r["line"]
