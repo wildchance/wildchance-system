@@ -50,7 +50,8 @@ BLACKOUTS_CSV = str(config("EVENT_BLACKOUTS_CSV", default="data/event_blackouts.
 
 def blackout(symbol: str, now: Optional[dt.datetime] = None, path: Optional[str] = None) -> Optional[str]:
     """Owner-listed event windows (hearings, FOMC …) with no NEW entries for the listed
-    symbols. symbols: ';'-separated; ALL = everything; ALL_USD = any pair with USD."""
+    symbols. symbols: ';'-separated; ALL = everything; ALL_XXX = any pair with currency XXX
+    (ALL_USD also catches XAUUSD / BTCUSD)."""
     import csv
     import os
     path = path or BLACKOUTS_CSV
@@ -68,8 +69,8 @@ def blackout(symbol: str, now: Optional[dt.datetime] = None, path: Optional[str]
             if not a <= now <= b:
                 continue
             syms = [x.strip().upper().replace("/", "") for x in (r.get("symbols") or "").split(";") if x.strip()]
-            if "ALL" in syms or s in syms or ("ALLUSD" in [x.replace("_", "") for x in syms]
-                                               and len(s) == 6 and "USD" in s):
+            ccys = {x[4:] for x in syms if x.startswith("ALL_") and len(x) == 7}   # ALL_USD, ALL_EUR …
+            if "ALL" in syms or s in syms or (len(s) == 6 and any(c in (s[:3], s[3:]) for c in ccys)):
                 return f"event blackout: {r.get('label') or 'event'} (until {b:%b %d %H:%M} UTC)"
     return None
 
