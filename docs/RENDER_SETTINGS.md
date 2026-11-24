@@ -179,3 +179,6 @@ mapped to live spot. Refreshed 01:40 and 14:40 UTC on weekdays from CME's public
 drop the two PDFs (`Section62_Metals_Futures_Products.pdf`, `Section64_Metals_Option_Products.pdf`) into `data/cme/`
 (GitHub → Add file → Upload files). `data/cme_gold_seed.json` holds the last owner-supplied bulletin.
 Needs `pdftotext` (poppler-utils — installed by the Dockerfile). Endpoints: `/data/cme/gold`, `/data/cme/refresh`.
+Currencies (same bulletin, sections 27–30 + 33–36): GBP/USD, USD/CAD, USD/JPY, USD/CHF futures-options OI by strike,
+monthly + weekly Friday expiries, converted to pair terms (yen/franc/CAD calls become USD/xxx puts). Band ±`CME_FX_BAND_PCT` (6%).
+`data/cme_fx_seed.json` holds the last owner-supplied bulletin; `/data/cme/fx/USD/JPY` shows the biggest strikes.

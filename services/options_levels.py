@@ -278,6 +278,7 @@ async def _polygon_chain(und: str) -> Dict:
     return parse_polygon(rows) if rows else {}
 
 
+CME_FX = ("USDJPY", "USDCHF", "USDCAD", "GBPUSD")
 _cache: Dict[str, Tuple[float, Dict]] = {}
 
 
@@ -296,6 +297,16 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
         if cme and cme.get("strikes"):
             und = "CME:OG"
             _cache[und] = (time.time(), cme)
+    cme_fx = False
+    if s in CME_FX:                          # real CME currency futures options OI, in pair terms
+        try:
+            from services.cme_bulletin import cached_fx_chain
+            fx = await cached_fx_chain(s)
+        except Exception:
+            fx = None
+        if fx and fx.get("strikes"):
+            und, cme_fx = f"CME:{s}", True
+            _cache[und] = (time.time(), fx)
     hit = _cache.get(und)
     chain = hit[1] if hit and time.time() - hit[0] < 1800 else None
     if chain is None:
@@ -324,7 +335,7 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
     lv = levels(chain)
     if not lv:
         return {"symbol": symbol, "underlying": und, "ok": False, "reason": "no option chain"}
-    inverse = s in INVERSE
+    inverse = s in INVERSE and not cme_fx      # CME chains are already in pair terms
     ratio = (live_price / chain["spot"]) if live_price and chain.get("spot") else 1.0
     extra = {k: chain[k] for k in ("asof", "expiries", "put_call_ratio", "call_oi", "put_oi") if chain.get(k) is not None}
     return {"symbol": symbol, "underlying": und, "ok": True, "underlying_spot": chain["spot"], **extra,
@@ -334,8 +345,13 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
 
 def cached_levels(symbol: str, live_price: Optional[float] = None) -> List[Dict]:
     """Cache-only read for hot paths (sniper zones); empty until run() has fetched."""
-    hit = (_cache.get("CME:OG") if symbol.upper().replace("/", "") in ("XAUUSD", "GOLD") else None) \
-        or _cache.get(underlying_for(symbol))
+    s0 = symbol.upper().replace("/", "")
+    cme_key = "CME:OG" if s0 in ("XAUUSD", "GOLD") else f"CME:{s0}" if s0 in CME_FX else None
+    hit = (_cache.get(cme_key) if cme_key else None) or _cache.get(underlying_for(symbol))
+    if hit and cme_key and hit is _cache.get(cme_key):
+        lv = levels(hit[1])
+        ratio = (live_price / hit[1]["spot"]) if live_price and hit[1].get("spot") else 1.0
+        return mapped(lv, ratio, False, hit[1].get("spot"), live_price, _dp(symbol)) if lv else []
     if not hit or time.time() - hit[0] > 6 * 3600:
         return []
     lv = levels(hit[1])
