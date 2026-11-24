@@ -75,7 +75,9 @@ async def deals(body: DealsIn, background: BackgroundTasks,
            close_price, open_time, close_time (unix), net (profit+commission+swap)}"""
     _auth(x_bridge_token)
     from services.flash_card import post_from_deals
-    background.add_task(post_from_deals, body.deals)
+    from services.trade_journal import record
+    background.add_task(record, body.deals)               # journal: every close, W / L / BE
+    background.add_task(post_from_deals, body.deals)      # flash cards: winners only
     return {"ok": True, "received": len(body.deals)}
 
 

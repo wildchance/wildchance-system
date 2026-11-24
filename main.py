@@ -125,6 +125,7 @@ from routes.flash import router as flash_router
 from routes.data import router as data_router
 from routes.tp_study_route import router as tp_study_router
 from routes.sweep import router as sweep_router
+from routes.journal import router as journal_router
 from routes.macro import router as macro_router
 from routes.billing import router as billing_router
 from routes.members import router as members_router
@@ -361,6 +362,7 @@ app.include_router(flash_router)
 app.include_router(data_router)
 app.include_router(tp_study_router)
 app.include_router(sweep_router)
+app.include_router(journal_router)
 app.include_router(macro_router)
 app.include_router(billing_router)
 app.include_router(members_router)

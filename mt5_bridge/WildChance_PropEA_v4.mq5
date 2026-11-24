@@ -23,7 +23,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.52"
+#property version   "4.53"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -161,7 +161,9 @@ input group "=== 8. SEND DATA TO THE APP (EA -> /bridge) ==="
 input bool     InpSendData          = true;   // Push closed bars + account snapshot to the app
 input string   InpAppUrl            = "https://your-app.onrender.com"; // Add it in Tools > Options > Expert Advisors > WebRequest
 input string   InpBridgeToken       = "";     // = BRIDGE_TOKEN (or EXECUTION_TOKEN) in the app env
-input bool     InpPushDeals         = true;   // send closed trades → profit flash cards (winners only)
+input bool     InpPushDeals         = true;   // send closed trades → trade journal (W/L/BE) + flash cards (winners)
+input int      InpDealPushSec       = 10;     // how often to check for new closes (seconds, min 5)
+input int      InpDealBackfillDays  = 90;     // first run: send this many days of history to the journal
 input string   InpAppSymbol         = "";     // Name to send (blank = chart symbol; app strips suffixes)
 input string   InpSendTFs           = "M15,H1,H4,D1,W1";
 input int      InpInitialBars       = 300;    // First push per timeframe; afterwards the last 3 bars
@@ -291,7 +293,7 @@ void OnTimer()
   {
    CheckPropGuard();
    if(InpSendData && !MQLInfoInteger(MQL_TESTER)) PushData();
-   if(InpSendData && InpPushDeals && !MQLInfoInteger(MQL_TESTER) && TimeCurrent() - g_lastDealPush >= 30)
+   if(InpSendData && InpPushDeals && !MQLInfoInteger(MQL_TESTER) && TimeCurrent() - g_lastDealPush >= MathMax(5, InpDealPushSec))
      {
       g_lastDealPush = TimeCurrent();
       PushClosedDeals();
@@ -306,11 +308,11 @@ void OnTimer()
 void PushClosedDeals()
   {
    if(InpBridgeToken == "") return;
-   datetime from = (g_lastDealCheck > 0) ? g_lastDealCheck : iTime(_Symbol, PERIOD_D1, 0);
+   datetime from = (g_lastDealCheck > 0) ? g_lastDealCheck : TimeCurrent() - MathMax(1, InpDealBackfillDays) * 86400;
    datetime to   = TimeCurrent() + 60;
    if(!HistorySelect(from - 30 * 86400, to)) return;      // wide window so opening deals are found
    int total = HistoryDealsTotal();
-   string arr = ""; int n = 0; datetime newest = from;
+   string arr = ""; int n = 0; datetime newest = from; bool more = false;
    for(int i = 0; i < total; i++)
      {
       ulong t = HistoryDealGetTicket(i);
@@ -319,6 +321,7 @@ void PushClosedDeals()
       if(entry != DEAL_ENTRY_OUT && entry != DEAL_ENTRY_OUT_BY) continue;
       datetime ct = (datetime)HistoryDealGetInteger(t, DEAL_TIME);
       if(ct < from) continue;
+      if(n >= 200) { more = true; break; }                // batch the backfill (deals are in time order)
       long   pos    = HistoryDealGetInteger(t, DEAL_POSITION_ID);
       string sym    = HistoryDealGetString(t, DEAL_SYMBOL);
       double cprice = HistoryDealGetDouble(t, DEAL_PRICE);
@@ -339,15 +342,25 @@ void PushClosedDeals()
       if(n > 0) arr += ",";
       arr += StringFormat("{\"ticket\":%I64u,\"symbol\":\"%s\",\"side\":\"%s\",\"volume\":%.2f,"
                           "\"open_price\":%s,\"close_price\":%s,\"open_time\":%I64d,\"close_time\":%I64d,"
-                          "\"net\":%.2f}",
+                          "\"net\":%.2f,\"magic\":%I64d,\"comment\":\"%s\"}",
                           t, sym, (dtype == DEAL_TYPE_SELL ? "BUY" : "SELL"), vol,
                           DoubleToString(oprice, dg), DoubleToString(cprice, dg),
-                          (long)ot, (long)ct, net);
+                          (long)ot, (long)ct, net, HistoryDealGetInteger(t, DEAL_MAGIC), JsonSafe(HistoryDealGetString(t, DEAL_COMMENT)));
       n++;
       if(ct > newest) newest = ct;
      }
    if(n == 0) return;
-   if(PostJson("/bridge/deals", "{\"deals\":[" + arr + "]}")) g_lastDealCheck = newest + 1;
+   if(PostJson("/bridge/deals", "{\"deals\":[" + arr + "]}"))
+     {
+      g_lastDealCheck = newest + 1;
+      if(more) g_lastDealPush = 0;                        // next batch on the next timer tick
+     }
+  }
+
+string JsonSafe(string s)
+  {
+   StringReplace(s, "\\", "/"); StringReplace(s, "\"", "'");
+   return StringSubstr(s, 0, 60);
   }
 
 void OnTick()

@@ -117,6 +117,9 @@ def jobs() -> List[Job]:
             (P, "/cbdr/alert/GBP/USD?window=cbdr"), (P, "/cbdr/alert/USD/JPY?window=cbdr"))
             + newday),
         Job("friday_preclose", NY, (16,), 55, ((P, "/candlerange/friday"),), days=(4,)),
+        # Trade journal summaries at the NY close (17:05) — daily on weekdays, weekly Friday
+        Job("journal_daily", NY, (17,), 5, ((G, "/journal/report?period=day&notify=true"),), days=WEEKDAYS),
+        Job("journal_weekly", NY, (17,), 10, ((G, "/journal/report?period=week&notify=true"),), days=(4,)),
         # Sweeper drones — whole universe, 3×/day ahead of Asia, London and New York
         Job("sweeper_drones", UTC, (1, 9, 15), 30, ((P, "/sweep/run?notify=true"),), days=WEEKDAYS),
         # Monday's CBDR closes 20:00 NY → the week's map (SD ladder + COT direction)

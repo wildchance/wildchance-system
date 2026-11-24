@@ -89,6 +89,7 @@ def test_post_from_deals_winners_only_and_once(monkeypatch):
     monkeypatch.setattr(data_store, "put", put)
     monkeypatch.setattr(fc, "post", post)
     monkeypatch.setattr(fc, "FROM_DEALS", True)
+    monkeypatch.setattr(fc, "MAX_AGE_MIN", 10 ** 9)                      # fixture deals are dated in the past
     loop = asyncio.new_event_loop()
     try:
         r1 = loop.run_until_complete(fc.post_from_deals(TODAY))
@@ -98,3 +99,27 @@ def test_post_from_deals_winners_only_and_once(monkeypatch):
     assert sorted(sent) == [("EURUSD", "SELL"), ("USDCHF", "BUY")]       # the losing EURUSD buy is skipped
     assert any(s["why"] == "not a winning close" for s in r1["skipped"])
     assert r2["new"] == 0 and r2["posted"] == []
+
+
+def test_backfilled_history_gets_no_card(monkeypatch):
+    import asyncio
+    from services import data_store
+    sent = []
+
+    async def get(k):
+        return None, None
+
+    async def put(k, v):
+        return True
+
+    async def post(*a, **k):
+        sent.append(a)
+        return {"sent": True}
+    monkeypatch.setattr(data_store, "get", get)
+    monkeypatch.setattr(data_store, "put", put)
+    monkeypatch.setattr(fc, "post", post)
+    monkeypatch.setattr(fc, "FROM_DEALS", True)
+    old = [{"ticket": 1, "symbol": "EURUSD", "side": "BUY", "volume": 1, "open_price": 1.1,
+            "close_price": 1.11, "open_time": 1_700_000_000, "close_time": 1_700_003_600, "net": 100}]
+    r = asyncio.new_event_loop().run_until_complete(fc.post_from_deals(old))
+    assert sent == [] and r["stale"] == 1

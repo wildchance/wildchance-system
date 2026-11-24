@@ -119,3 +119,15 @@ Webhook URLs to paste into the providers:
 ## Check after deploy
 Open `https://<your-app>/health` — it reports which keys are set (`twelvedata_key_set`,
 database, Telegram) without showing their values.
+
+## Trade journal (every closed trade: win / loss / breakeven)
+
+| Key | Default | What it does |
+|---|---|---|
+| `JOURNAL_BE_PIPS` | `1.0` | a close within ±this many pips counts as **breakeven** |
+| `JOURNAL_BE_USD` | `0.50` | …or within ±this many dollars net |
+| `JOURNAL_SHOW_USD` | `false` | show $ net / expectancy in the Telegram summaries (pips + counts only by default) |
+| `FLASH_MAX_AGE_MIN` | `120` | only closes this recent get a flash card (history backfill goes to the journal only) |
+
+EA v4.53 inputs: `InpDealPushSec` (10 s), `InpDealBackfillDays` (90 — the first run sends 90 days of history to the journal).
+Endpoints (ops token): `/journal/stats?days=30`, `/journal/trades`, `/journal/report?period=day|week|month`.
