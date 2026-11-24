@@ -116,7 +116,14 @@ async def snapshot(symbols: Optional[str] = Query(None)):
             bars = []
         out[s] = {"price": bars[-1]["close"], "time": bars[-1]["time"]} if bars else {"price": None,
                   "note": "no live feed (indices need the EA on that chart)"}
+    await df.ensure_loaded()                       # macro is persisted — restore after a restart
     macro = df.macro_cached()
+    if macro.get("vix") is None:
+        try:
+            await df.refresh_macro()
+            macro = df.macro_cached()
+        except Exception:
+            pass
     return {"as_of_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"), "prices": out,
             "vix": macro.get("vix"), "us_yields": macro.get("us_yields")}
 
