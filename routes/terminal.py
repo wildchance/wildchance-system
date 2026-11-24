@@ -32,6 +32,10 @@ async def page():
 
 @router.get("/data")
 async def data():
+    return await build()
+
+
+async def build() -> dict:
     from services import data_store, econ_calendar as ec, fx_rotation as fx, regime, signal_tracker as stk
     from services import backtest as bt
     from services.data_feeds import macro_cached

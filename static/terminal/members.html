@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WildChance Terminal</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#121821; --line:#1f2a36; --text:#d7e0ea; --muted:#7f8ea3;
+          --up:#2bd47d; --down:#ff5c6c; --warn:#f5b84b; --accent:#4cc3ff; --gold:#e8c26a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:baseline; padding:12px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2; }
+  header h1 { font-size:15px; margin:0; letter-spacing:.08em; color:var(--gold); }
+  header .meta { color:var(--muted); }
+  header button { margin-left:auto; background:none; border:1px solid var(--line); color:var(--muted); border-radius:6px; padding:3px 10px; cursor:pointer; font:inherit; }
+  main { display:grid; gap:12px; padding:12px 16px 32px; grid-template-columns:repeat(auto-fill, minmax(330px, 1fr)); }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; min-width:0; }
+  section h2 { font-size:11px; margin:0 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { padding:3px 4px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
+  td.wrap { white-space:normal; }
+  th { color:var(--muted); font-weight:normal; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .up { color:var(--up); } .down { color:var(--down); } .warn { color:var(--warn); } .muted { color:var(--muted); }
+  .bar { height:6px; background:var(--line); border-radius:3px; position:relative; }
+  .bar i { position:absolute; top:0; bottom:0; border-radius:3px; }
+  .chip { display:inline-block; padding:1px 6px; border:1px solid var(--line); border-radius:10px; margin:2px 4px 2px 0; }
+  .scroll { overflow-x:auto; }
+  .login { max-width:380px; margin:48px auto; padding:0 16px; }
+  .login input { width:100%; margin:6px 0; padding:9px; background:var(--panel); border:1px solid var(--line); border-radius:6px; color:var(--text); font:inherit; }
+  .login button, .cta { width:100%; margin-top:8px; padding:9px; background:var(--gold); color:#111; border:0; border-radius:6px; font:inherit; font-weight:bold; cursor:pointer; }
+  .cta { display:block; text-align:center; text-decoration:none; }
+  .big { font-size:22px; }
+  .err { color:var(--down); min-height:1.4em; }
+</style>
+</head>
+<body>
+<header>
+  <h1>WILDCHANCE TERMINAL</h1>
+  <span class="meta" id="asof"></span>
+  <span class="meta" id="macro"></span>
+  <button id="out" hidden>log out</button>
+</header>
+<div id="login" class="login" hidden>
+  <h2>Member login</h2>
+  <input id="em" type="email" placeholder="email" autocomplete="username">
+  <input id="pw" type="password" placeholder="password" autocomplete="current-password">
+  <button id="go">Log in</button>
+  <div class="err" id="lerr"></div>
+  <p class="muted">No account yet? <a href="/pricing" style="color:var(--accent)">See plans</a></p>
+</div>
+<main id="grid"></main>
+<script>
+const $ = id => document.getElementById(id);
+let KEY = null; try { KEY = localStorage.getItem("wc_key"); } catch (e) {}
+const fmt = (v, d = 2) => v == null ? "—" : Number(v).toLocaleString(undefined, {maximumFractionDigits: d});
+const cls = v => v == null ? "muted" : v > 0 ? "up" : v < 0 ? "down" : "muted";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+const tile = (t, h) => `<section><h2>${esc(t)}</h2><div class="scroll">${h}</div></section>`;
+const dp = s => s.includes("JPY") ? 3 : (/^[A-Z]{3}\/[A-Z]{3}$/.test(s) && !s.startsWith("XAU")) ? 5 : 1;
+
+function strength(d) {
+  const rows = Object.entries(d.strength || {}).map(([c, v]) => {
+    const x = v.score, w = Math.abs(x) * 50, left = x >= 0 ? 50 : 50 - w;
+    return `<tr><td>${c}</td><td class="num ${cls(x)}">${fmt(x)}</td><td style="width:55%"><div class="bar"><i style="left:${left}%;width:${w}%;background:${x >= 0 ? "var(--up)" : "var(--down)"}"></i></div></td></tr>`;
+  }).join("");
+  const p = (d.pairings || []).map(p => `<span class="chip ${p.side === "BUY" ? "up" : "down"}">${p.side} ${p.symbol}</span>`).join("");
+  return tile(d.teaser ? "Currency strength (strongest / weakest)" : "Currency strength", `<table>${rows}</table>${p ? `<div style="margin-top:6px">${p}</div>` : ""}`);
+}
+function rotation(d) {
+  const r = d.rotation || {}, b = Object.entries(r.blocked || {});
+  if (!b.length) return tile("Event rotation", `<span class="muted">${esc(r.note || "no high-impact release in the window")}</span>`);
+  const to = (r.rotate_to || []).map(p => `<span class="chip ${p.side === "BUY" ? "up" : "down"}">${p.side} ${p.symbol}</span>`).join("");
+  return tile("Event rotation", `<div class="warn">Stepping aside: ${b.map(([c, w]) => `${c} (${esc(w)})`).join(", ")}</div><div style="margin-top:6px">↪ ${to || "—"}</div>`);
+}
+function walls(d) {
+  const rows = Object.entries(d.walls || {}).map(([s, w]) => `<tr><td class="wrap" style="width:34%">${s}<div class="muted">P/C ${w.pc ?? "—"} · ${esc(w.asof || "")}</div></td><td class="wrap">${(w.levels || []).map(l => `<span class="chip ${/floor|shelf/.test(l.label) ? "up" : /ceiling|hedge/.test(l.label) ? "down" : "muted"}" title="${esc(l.label)}">${fmt(l.price, dp(s))}</span>`).join("")}</td></tr>`).join("");
+  return tile("Dealer walls — green floors · red ceilings", `<table>${rows}</table>`);
+}
+function calendar(d) {
+  const rows = (d.calendar || []).map(e => `<tr><td class="muted">${esc(e.time_utc).slice(5, 16).replace("T", " ")}</td><td>${esc(e.ccy)}</td><td class="wrap">${esc(e.title)}</td></tr>`).join("");
+  return tile("High-impact, next 3 days (UTC)", `<table>${rows || '<tr><td class="muted">none</td></tr>'}</table>`);
+}
+function regimes(d) {
+  const rows = Object.entries(d.regimes || {}).map(([s, r]) => `<tr><td>${s}</td><td class="${r.regime === "TRENDING" ? "up" : /STRESSED|EVENT/.test(r.regime) ? "warn" : "muted"}">${r.regime || "—"}${r.trend ? " " + r.trend : ""}</td></tr>`).join("");
+  return tile("Market regime", `<table>${rows}</table>`);
+}
+function positioning(d) {
+  const rows = (d.positioning || []).map(p => `<tr><td>${esc(p.pair)}</td><td class="${p.verdict === "LONG" ? "up" : p.verdict === "SHORT" ? "down" : "muted"}">${esc(p.verdict)}</td><td class="num">${p.confidence ?? "—"}</td><td class="num">${p.retail_long ?? "—"}%</td></tr>`).join("");
+  return tile("COT + retail positioning", `<table><tr><th>pair</th><th>lean</th><th>conf</th><th>retail long</th></tr>${rows}</table>`);
+}
+function track(d) {
+  const t = d.track || {};
+  const rows = (t.recent || []).map(r => `<tr><td>${esc(r.symbol)}</td><td class="${r.side === "BUY" ? "up" : "down"}">${r.side}</td><td class="${r.result === "win" ? "up" : r.result === "loss" ? "down" : "muted"}">${r.result}</td><td class="num ${cls(r.pips)}">${fmt(r.pips, 1)}</td><td class="muted">${r.closed_at ? new Date(r.closed_at * 1000).toISOString().slice(5, 10) : ""}</td></tr>`).join("");
+  return tile("Track record — every signal, checked on live prices",
+    `<div><span class="big">${t.win_rate_pct ?? "—"}%</span> win rate · ${t.closed || 0} closed · ✅ ${t.wins || 0} ❌ ${t.losses || 0} ➖ ${t.breakeven || 0} · <span class="${cls(t.pips)}">${fmt(t.pips, 1)} pips</span></div>`
+    + (rows ? `<table style="margin-top:6px">${rows}</table>` : ""));
+}
+function upgrade(d) { return tile("Unlock the full terminal", `<p>${esc(d.upgrade)}</p><a class="cta" href="/pricing">See plans</a>`); }
+
+async function load() {
+  if (!KEY) { $("login").hidden = false; $("grid").innerHTML = ""; $("out").hidden = true; return; }
+  const r = await fetch("/members/terminal/data", {headers: {"X-API-Key": KEY}});
+  if (r.status === 401) { try { localStorage.removeItem("wc_key"); } catch (e) {} KEY = null; return load(); }
+  const d = await r.json();
+  $("login").hidden = true; $("out").hidden = false;
+  $("asof").textContent = d.as_of ? "as of " + d.as_of.replace("T", " ").slice(0, 16) + " UTC" : "";
+  const v = d.macro && d.macro.vix;
+  $("macro").textContent = v ? `VIX ${v.close} (${v.regime})` : "";
+  $("grid").innerHTML = d.teaser
+    ? [strength(d), track(d), calendar(d), upgrade(d)].join("")
+    : [strength(d), rotation(d), walls(d), track(d), regimes(d), calendar(d), positioning(d)].join("");
+}
+$("go").onclick = async () => {
+  $("lerr").textContent = "";
+  try {
+    const r = await fetch("/members/login", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({email: $("em").value.trim(), password: $("pw").value})});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.status);
+    KEY = d.api_key; try { localStorage.setItem("wc_key", KEY); } catch (e) {}
+    $("pw").value = ""; load();
+  } catch (e) { $("lerr").textContent = String(e.message || e); }
+};
+$("out").onclick = () => { try { localStorage.removeItem("wc_key"); } catch (e) {} KEY = null; load(); };
+load();
+setInterval(() => KEY && load(), 60000);
+</script>
+</body>
+</html>
