@@ -70,3 +70,46 @@ def test_underlying_rule():
     fut = {"DEC26": 1.0, "FEB27": 2.0}
     assert cb.gold_underlying(dt.date(2026, 11, 24), fut) == 1.0
     assert cb.gold_underlying(dt.date(2026, 12, 4), fut) == 2.0
+
+
+YEN_CALLS = """33                    JAPANESE YEN CALL OPTIONS                    33
+PG33 BULLETIN # 226@          JAPANESE YEN CALL OPTIONS          Mon, Nov 23, 2026          PG33
+JPU OPT
+DEC26     JPU OPT                      (FUTURES SETT.   .006303 -              17.5 )
+6300      0.31                         .36B        .23A        ----                                   .33-     13    .517       ----       22       949 -        4     5.03B     .61A
+6300      ----                         ----        ----        ----                                   .71-     16    .705       ----     ----         1       UNCH     ----      ----
+TOTAL                                                                                                                                     22       950
+DEC26     JPU OPT - 2JY                (FUTURES SETT.   .006303 -              17.5 )
+6350      ----                    .45B        .36A        ----                       .44-    11    .511    ----       ----      32     UNCH   ----      ----
+                    ADDITIONAL JAPANESE YEN CALLS **SETT.PRICE**
+JPU OPT
+DEC26     JPU OPT                      (FUTURES SETT.   .006303 -              17.5 )
+6300      0.31                         .36B        .23A        ----                                   .33-     13    .517       ----       22       949 -        4     5.03B     .61A
+"""
+YEN_PUTS = """34                    JAPANESE YEN PUT OPTIONS                    34
+PG34 BULLETIN # 226@          JAPANESE YEN PUT OPTIONS          Mon, Nov 23, 2026          PG34
+JPU OPT
+DEC26     JPU OPT - JPU                (FUTURES SETT.   .006303 -              17.5 )
+6200      ----                         ----        ----        ----                                   .20-     13    .200       ----       22       500 -        4     ----      ----
+"""
+
+
+def test_fx_expiry_rules():
+    assert cb.fx_expiry("JPU", "DEC26") == dt.date(2026, 12, 4)      # 2nd Friday before 3rd Wed (16 Dec)
+    assert cb.fx_expiry("2JY", "DEC26") == dt.date(2026, 12, 11)
+    assert cb.fx_expiry("SJP", "DEC26") is None
+
+
+def test_fx_rows_dedupe_additional_but_keep_style_twins():
+    rows = cb.parse_fx_options(YEN_CALLS)
+    assert [r["oi"] for r in rows] == [949, 1, 32]                   # twin 6300 kept, ADDITIONAL repeat dropped
+    assert rows[2]["code"] == "2JY"
+
+
+def test_fx_chain_inverts_yen_to_usdjpy():
+    ch = cb.fx_chain(YEN_CALLS, YEN_PUTS, max_days=45)
+    assert ch["pair"] == "USDJPY" and round(ch["spot"], 2) == 158.65
+    k_call = round(1 / 0.0063, 3)                                     # yen CALL 6300 → USD/JPY PUT ≈ 158.73
+    assert ch["strikes"][k_call]["put_oi"] == 950 and ch["strikes"][k_call]["call_oi"] == 0
+    k_put = round(1 / 0.0062, 3)                                      # yen PUT 6200 → USD/JPY CALL ≈ 161.29
+    assert ch["strikes"][k_put]["call_oi"] == 500

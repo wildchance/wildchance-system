@@ -195,7 +195,21 @@ async def calendar_week(notify: bool = Query(False)):
 @router.get("/cme/refresh")
 async def cme_refresh():
     from services import cme_bulletin as cb
-    return await cb.refresh()
+    return {"gold": await cb.refresh(), "fx": await cb.refresh_fx()}
+
+
+@router.get("/cme/fx/{base}/{quote}")
+async def cme_fx(base: str, quote: str):
+    from services import cme_bulletin as cb
+    c = await cb.cached_fx_chain(f"{base}{quote}", max_age_days=30)
+    if not c:
+        return {"ok": False, "reason": "no CME chain for this pair (USD/JPY, USD/CHF, USD/CAD, GBP/USD)"}
+    top_c = sorted(c["strikes"].items(), key=lambda kv: -kv[1]["call_oi"])[:5]
+    top_p = sorted(c["strikes"].items(), key=lambda kv: -kv[1]["put_oi"])[:5]
+    return {"ok": True, "pair": c.get("pair"), "asof": c["asof"], "front_future_in_pair_terms": c["spot"],
+            "expiries": c.get("expiries"), "put_call_ratio": c.get("put_call_ratio"),
+            "top_call_strikes": [{"strike": k, "oi": int(v["call_oi"])} for k, v in top_c],
+            "top_put_strikes": [{"strike": k, "oi": int(v["put_oi"])} for k, v in top_p]}
 
 
 @router.get("/cme/gold")

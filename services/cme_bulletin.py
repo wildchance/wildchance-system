@@ -254,3 +254,190 @@ async def cached_chain(max_age_days: int = 5) -> Optional[Dict]:
     if (dt.date.today() - dt.date.fromisoformat(c["asof"])).days > max_age_days:
         return None
     return {**c, "strikes": {float(k): v for k, v in c["strikes"].items()}}
+
+
+# ── currency futures options (separate CALL and PUT sections per currency) ──────────
+# section title word → (traded pair, inverse?)  inverse: futures are USD per foreign unit
+# but the pair is quoted foreign per USD (USD/JPY = 1 / JPY future) → strikes invert and
+# a yen CALL is a USD/JPY PUT.
+FX = {"JAPANESE YEN": ("USDJPY", True), "SWISS FRANC": ("USDCHF", True),
+      "CANADIAN DOLLAR": ("USDCAD", True), "BRITISH POUND": ("GBPUSD", False)}
+FX_SECTIONS = {"GBP_C": "Section27_British_Pound_Call_Options.pdf", "GBP_P": "Section28_British_Pound_Put_Options.pdf",
+               "CAD_C": "Section29_Canadian_Dollar_Call_Options.pdf", "CAD_P": "Section30_Canadian_Dollar_Put_Options.pdf",
+               "JPY_C": "Section33_Japanese_Yen_Call_Options.pdf", "JPY_P": "Section34_Japanese_Yen_Put_Options.pdf",
+               "CHF_C": "Section35_Swiss_Franc_Call_Options.pdf", "CHF_P": "Section36_Swiss_Franc_Put_Options.pdf"}
+FX_MONTHLY = ("JPU", "GBU", "CAU", "CHU", "ADU", "EUU")
+FX_BAND_PCT = float(config("CME_FX_BAND_PCT", default="6"))
+_FX_MONTH = re.compile(r"^\s*([A-Z]{3}\d{2})?\s*(?:([A-Z0-9]{2,4}) OPT(?: - ([A-Z0-9]{2,4}))?)?\s*"
+                       r"\(FUTURES SETT\.\s+([\d.]+)")
+_FX_PRODUCT = re.compile(r"^\s*([A-Z0-9]{2,4}) OPT(?: - ([A-Z0-9]{2,4}))?\s*$")
+
+
+def _fridays(year: int, month: int) -> List[dt.date]:
+    d = dt.date(year, month, 1)
+    return [d + dt.timedelta(days=i) for i in range(31)
+            if (d + dt.timedelta(days=i)).month == month and (d + dt.timedelta(days=i)).weekday() == 4]
+
+
+def fx_expiry(code: str, label: str) -> Optional[dt.date]:
+    """CME FX options: monthly = 2nd Friday before the 3rd Wednesday; '2JY' = 2nd Friday."""
+    y, m = 2000 + int(label[3:]), MONTHS[label[:3]]
+    if code in FX_MONTHLY:
+        first = dt.date(y, m, 1)
+        wed3 = first + dt.timedelta(days=(2 - first.weekday()) % 7 + 14)
+        return wed3 - dt.timedelta(days=12)           # Wed − 5 = Friday before, − 7 more = 2nd Friday before
+    if re.fullmatch(r"[1-5][A-Z]{2}", code):
+        fr = _fridays(y, m)
+        n = int(code[0])
+        return fr[n - 1] if n <= len(fr) else None
+    return None
+
+
+def fx_section_meta(text: str) -> Optional[Tuple[str, bool, str]]:
+    head = "\n".join(text.splitlines()[:12]).upper()
+    for word, (pair, inv) in FX.items():
+        if word in head:
+            typ = "CALL" if " CALL OPTIONS" in head else "PUT" if " PUT OPTIONS" in head else None
+            return (pair, inv, typ) if typ else None
+    return None
+
+
+def parse_fx_options(text: str) -> List[Dict]:
+    """Rows: code, month, futures settlement, strike, OI for one CALL or PUT section."""
+    rows, code, month, fut = [], None, None, 0.0
+    seen: set = set()
+    nth: Dict[Tuple, int] = {}
+    for line in text.splitlines():
+        if "ADDITIONAL" in line and "**" in line:
+            nth = {}                          # repeated listing starts: count strikes afresh
+            continue
+        mm = _FX_MONTH.match(line)
+        if mm:
+            month = mm.group(1) or month
+            if mm.group(2):
+                code = mm.group(3) or mm.group(2)
+            fut = float(mm.group(4)) if mm.group(4).strip(".") else 0.0
+            continue
+        p = _FX_PRODUCT.match(line)
+        if p:
+            code, month = p.group(2) or p.group(1), None
+            continue
+        if line.startswith(("TOTAL", "THE INFORMATION", "IS ACCEPTED")) or not (code and month):
+            continue
+        r = _ROW.match(line)
+        if not r:
+            continue
+        ois = _OI.findall(line)
+        k0 = (code, month, float(r.group(1)))
+        nth[k0] = nth.get(k0, -1) + 1        # same strike twice in a block (American + European) is real
+        key = (*k0, nth[k0])
+        if ois and key not in seen:          # …but the whole section repeats under "ADDITIONAL …" — skip that
+            seen.add(key)
+            rows.append({"code": code, "month": month, "fut": fut, "strike": float(r.group(1)),
+                         "oi": int(ois[-1].replace(",", ""))})
+    return rows
+
+
+def _scale(k: float, f: float) -> float:
+    return min((10.0 ** -e for e in range(0, 8)), key=lambda s: abs(k * s - f))
+
+
+def fx_chain(call_text: str, put_text: str, max_days: int = 45, band_pct: float = FX_BAND_PCT) -> Dict:
+    """Both sections of one currency → per-strike OI in PAIR terms on the front future."""
+    meta = fx_section_meta(call_text) or fx_section_meta(put_text)
+    if not meta:
+        return {}
+    pair, inv, _ = meta
+    asof = bulletin_date(call_text) or bulletin_date(put_text) or dt.date.today()
+    data = [(fx_section_meta(t) or (None, None, None))[2] for t in (call_text, put_text)]
+    rows = [{**r, "type": typ} for t, typ in zip((call_text, put_text), data) if typ for r in parse_fx_options(t)]
+    futs = {}
+    for r in rows:
+        if r["fut"]:
+            futs.setdefault(r["month"], r["fut"])
+    if not futs:
+        return {}
+    order = sorted(futs, key=lambda l: (int(l[3:]), MONTHS[l[:3]]))
+
+    def fut_for(label: str) -> float:
+        if futs.get(label):
+            return futs[label]
+        key = (int(label[3:]), MONTHS[label[:3]])
+        later = [l for l in order if (int(l[3:]), MONTHS[l[:3]]) >= key]
+        return futs[later[0]] if later else futs[order[-1]]
+
+    front_f = futs[order[0]]
+    front = 1 / front_f if inv else front_f
+    strikes: Dict[float, Dict] = {}
+    used, calls, puts = set(), 0, 0
+    for r in rows:
+        exp = fx_expiry(r["code"], r["month"])
+        if not exp or not 0 <= (exp - asof).days <= max_days or not r["oi"]:
+            continue
+        f_u = fut_for(r["month"])
+        k_fut = r["strike"] * _scale(r["strike"], f_u)
+        k_pair, u_pair = (1 / k_fut, 1 / f_u) if inv else (k_fut, f_u)
+        typ = ({"CALL": "PUT", "PUT": "CALL"}[r["type"]]) if inv else r["type"]
+        k = round(k_pair * front / u_pair, 5 if front < 20 else 3)
+        if abs(k / front - 1) * 100 > band_pct:
+            continue
+        row = strikes.setdefault(k, {"call_oi": 0.0, "put_oi": 0.0, "gex": 0.0})
+        row["call_oi" if typ == "CALL" else "put_oi"] += r["oi"]
+        calls += r["oi"] if typ == "CALL" else 0
+        puts += r["oi"] if typ == "PUT" else 0
+        used.add(f"{r['code']} {r['month']} ({exp:%d %b})")
+    return {"pair": pair, "spot": front, "strikes": strikes, "atm_iv": None, "days": None, "asof": asof.isoformat(),
+            "expiries": sorted(used), "call_oi": calls, "put_oi": puts,
+            "put_call_ratio": round(puts / calls, 2) if calls else None}
+
+
+FX_SEED = "data/cme_fx_seed.json"
+
+
+async def refresh_fx(max_days: int = 45) -> Dict:
+    from services import data_store
+    out = {}
+    for ccy in ("GBP", "CAD", "JPY", "CHF"):
+        texts = []
+        for side in ("C", "P"):
+            name = FX_SECTIONS[f"{ccy}_{side}"]
+            raw = await _fetch_pdf(BASE + name)
+            local = sorted(glob.glob(os.path.join(CME_DIR, f"{name.split('_')[0]}_*.pdf")), key=os.path.getmtime)
+            try:
+                if raw:
+                    with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+                        f.write(raw)
+                        f.flush()
+                        texts.append(pdf_text(f.name))
+                elif local:
+                    texts.append(pdf_text(local[-1]))
+            except Exception:
+                pass
+        if len(texts) == 2:
+            ch = fx_chain(texts[0], texts[1], max_days)
+            if ch.get("strikes"):
+                await data_store.put(f"cme_fx_chain:{ch['pair']}",
+                                     {**ch, "strikes": {str(k): v for k, v in ch["strikes"].items()}})
+                out[ch["pair"]] = {"asof": ch["asof"], "strikes": len(ch["strikes"]),
+                                   "put_call_ratio": ch["put_call_ratio"]}
+        else:
+            out[ccy] = "no bulletin (download refused and no PDFs in data/cme/)"
+    return out
+
+
+async def cached_fx_chain(pair: str, max_age_days: int = 5) -> Optional[Dict]:
+    import json
+    from services import data_store
+    p = pair.upper().replace("/", "")
+    try:
+        c, _ = await data_store.get(f"cme_fx_chain:{p}")
+    except Exception:
+        c = None
+    if not c and os.path.exists(FX_SEED):
+        with open(FX_SEED) as f:
+            c = (json.load(f) or {}).get(p)
+    if not c or not c.get("asof"):
+        return None
+    if (dt.date.today() - dt.date.fromisoformat(c["asof"])).days > max_age_days:
+        return None
+    return {**c, "strikes": {float(k): v for k, v in c["strikes"].items()}}
