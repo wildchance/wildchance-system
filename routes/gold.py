@@ -588,7 +588,7 @@ async def signal_card_from_optimus(notify: bool = Query(False)):
         try:
             from services.gold_scan import _tg
             card["sent"] = await _tg(card["telegram_text"])
-        except Exception as e:
+        except Exception:
             card["sent"] = False
     return card
 

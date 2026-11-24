@@ -41,7 +41,6 @@ async def signal(symbol: str = Query("XAU/USD"),
     hbars = await fetch_hourly_raw(symbol, "UTC", 96)
     if len(hbars) < 3:
         return {"signal": "NONE", "reason": f"no {symbol} 1h bars"}
-    now = _dt.datetime.now(_dt.timezone.utc)
     triggers = [trigger] if trigger is not None else list(TRIGGERS)
 
     # pick the most recent date+trigger whose full triad (H, H+1, H+2) has closed
