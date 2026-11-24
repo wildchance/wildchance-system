@@ -174,6 +174,18 @@ def vote_seasonal(symbol: str, side: str, today: Optional[dt.date] = None) -> Di
     return _v("seasonal", 0, "midterm window — no view for this market/side")
 
 
+def vote_plan(plans: Optional[List[Dict]], side: str, price: Optional[float], tol: float = 0.0) -> Dict:
+    """The owner's own plan (data/owner_plans.csv): +1 when this trade matches an active
+    plan zone price is in, −1 when it fights one (e.g. a BUY inside a SELL plan zone)."""
+    if not plans or price is None:
+        return _v("plan", 0, "no owner plan here")
+    here = [p for p in plans if p["low"] - tol <= price <= p["high"] + tol]
+    if not here:
+        return _v("plan", 0, "no owner plan zone at price")
+    p = here[0]
+    return _v("plan", 1 if p["side"] == side else -1, f"owner {p['side']} plan: {p['label']}")
+
+
 def vote_mirofish(m: Optional[Dict], side: str) -> Dict:
     if not m or m.get("score") is None:
         return _v("mirofish", 0, "offline")
@@ -241,6 +253,15 @@ async def convene(symbol: str, side: str, yearly: Optional[Dict] = None,
     sym = symbol.upper().replace("/", "")
     pair = f"{sym[:3]}/{sym[3:6]}" if len(sym) == 6 and sym.isalpha() else symbol
     cot_row = sent = wk = lock = mf = news = vix = None
+    price = (yearly or {}).get("price")
+    tol = 0.0
+    try:
+        from services import owner_plans
+        from services.yearly_cbdr import tolerance
+        plans = owner_plans.active(symbol, price)
+        tol = tolerance(symbol, price) if price else 0.0
+    except Exception:
+        plans = []
     try:
         from services.data_feeds import macro_cached
         vix = macro_cached().get("vix")
@@ -290,6 +311,7 @@ async def convene(symbol: str, side: str, yearly: Optional[Dict] = None,
              vote_structure(yearly, side), vote_history(role_stats), vote_macro(lock, side),
              vote_news(news, side), vote_base_rates((yearly or {}).get("history"), side, trade_type),
              vote_vix(vix, symbol, side), vote_seasonal(symbol, side),
+             vote_plan(plans, side, price, tol),
              vote_mirofish(mf, side)]
     votes = apply_scores(votes, scores)
     return {"symbol": symbol, "side": side, **decide(votes)}
