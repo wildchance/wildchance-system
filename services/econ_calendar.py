@@ -119,8 +119,14 @@ async def ensure_loaded() -> None:
 def status() -> Dict:
     import time as _t
     now = _t.time()
+    last_ok = _meta["last_ok"]
+    try:                                   # the source-health registry is persisted — survives restarts
+        from services.data_feeds import _health
+        last_ok = max(last_ok, float((_health.get("forexfactory_calendar") or {}).get("last_ok") or 0))
+    except Exception:
+        pass
     return {"stored": len(_events), "high_upcoming": len(upcoming(7, high_only=True)),
-            "last_ok_h": round((now - _meta["last_ok"]) / 3600, 1) if _meta["last_ok"] else None,
+            "last_ok_h": round((now - last_ok) / 3600, 1) if last_ok else None,
             "backing_off_min": max(0, round((_meta["blocked_until"] - now) / 60)) or None}
 
 
