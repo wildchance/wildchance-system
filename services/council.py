@@ -27,6 +27,7 @@ to GO · VETO.
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Dict, List, Optional
 
 from decouple import config
@@ -155,6 +156,24 @@ def vote_vix(vix: Optional[Dict], symbol: str, side: str) -> Dict:
     return _v("vix", 1 if side == risk_on else 0, f"VIX {lvl:.1f} calm → risk-on")
 
 
+def midterm_window(today: dt.date) -> bool:
+    """Fisher's 'Midterm Miracle' window: Q4 of the midterm year → end of Q2 next year."""
+    return (today.month >= 10 and today.year % 4 == 2) or (today.month <= 6 and (today.year - 1) % 4 == 2)
+
+
+def vote_seasonal(symbol: str, side: str, today: Optional[dt.date] = None) -> Dict:
+    """Inside the midterm window, BUY on US equity indices, US stocks and BTC/ETH gets +1.
+    Never votes against anything — the VIX / structure agents still decide timing."""
+    today = today or dt.date.today()
+    s = symbol.upper().replace("/", "")
+    us_risk = s.startswith(("NAS100", "US30", "SPX", "US500", "US2000", "BTC", "ETH")) or (s.isalpha() and len(s) <= 5)
+    if not midterm_window(today):
+        return _v("seasonal", 0, "outside the midterm window")
+    if us_risk and side == "BUY":
+        return _v("seasonal", 1, "midterm window (Q4 midterm → Q2): historically the strongest 9 months")
+    return _v("seasonal", 0, "midterm window — no view for this market/side")
+
+
 def vote_mirofish(m: Optional[Dict], side: str) -> Dict:
     if not m or m.get("score") is None:
         return _v("mirofish", 0, "offline")
@@ -270,7 +289,7 @@ async def convene(symbol: str, side: str, yearly: Optional[Dict] = None,
     votes = [vote_cot(cot_row, side), vote_sentiment(sent, side), vote_weekly(wk, side),
              vote_structure(yearly, side), vote_history(role_stats), vote_macro(lock, side),
              vote_news(news, side), vote_base_rates((yearly or {}).get("history"), side, trade_type),
-             vote_vix(vix, symbol, side),
+             vote_vix(vix, symbol, side), vote_seasonal(symbol, side),
              vote_mirofish(mf, side)]
     votes = apply_scores(votes, scores)
     return {"symbol": symbol, "side": side, **decide(votes)}

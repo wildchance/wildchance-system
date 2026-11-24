@@ -1,0 +1,3 @@
+start_utc,end_utc,symbols,label
+2026-11-30T21:00,2026-12-03T23:00,NAS100;US30;SPX500;US500;NVDA,Huang testimony (House Dec 1-2 / Senate Banking Dec 3) + Megaspeed blacklist
+2026-12-09T17:00,2026-12-10T03:00,ALL_USD;NAS100;US30;SPX500;US500;XAU/USD;BTC/USD;NVDA,FOMC decision Dec 9 (25 bp hike priced)

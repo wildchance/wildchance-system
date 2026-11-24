@@ -45,6 +45,35 @@ def session_block(now: Optional[dt.datetime] = None) -> Optional[str]:
     return None
 
 
+BLACKOUTS_CSV = str(config("EVENT_BLACKOUTS_CSV", default="data/event_blackouts.csv"))
+
+
+def blackout(symbol: str, now: Optional[dt.datetime] = None, path: Optional[str] = None) -> Optional[str]:
+    """Owner-listed event windows (hearings, FOMC …) with no NEW entries for the listed
+    symbols. symbols: ';'-separated; ALL = everything; ALL_USD = any pair with USD."""
+    import csv
+    import os
+    path = path or BLACKOUTS_CSV
+    if not os.path.exists(path):
+        return None
+    now = now or dt.datetime.now(dt.timezone.utc)
+    s = symbol.upper().replace("/", "")
+    with open(path, newline="") as f:
+        for r in csv.DictReader(f):
+            try:
+                a = dt.datetime.fromisoformat(r["start_utc"]).replace(tzinfo=dt.timezone.utc)
+                b = dt.datetime.fromisoformat(r["end_utc"]).replace(tzinfo=dt.timezone.utc)
+            except (KeyError, ValueError):
+                continue
+            if not a <= now <= b:
+                continue
+            syms = [x.strip().upper().replace("/", "") for x in (r.get("symbols") or "").split(";") if x.strip()]
+            if "ALL" in syms or s in syms or ("ALLUSD" in [x.replace("_", "") for x in syms]
+                                               and len(s) == 6 and "USD" in s):
+                return f"event blackout: {r.get('label') or 'event'} (until {b:%b %d %H:%M} UTC)"
+    return None
+
+
 def min_stop_distance(symbol: str) -> float:
     s = symbol.upper().replace("/", "")
     if s.startswith(("XAU", "GOLD")):
@@ -106,6 +135,9 @@ def evaluate(symbol: str, side: str, entry: float, stop: float, targets: List[fl
     sb = session_block(now)
     if sb:
         reasons.append(sb)
+    bo = blackout(symbol, now)
+    if bo:
+        reasons.append(bo)
     rr = best_rr(entry, stop, targets)
     if rr is None or rr < MIN_RR:
         reasons.append(f"R:R {rr} below {MIN_RR}R (first rung)")
