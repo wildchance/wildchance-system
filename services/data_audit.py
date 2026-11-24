@@ -107,6 +107,10 @@ async def audit_cme(today: dt.date, live: Dict[str, float]) -> List[Dict]:
             problems.append(f"only {len(c.get('strikes') or {})} strikes")
         if c.get("put_call_ratio") is None:
             problems.append("no put/call ratio")
+        from services.options_levels import CME_MIN_OI
+        oi = (c.get("call_oi") or 0) + (c.get("put_oi") or 0)
+        if oi < CME_MIN_OI:
+            problems.append(f"too thin ({oi} contracts < {CME_MIN_OI}) — walls not drawn, vol screens used instead")
         px = live.get(sym)
         if px and c.get("spot") and abs(c["spot"] / px - 1) > 0.03:
             problems.append(f"front future {c['spot']:.5g} is > 3 % from live {px} — wrong contract or stale")

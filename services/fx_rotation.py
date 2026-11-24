@@ -201,6 +201,16 @@ async def rotation(now: Optional[dt.datetime] = None) -> Dict:
     for c in cands:
         c["event_move_pips"] = sensitivity(c["symbol"], evs)
     cands.sort(key=lambda c: (c["event_move_pips"] if c["event_move_pips"] is not None else 15) / 10 - c["gap"])
+    for c in cands[:5]:                       # the pair's own walls (CME, or the owner's vol screens)
+        try:
+            from services.options_levels import cached_levels
+            lv = cached_levels(c["symbol"])
+            ceil = [x["price"] for x in lv if "ceiling" in x["label"]]
+            flr = [x["price"] for x in lv if "floor" in x["label"]]
+            if ceil or flr:
+                c["walls"] = {"ceiling": min(ceil) if ceil else None, "floor": max(flr) if flr else None}
+        except Exception:
+            pass
     return {"blocked": blocked, "rotate_to": cands[:5]}
 
 
@@ -255,6 +265,7 @@ def card(st: Dict, rot: Optional[Dict] = None) -> str:
         if rot.get("rotate_to"):
             lines.append("↪ Rotate to: " + " · ".join(
                 f"{p['side']} {p['symbol']}" + (f" (moves {p['event_move_pips']:.0f}p on it)" if p.get("event_move_pips") else "")
+                + (f" [walls {p['walls']['floor'] or '—'} / {p['walls']['ceiling'] or '—'}]" if p.get("walls") else "")
                 for p in rot["rotate_to"]))
     lines.append("_Pairs still need a trigger + a council GO._")
     return "\n".join(lines)

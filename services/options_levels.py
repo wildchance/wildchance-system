@@ -278,6 +278,53 @@ async def _polygon_chain(und: str) -> Dict:
     return parse_polygon(rows) if rows else {}
 
 
+# A CME chain thinner than this (calls + puts, contracts) is not drawn as walls: NZD (~600, puts only)
+# and the Dow (~100) would be noise next to EUR (≈150 000 in one expiry).
+CME_MIN_OI = int(config("CME_MIN_OI", default="2000"))
+
+
+def _liquid(chain: Optional[Dict]) -> bool:
+    return bool(chain and chain.get("strikes")) and \
+        (chain.get("call_oi") or 0) + (chain.get("put_oi") or 0) >= CME_MIN_OI
+
+
+def screen_levels(symbol: str, today: Optional[dt.date] = None, path: Optional[str] = None) -> Dict:
+    """Owner's vol-screen strikes for the NEAREST expiry ≥ today → wall-like levels (spot terms).
+    The source for FX crosses / NZD that have no liquid listed options."""
+    import csv
+    import os
+    import re as _re
+    path = path or str(config("OPTIONS_STRIKES_CSV", default="data/options_strikes.csv"))
+    today = today or dt.date.today()
+    s = symbol.upper().replace("/", "")
+    if not os.path.exists(path):
+        return {}
+    with open(path, newline="") as f:
+        rows = [r for r in csv.DictReader(f) if r.get("symbol", "").upper().replace("/", "") == s
+                and r.get("expiry", "") >= today.isoformat()]
+    if not rows:
+        return {}
+    full = [x for x in rows if (x.get("put25") or "").strip() and (x.get("call25") or "").strip()]
+    r = min(full or rows, key=lambda x: x["expiry"])          # nearest expiry with BOTH sides (cropped screens skipped)
+    exp = dt.date.fromisoformat(r["expiry"])
+    lv = []
+    for col, label, key in (("call10", "10Δ call — outer ceiling", "exhaustion_high"),
+                            ("call25", "25Δ call — ceiling", "inventory_ceiling"),
+                            ("put25", "25Δ put — floor", "primary_floor"),
+                            ("put10", "10Δ put — outer floor", "exhaustion_low")):
+        if (r.get(col) or "").strip():
+            lv.append({"label": f"{label} ({exp:%d %b})", "price": float(r[col]), "key": key})
+    m = _re.search(r"ATM ([\d.]+)", r.get("source") or "")
+    if m:
+        lv.append({"label": f"pin (ATM, expiry magnet / pain) ({exp:%d %b})", "price": float(m.group(1)),
+                   "key": "max_pain"})
+    if not lv:
+        return {}
+    return {"symbol": symbol, "underlying": "vol screens", "ok": True, "asof": _re.search(
+        r"(\d{4}-\d{2}-\d{2})", r.get("source") or "").group(1) if _re.search(r"\d{4}-\d{2}-\d{2}", r.get("source") or "")
+        else None, "expiry": exp.isoformat(), "levels": sorted(lv, key=lambda x: -x["price"])}
+
+
 CME_FX = ("USDJPY", "USDCHF", "USDCAD", "GBPUSD", "EURUSD", "AUDUSD", "NAS100", "US30", "SPX500")
 CME_ALIAS = {"US100": "NAS100", "NDX": "NAS100", "US500": "SPX500", "SPX": "SPX500", "DJI": "US30"}
 _cache: Dict[str, Tuple[float, Dict]] = {}
@@ -287,17 +334,22 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
     """Fetch (cached 30 min), compute and map the dealer levels for ``symbol``."""
     und = underlying_for(symbol)
     s = symbol.upper().replace("/", "")
-    if s not in PROXY and not (s.isalpha() and len(s) <= 5):
-        return {"symbol": symbol, "ok": False, "reason": "no listed options proxy (e.g. FX crosses) — CBDR levels only"}
+    if s not in PROXY and not (s.isalpha() and len(s) <= 5) and CME_ALIAS.get(s, s) not in CME_FX:
+        sc = screen_levels(symbol)
+        return sc or {"symbol": symbol, "ok": False,
+                      "reason": "no listed options and no vol screens yet — send this pair's options screens"}
+    thin = None
     if s in ("XAUUSD", "GOLD"):              # real COMEX gold options OI (CME Daily Bulletin) first
         try:
             from services.cme_bulletin import cached_chain
             cme = await cached_chain()
         except Exception:
             cme = None
-        if cme and cme.get("strikes"):
+        if _liquid(cme):
             und = "CME:OG"
             _cache[und] = (time.time(), cme)
+        elif cme:
+            thin = f"CME gold chain too thin ({(cme.get('call_oi') or 0) + (cme.get('put_oi') or 0)} contracts)"
     cme_fx = False
     s = CME_ALIAS.get(s, s)
     if s in CME_FX:                          # real CME currency futures options OI, in pair terms
@@ -306,9 +358,11 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
             fx = await cached_fx_chain(s)
         except Exception:
             fx = None
-        if fx and fx.get("strikes"):
+        if _liquid(fx):
             und, cme_fx = f"CME:{s}", True
             _cache[und] = (time.time(), fx)
+        elif fx:
+            thin = f"CME {s} options too thin ({(fx.get('call_oi') or 0) + (fx.get('put_oi') or 0)} contracts < {CME_MIN_OI})"
     hit = _cache.get(und)
     chain = hit[1] if hit and time.time() - hit[0] < 1800 else None
     if chain is None:
@@ -336,7 +390,8 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
             _cache[und] = (time.time(), chain)
     lv = levels(chain)
     if not lv:
-        return {"symbol": symbol, "underlying": und, "ok": False, "reason": "no option chain"}
+        sc = screen_levels(symbol)
+        return sc or {"symbol": symbol, "underlying": und, "ok": False, "reason": thin or "no option chain"}
     inverse = s in INVERSE and not cme_fx      # CME chains are already in pair terms
     ratio = (live_price / chain["spot"]) if live_price and chain.get("spot") else 1.0
     extra = {k: chain[k] for k in ("asof", "expiries", "put_call_ratio", "call_oi", "put_oi") if chain.get(k) is not None}
@@ -351,6 +406,9 @@ def cached_levels(symbol: str, live_price: Optional[float] = None) -> List[Dict]
     s0 = CME_ALIAS.get(s0, s0)
     cme_key = "CME:OG" if s0 in ("XAUUSD", "GOLD") else f"CME:{s0}" if s0 in CME_FX else None
     hit = (_cache.get(cme_key) if cme_key else None) or _cache.get(underlying_for(symbol))
+    if not hit:                                   # crosses / thin markets → the owner's vol screens
+        return [{"label": x["label"], "price": x["price"], "key": x["key"]}
+                for x in (screen_levels(symbol).get("levels") or [])]
     if hit and cme_key and hit is _cache.get(cme_key):
         lv = levels(hit[1])
         ratio = (live_price / hit[1]["spot"]) if live_price and hit[1].get("spot") else 1.0
