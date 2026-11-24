@@ -54,13 +54,17 @@ async def check(symbol: str, side: str, trade_type: str = "intraday", style: Opt
         cv = await cn.convene(symbol, norm_side(side), yearly=yearly, trade_type=trade_type,
                               scores=await _agent_scores())
     except Exception as e:
+        from services import errors
+        errors.swallow(f"council.convene {symbol}", e)
         return {"pass": not GATE_ALL, "verdict": "ERROR", "line": f"🏛 Council unavailable ({type(e).__name__})"}
     from services import fx_rotation, regime
     ex = await fx_rotation.exposure_for(symbol, norm_side(side))
     try:
         rb = await regime.risk_for(symbol)
         blocked = regime.route(rb["regime"], style, norm_side(side))
-    except Exception:
+    except Exception as e:
+        from services import errors
+        errors.swallow(f"regime.risk_for {symbol}", e)
         rb, blocked = None, None
     line = cn.summary(cv) + ("\n" + ex["line"] if ex.get("line") else "") + \
         ("\n" + regime.line(rb) if rb else "") + (f"\n⛔ {blocked}" if blocked else "")

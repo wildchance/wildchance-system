@@ -97,6 +97,10 @@ function backtests(d) {
   }
   return tile("Backtests (walk-forward)", html || '<span class="muted">run /research/backtest/all — results appear here</span>');
 }
+function health(d) {
+  const h = d.health || {}, rows = (h.top || []).map(t => `<tr><td class="warn">${esc(t.kind)}</td><td class="wrap">${esc(t.where)}</td><td class="num">${t.n}</td></tr>`).join("");
+  return tile("System health today", `<div class="${h.total ? "warn" : "up"}">${h.total || 0} problem events</div><table>${rows}</table>`);
+}
 function audit(d) {
   const a = d.audit || {};
   const rows = (a.issues || []).map(i => `<tr><td>${i.status}</td><td>${esc(i.source)} ${esc(i.symbol || "")}</td><td class="muted">${esc([...(i.problems || []), ...(i.notes || [])].join("; "))}</td></tr>`).join("");
@@ -112,7 +116,7 @@ async function load() {
     const v = d.macro && d.macro.vix, y = d.macro && d.macro.yields;
     document.getElementById("macro").textContent = (v ? `VIX ${v.close} (${v.regime})` : "") + (y ? ` · US10Y ${y.us10y}% · 2s10s ${y.curve_2s10s}` : "");
     document.getElementById("grid").innerHTML = [strength(d), rotation(d), exposure(d), results(d), regimes(d),
-      walls(d), calendar(d), positioning(d), backtests(d), audit(d)].join("");
+      walls(d), calendar(d), positioning(d), backtests(d), health(d), audit(d)].join("");
   } catch (e) {
     document.getElementById("grid").innerHTML = `<div class="err">${esc(e.message)}</div>`;
   }

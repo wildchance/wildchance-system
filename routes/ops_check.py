@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from decouple import config
 from fastapi import APIRouter
@@ -99,6 +99,10 @@ CHECKS: List[Tuple[str, str, Callable]] = [
         "✅" if "❌ 0" in d.get("summary", "") and "⚠️ 0" in d.get("summary", "")
         else "❌" if "❌ 0" not in d.get("summary", "") else "⚠️", d.get("summary", ""))),
     ("council agents", "/sniper/agents", _judge_any("scores table")),
+    ("errors today", "/ops/errors", lambda d: (
+        "✅" if not (d.get("today") or {}).get("total") else "⚠️" if (d["today"]["total"] < 20) else "❌",
+        f"{(d.get('today') or {}).get('total', 0)} problem events · "
+        + ", ".join(f"{k} {v}" for k, v in ((d.get('today') or {}).get('by_kind') or {}).items()))),
 ]
 
 
@@ -171,3 +175,32 @@ async def data_audit(notify: bool = False):
         from services.owner_notify import send
         rep["sent"] = await send(da.message(rep))
     return rep
+
+
+
+@router.get("/errors")
+async def errors_view(kind: Optional[str] = None, n: int = 50):
+    """Crashes, failed / slow jobs, slow requests, failed Telegram sends, swallowed engine errors."""
+    from services import errors
+    return {"today": errors.summary(), "recent": errors.recent(n, kind)}
+
+
+@router.get("/errors/digest")
+async def errors_digest(notify: bool = False):
+    """Yesterday's problem events (+ failing data sources) — privately to the owner each morning."""
+    import datetime as _dt
+    from services import data_feeds as df, errors
+    await errors.persist(force=True)
+    day = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    counts = await errors.load_day(day)
+    try:
+        await df.ensure_loaded()
+        failing = sorted(s for s, h in df.status()["sources"].items() if h.get("score", 1) < 0.5)
+    except Exception:
+        failing = []
+    text = errors.digest_text(day, counts, failing)
+    out = {"day": day, "total": sum(counts.values()), "failing_sources": failing, "text": text}
+    if notify:
+        from services.owner_notify import send
+        out["sent"] = await send(text)
+    return out

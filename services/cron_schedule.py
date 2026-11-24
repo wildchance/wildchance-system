@@ -136,6 +136,8 @@ def jobs() -> List[Job]:
         # Weekly walk-forward backtests (Sunday, before the open) → Telegram scorecards
         Job("backtest_weekly", NY, (12,), 10, ((G, "/research/backtest/all?engine=z&notify=true"),
                                               (G, "/research/backtest/all?engine=asia&notify=true")), days=(6,)),
+        # Daily health digest (crashes, failed / slow jobs, failed sends, swallowed errors) → owner
+        Job("errors_digest", UTC, (5,), 50, ((G, "/ops/errors/digest?notify=true"),)),
         # Currency strength matrix + today's rotation, before London
         Job("fx_strength_morning", UTC, (6,), 40, ((G, "/fx/strength?notify=true"),), days=WEEKDAYS),
         # Economic calendar — refresh 4×/day, learn each release's move nightly, week card Sunday
