@@ -97,3 +97,25 @@ async def cycles_single(symbol: str):
             bars, src = pb, f"{ps} ({proxy} proxy)"
     return {"symbol": sym, "source": src, "years_of_data": round(len(bars) / 262, 1),
             **cycles.read(bars)} if bars else {"note": "no history available"}
+
+
+@router.get("/snapshot")
+async def snapshot(symbols: Optional[str] = Query(None)):
+    """Live prices for analysis (EA broker feed first, else TwelveData 1-minute) —
+    paste this when asking for a read so it's always on real-time numbers."""
+    import datetime as _dt
+    from services.ohlc_service import fetch_ohlc_raw
+    from services.sniper import DEFAULT_SYMBOLS, STOCKS
+    syms = [x.strip().upper() for x in (symbols or DEFAULT_SYMBOLS + "," + STOCKS + ",NAS100,US30,ETH/USD,USD/CHF,USD/CAD")
+            .split(",") if x.strip()]
+    out = {}
+    for s in syms:
+        try:
+            bars = await fetch_ohlc_raw(s, "1min", 2)
+        except Exception:
+            bars = []
+        out[s] = {"price": bars[-1]["close"], "time": bars[-1]["time"]} if bars else {"price": None,
+                  "note": "no live feed (indices need the EA on that chart)"}
+    macro = df.macro_cached()
+    return {"as_of_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"), "prices": out,
+            "vix": macro.get("vix"), "us_yields": macro.get("us_yields")}

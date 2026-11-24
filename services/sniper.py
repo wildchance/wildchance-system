@@ -166,6 +166,8 @@ def candidates(r: Dict, bars: Sequence[Dict]) -> List[Dict]:
         if hi < band[0] or lo > band[1]:
             continue
         side = "BUY" if came_from > c["high"] else "SELL" if came_from < c["low"] else None
+        if c.get("plan"):
+            side = c["plan"]["side"]                   # the owner's plan fixes the side
         if side:
             out.append({**c, "band": band, "side": side})
     return out
@@ -407,6 +409,10 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
             out.append({"symbol": sym, "skip": r.get("reason")})
             continue
         tol = yc.tolerance(sym, r["price"])
+        from services import owner_plans
+        plans = owner_plans.active(sym, r["price"])
+        if plans:                                   # the owner's zones join the cluster map
+            r = {**r, "clusters": list(r["clusters"]) + [owner_plans.as_cluster(p) for p in plans]}
         if not any(abs(c["mid"] - r["price"]) <= 3 * tol + (c["high"] - c["low"]) for c in r["clusters"]):
             out.append({"symbol": sym, "skip": "no golden cluster near price"})   # saves a credit
             continue
@@ -483,6 +489,16 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
                 one_r = sig["entry"] + (1 if c["side"] == "BUY" else -1) * abs(sig["entry"] - stop)
                 if abs(one_r - sig["entry"]) < abs(tps[0]["price"] - sig["entry"]):
                     tps = [{"name": "TP1", "price": one_r, "rr": 1.0, "level": "1R"}] + tps
+            if c.get("plan"):                          # owner's plan: the owner's targets
+                pl, sgn = c["plan"], (1 if c["side"] == "BUY" else -1)
+                risk = abs(sig["entry"] - stop)
+                own = [t for t in pl["targets"] if (t - sig["entry"]) * sgn > 0]
+                tps = [{"name": f"TP{i + 1}", "price": t, "rr": round(abs(t - sig["entry"]) / risk, 2) if risk else None,
+                        "pct": round(100 * abs(t - sig["entry"]) / sig["entry"], 1), "level": "owner plan"}
+                       for i, t in enumerate(own)]
+                trade_type = "position" if tps and tps[0]["pct"] > MAX_TARGET_PCT * 100 else "swing"
+                held_reason = None if tps else "owner plan: no target beyond entry"
+                row["members"] = [f"PLAN: {pl['label']}"] + [m for m in row["members"] if not m.startswith("PLAN")]
             stats = cl.score(stats_all, symbol=None)
             rs = cl.best_role(stats, row["roles"])
             weekly = await tg.weekly_profile(sym)
