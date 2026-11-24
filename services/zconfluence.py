@@ -222,9 +222,14 @@ async def scan(z_threshold: float = 2.0, notify: bool = False, max_age_s: int = 
     if notify:
         from services.realtime import alert_once
         day = time.strftime("%Y-%m-%d", time.gmtime())
+        from services import council_gate
         for r in setups:
-            if sendable(r) and await alert_once(
-                    f"z:{r['symbol']}:{r['lean']}:{day}", card(r), ttl_hours=12):
+            if not sendable(r):
+                continue
+            cg = await council_gate.check(r["symbol"], r["lean"])
+            r["council"] = cg["verdict"]
+            if cg["pass"] and await alert_once(
+                    f"z:{r['symbol']}:{r['lean']}:{day}", card(r) + "\n" + cg["line"], ttl_hours=12):
                 sent.append(r["symbol"])
     return {"z_threshold": z_threshold, "cot_as_of": cot_latest(feed),
             "notify_grades": sorted(NOTIFY_GRADES), "setups": setups, "notified": sent,

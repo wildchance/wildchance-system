@@ -72,9 +72,13 @@ async def on_bars(symbol: str, timeframe: str) -> Dict:
             _htf_cache[sym] = r
             out["swing"] = r.get("status")
             if r.get("status") in ("ENTRY", "LIMIT"):
-                day = time.strftime("%Y-%m-%d", time.gmtime())
-                out["alerted"] = await alert_once(f"swing:{sym}:{r['side']}:{day}",
-                                                  sw.format_alert(r))
+                from services import council_gate
+                cg = await council_gate.check(sym, r["side"], "swing")
+                out["council"] = cg["verdict"]
+                if cg["pass"]:
+                    day = time.strftime("%Y-%m-%d", time.gmtime())
+                    out["alerted"] = await alert_once(f"swing:{sym}:{r['side']}:{day}",
+                                                      sw.format_alert(r) + "\n" + cg["line"])
         elif tf in ("M15", "H1"):
             out.update(await cbdr_exhaustion(sym))
     except Exception as e:                       # the ingest must never fail on analysis

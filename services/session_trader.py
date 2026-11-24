@@ -27,6 +27,7 @@ from typing import Dict, List, Optional, Sequence
 
 from decouple import config
 
+FRESH_MIN = int(config("SESSION_FRESH_MIN", default="35"))    # a trigger older than this is stale
 SYMBOLS = [s.strip() for s in str(config("SESSION_SYMBOLS", default=(
     "EUR/USD,GBP/USD,USD/JPY,USD/CHF,USD/CAD,XAU/USD"))).split(",") if s.strip()]
 STRIKES_CSV = str(config("OPTIONS_STRIKES_CSV", default="data/options_strikes.csv"))
@@ -162,6 +163,22 @@ def setup(symbol: str, side: str, box: Dict, trig: Dict, extra: Sequence[Dict]) 
             "entry": entry, "stop": round(stop, 5), "targets": tps}
 
 
+def stale_reason(s: Dict, after: Sequence[Dict], now: dt.datetime, fresh_min: int = FRESH_MIN) -> Optional[str]:
+    """Only act on a trigger that just happened and is still tradeable at the last price."""
+    t = dt.datetime.fromisoformat(str(s["time"])[:19])
+    if (now - t).total_seconds() > fresh_min * 60 + 15 * 60:       # trigger bar closes 15 min after its stamp
+        return f"stale trigger ({t:%H:%M} NY) — not chased"
+    last = after[-1]["close"] if after else s["entry"]
+    sgn = -1 if s["side"] == "SELL" else 1
+    if (last - s["stop"]) * sgn <= 0:
+        return "price already through the stop"
+    if (last - s["targets"][0]["price"]) * sgn >= 0:
+        return "TP1 already reached — missed"
+    if abs(last - s["entry"]) > 0.5 * abs(s["entry"] - s["stop"]):
+        return "price ran > 0.5R from the entry — not chased"
+    return None
+
+
 def card(s: Dict, trend: Dict, bias_why: str) -> str:
     from routes.cbdr import px
     sym = s["symbol"]
@@ -222,12 +239,20 @@ async def run_one(symbol: str, notify: bool = False, now: Optional[dt.datetime] 
     s = setup(symbol, side, box, trig, extra)
     if not s:
         return {**out, "setup": None, "reason": "no target ahead"}
+    stale = stale_reason(s, after, now)
+    if stale:
+        return {**out, "setup": s, "reason": stale}
     gate = tg.evaluate(symbol, side, s["entry"], s["stop"], [t["price"] for t in s["targets"]])
     s["gate_reasons"] = gate.get("reasons")
     out["setup"] = s
     if notify and gate.get("allow"):
-        from services.realtime import alert_once
-        out["sent"] = await alert_once(f"asia:{symbol}:{today}", card(s, trend, bias.get("why", "")), ttl_hours=20)
+        from services import council_gate
+        cg = await council_gate.check(symbol, side)
+        out["council"] = cg["verdict"]
+        if cg["pass"]:
+            from services.realtime import alert_once
+            out["sent"] = await alert_once(f"asia:{symbol}:{today}",
+                                           card(s, trend, bias.get("why", "")) + "\n" + cg["line"], ttl_hours=20)
     return out
 
 
