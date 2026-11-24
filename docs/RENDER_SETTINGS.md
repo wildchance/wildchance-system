@@ -268,3 +268,11 @@ enforced once agents have `COUNCIL_PROB_MIN_CASES` (20) graded signals: GO also 
 - **Terminal**: `https://wildchance-system.onrender.com/terminal?token=YOUR_OPS_TOKEN` — strength matrix, rotation,
   exposure + open signals, signal results by engine, regimes, CME dealer walls (on live spot), calendar, COT/retail,
   backtests, data audit. Refreshes every 60 s; works on a phone.
+
+## Subscriber terminal
+
+`https://wildchance-system.onrender.com/members/terminal` — members log in with email + password (or their key), same
+as /members (a "Terminal" link is in its menu). Paid tiers (Trader and up): currency strength + pairings, event
+rotation, CME dealer walls on live spot, regimes, calendar, COT/retail and the track record (closed signals only).
+Free tier: strongest/weakest currencies, the calendar, the track-record summary and an upgrade button. Never shown:
+open signals/entries, exposure, backtests, the data audit. Data is built once a minute for everyone.

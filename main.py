@@ -131,6 +131,7 @@ from routes.signals_track import router as signals_track_router
 from routes.fx import router as fx_router
 from routes.research import router as research_router
 from routes.terminal import router as terminal_router
+from routes.member_terminal import router as member_terminal_router
 from routes.macro import router as macro_router
 from routes.billing import router as billing_router
 from routes.members import router as members_router
@@ -382,6 +383,7 @@ app.include_router(signals_track_router)
 app.include_router(fx_router)
 app.include_router(research_router)
 app.include_router(terminal_router)
+app.include_router(member_terminal_router)
 app.include_router(macro_router)
 app.include_router(billing_router)
 app.include_router(members_router)
