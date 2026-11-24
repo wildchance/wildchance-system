@@ -276,3 +276,12 @@ as /members (a "Terminal" link is in its menu). Paid tiers (Trader and up): curr
 rotation, CME dealer walls on live spot, regimes, calendar, COT/retail and the track record (closed signals only).
 Free tier: strongest/weakest currencies, the calendar, the track-record summary and an upgrade button. Never shown:
 open signals/entries, exposure, backtests, the data audit. Data is built once a minute for everyone.
+
+## Error visibility (point 3)
+
+`services/errors.py` counts every crash (`http_500`), feed-had-no-data response (`upstream_data`, 502/503/504),
+slow request (> `SLOW_REQUEST_S` 20 s), failed / slow scheduled call (`cron_fail`, `cron_slow` > `SLOW_CRON_S` 120 s),
+failed Telegram send (`telegram_fail`) and errors swallowed inside the signal tracker, council gate, snapshots and
+regime engine (`swallowed`). `/ops/errors` (today + last events), a checklist line, a terminal tile, and a private
+daily digest at 05:50 UTC (`errors_digest`, needs `OWNER_CHAT_ID`). The scheduler now has a FAST lane: the 5-minute
+signal tracker runs even while a long hourly bundle is still working, so TP flash cards are never delayed by it.

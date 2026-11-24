@@ -77,7 +77,9 @@ async def build() -> dict:
                                                      | {"stable": (v.get("walk_forward") or {}).get("stable")})
     audit, _ = await _safe(data_store.get("data_audit_last"), (None, None)) or (None, None)
     m = macro_cached()
-    return {"as_of": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+    from services import errors as _errs
+    health = _errs.summary()
+    return {"health": health, "as_of": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
             "macro": {"vix": m.get("vix"), "yields": m.get("us_yields")},
             "strength": st.get("strength"), "pairings": st.get("pairings"), "rotation": rot,
             "exposure": fx.net_exposure(open_rows), "exposure_cap": fx.EXPOSURE_MAX,

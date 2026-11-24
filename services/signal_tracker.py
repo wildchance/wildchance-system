@@ -74,7 +74,9 @@ async def record(symbol: str, side: str, entry: float, stop: float, targets: Lis
         from services import snapshots
         await snapshots.capture(s)                        # freeze what we knew at send time
         return s
-    except Exception:
+    except Exception as e:
+        from services import errors
+        errors.swallow("signal_tracker.record", e)
         return None
 
 
@@ -157,7 +159,9 @@ async def check() -> Dict:
         try:
             bars = _bars_ts(await fetch_ohlc_raw(sym if "/" in sym or len(sym) != 6 else f"{sym[:3]}/{sym[3:]}",
                                                  interval, n, timezone="UTC"))
-        except Exception:
+        except Exception as e:
+            from services import errors
+            errors.swallow(f"signal_tracker.check bars {sym}", e)
             bars = []
         if not bars:
             continue

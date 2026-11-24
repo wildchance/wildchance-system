@@ -92,7 +92,9 @@ async def capture(s: Dict) -> bool:
                                   context=json.dumps(ctx, default=str), result="open"))
             await db.commit()
         return True
-    except Exception:
+    except Exception as e:
+        from services import errors
+        errors.swallow("snapshots.capture", e)
         return False
 
 
@@ -108,7 +110,9 @@ async def close(s: Dict) -> bool:
             row.closed_at = dt.datetime.fromtimestamp(s.get("closed_at") or 0, dt.timezone.utc)
             await db.commit()
         return True
-    except Exception:
+    except Exception as e:
+        from services import errors
+        errors.swallow("snapshots.close", e)
         return False
 
 

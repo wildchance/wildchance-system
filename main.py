@@ -240,6 +240,26 @@ async def _access_gate(request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def _error_meter(request, call_next):
+    """Every crash (500) and every slow request is counted (services/errors.py)."""
+    import time as _t
+    from services import errors as _err
+    t0 = _t.time()
+    try:
+        resp = await call_next(request)
+    except Exception as e:
+        _err.record("http_500", f"{request.method} {request.url.path}", f"{type(e).__name__}: {e}")
+        raise
+    secs = _t.time() - t0
+    if resp.status_code >= 500:
+        kind = "upstream_data" if resp.status_code in (502, 503, 504) else "http_500"   # 502 = feed had no data
+        _err.record(kind, f"{request.method} {request.url.path}", f"HTTP {resp.status_code}", secs * 1000)
+    elif secs > _err.SLOW_REQUEST_S and not request.url.path.startswith(("/cron/", "/ops/checklist")):
+        _err.record("slow_request", f"{request.method} {request.url.path}", f"{secs:.0f} s", secs * 1000)
+    return resp
+
+
 @app.api_route("/", include_in_schema=False, methods=["GET", "HEAD"])
 async def home():
     """Public landing page (members website). API status moved to /status."""

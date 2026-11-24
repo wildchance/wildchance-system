@@ -107,8 +107,9 @@ async def compute(symbol: str, max_age_s: int = 3600) -> Dict:
         atrs = atr_series(d or [])
         if len(atrs) >= 50:
             ap = int(100 * sum(1 for a in atrs[-250:] if a <= atrs[-1]) / len(atrs[-250:]))
-    except Exception:
-        pass
+    except Exception as e:
+        from services import errors
+        errors.swallow(f"regime.compute {symbol}", e)
     try:
         from services.data_feeds import macro_cached
         vix = (macro_cached().get("vix") or {}).get("close")

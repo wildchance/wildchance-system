@@ -26,7 +26,14 @@ router = APIRouter(prefix="/cron", tags=["cron"])
 
 TOKEN = (config("CRON_TOKEN", default=None) or config("BRIDGE_TOKEN", default=None))
 HISTORY: deque = deque(maxlen=30)
-_running = {"busy": False}
+_running = {"busy": False, "fast_busy": False}
+# FAST lane: short, time-critical jobs (the 5-minute signal tracker → TP flash cards) run in their
+# own lane, so a long hourly bundle (sniper, gold engines queued behind TwelveData) never delays them.
+FAST_PREFIXES = ("signal_track_",)
+
+
+def _is_fast(job) -> bool:
+    return job.name.startswith(FAST_PREFIXES)
 
 
 def _auth(token: Optional[str]):
@@ -63,13 +70,27 @@ async def _call_all(calls, now: Optional[dt.datetime] = None) -> List[Dict]:
                 out.append({"call": f"{method} {cs.redact(path)}", "code": 0,
                             "detail": f"held: {held}"})
                 continue
+            import time as _t
+            from services import errors as _err
+            t0 = _t.time()
             try:
                 r = await c.request(method, path)
                 code, body = r.status_code, r.text[:160]
             except Exception as e:
                 code, body = 599, f"{type(e).__name__}: {e}"[:160]
+            secs = _t.time() - t0
+            where = f"{method} {cs.redact(path).split('?')[0]}"
+            if code >= 400:
+                _err.record("cron_fail", where, f"HTTP {code}: {body}", secs * 1000)
+            elif secs > _err.SLOW_CRON_S:
+                _err.record("cron_slow", where, f"{secs:.0f} s", secs * 1000)
             out.append({"call": f"{method} {cs.redact(path)}", "code": code,
                         "detail": body if code >= 400 else None})
+    try:
+        from services import errors as _err
+        await _err.persist()
+    except Exception:
+        pass
     return out
 
 
@@ -107,6 +128,16 @@ async def _freshness_alert() -> Dict:
     return st
 
 
+async def _tick_fast(items, now):
+    if _running["fast_busy"]:
+        return
+    _running["fast_busy"] = True
+    try:
+        await _run_jobs(items, now)
+    finally:
+        _running["fast_busy"] = False
+
+
 async def _tick_bg(items, now):
     if _running["busy"]:
         return
@@ -127,9 +158,14 @@ async def tick(background: BackgroundTasks, token: Optional[str] = Query(None),
     _auth(token or x_cron_token)
     now = dt.datetime.now(dt.timezone.utc)
     items = cs.due(now)
+    fast = [(k, j) for k, j in items if _is_fast(j)]
+    slow = [(k, j) for k, j in items if not _is_fast(j)]
+    if fast and not _running["fast_busy"]:
+        background.add_task(_tick_fast, fast, now)          # never waits behind the hourly bundle
     if _running["busy"]:
-        return {"accepted": False, "reason": "previous tick still running", "due": len(items)}
-    background.add_task(_tick_bg, items, now)
+        return {"accepted": bool(fast), "reason": "previous tick still running (fast lane ran)" if fast
+                else "previous tick still running", "due": len(items)}
+    background.add_task(_tick_bg, slow, now)
     return {"accepted": True, "now_utc": now.isoformat(timespec="seconds"),
             "due": [k for k, _ in items]}
 

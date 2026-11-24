@@ -46,7 +46,11 @@ async def send_telegram_message(payload):
                 r = await client.post(TELEGRAM_API, json={"chat_id": CHAT_ID, "text": message})
             if r.status_code != 200:
                 print(f"[telegram] send failed: HTTP {r.status_code} {r.text[:120]}")
+                from services import errors
+                errors.record("telegram_fail", "sendMessage", f"HTTP {r.status_code} {r.text[:120]}")
             return r.status_code == 200
     except Exception as e:
         print(f"[telegram] send failed: {e}")
+        from services import errors
+        errors.record("telegram_fail", "sendMessage", f"{type(e).__name__}: {e}")
         return False
