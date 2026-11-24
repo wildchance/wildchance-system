@@ -122,6 +122,11 @@ def jobs() -> List[Job]:
         Job("journal_weekly", NY, (17,), 10, ((G, "/journal/report?period=week&notify=true"),), days=(4,)),
         # CME Daily Bulletin (gold options OI) — prelim after the US close, final next morning
         Job("cme_bulletin", UTC, (1, 14), 40, ((G, "/data/cme/refresh"),), days=WEEKDAYS),
+        # Asian box → London trades (sweep-reclaim / breakout with Monday's bias), every 30 min
+        Job("asia_london_a", NY, (3, 4, 5, 6, 7, 8, 9, 10, 11), 5, ((G, "/cbdr/session/run?notify=true"),),
+            days=WEEKDAYS),
+        Job("asia_london_b", NY, (3, 4, 5, 6, 7, 8, 9, 10, 11), 35, ((G, "/cbdr/session/run?notify=true"),),
+            days=WEEKDAYS),
         # Economic calendar — refresh 4×/day, learn each release's move nightly, week card Sunday
         Job("calendar_refresh", UTC, (0, 6, 12, 18), 15, ((G, "/data/calendar/refresh"),)),
         Job("calendar_learn", UTC, (23,), 20, ((G, "/data/calendar/learn"),), days=WEEKDAYS),
