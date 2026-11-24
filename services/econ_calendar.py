@@ -120,7 +120,9 @@ async def refresh() -> Dict:
     from services.data_feeds import _get
     got = []
     for url in FEEDS:
-        data = await _get("forexfactory_calendar", url)
+        # next week's file only appears late in the week (404 before) — tracked apart so it
+        # never drags the main calendar source's health score
+        data = await _get("forexfactory_calendar" if "thisweek" in url else "forexfactory_nextweek", url)
         if isinstance(data, list):
             got += parse(data)
     if got:

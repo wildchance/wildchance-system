@@ -26,7 +26,9 @@ KEYS = {  # name → why (values are never shown)
     "TELEGRAM_BOT_TOKEN": "Telegram alerts", "DATABASE_URL": "Neon database",
     "TWELVEDATA_API_KEY": "prices", "ALPHAVANTAGE_API_KEY": "news sentiment", "MARKETAUX_API_KEY": "news",
     "PAYSTACK_SECRET_KEY": "billing", "PAYSTACK_PRICE_TRADER": "plan price", "BILLING_WEBHOOK_SECRET": "billing webhook",
-    "BTC_CONTRACT_SIZE": "BTC lots", "INDEX_USD_PER_POINT": "index lots", "STOCK_LOT_SHARES": "stock lots",
+    "BTC_CONTRACT_SIZE": "BTC lots — using default 1; confirm in MT5 Specification",
+    "INDEX_USD_PER_POINT": "index lots — using default 1; confirm in MT5 Specification",
+    "STOCK_LOT_SHARES": "stock lots — using default 1; confirm in MT5 Specification",
     "COINGECKO_API_KEY": "optional: crypto macro", "BLS_API_KEY": "optional: US jobs data"}
 
 
