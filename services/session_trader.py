@@ -252,7 +252,8 @@ async def run_one(symbol: str, notify: bool = False, now: Optional[dt.datetime] 
     out["setup"] = s
     if notify and gate.get("allow"):
         from services import council_gate
-        cg = await council_gate.check(symbol, side)
+        cg = await council_gate.check(symbol, side,
+                                      style="reversion" if s["kind"] == "SWEEP" else "continuation")
         out["council"] = cg["verdict"]
         if cg["pass"]:
             from services.realtime import alert_once

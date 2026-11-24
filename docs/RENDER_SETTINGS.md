@@ -257,3 +257,14 @@ Sunday 12:10 NY scorecards on Telegram. Win rate, expectancy R, profit factor, m
 C. **Weighted council** — P(TP1 before stop) from each agent's measured accuracy (log-odds); shown on every card,
 enforced once agents have `COUNCIL_PROB_MIN_CASES` (20) graded signals: GO also needs ≥ `COUNCIL_MIN_PROB` (0.60).
 `COUNCIL_BASE_RATE` (0.50) = prior. The 4-for / 0-against floor stays. Calibration: `/research/council`.
+
+## Risk budget (D), regimes (E), terminal (F)
+
+- **Risk budget**: risk % per trade = `RISK_BASE_PCT` (0.5) × ATR-percentile × VIX × event × open-trade factors, floor
+  `RISK_MIN_PCT` (0.15), never above the base. Every lot ladder uses it; cards show `⚖️ risk x%` and why.
+- **Regime**: TRENDING (efficiency ratio ≥ `REGIME_TREND_ER` 0.35) / RANGING / STRESSED (VIX ≥ 30 or ATR top 10 %) /
+  EVENT. Reversion engines (Z, swing, Asia sweep) may not fade a trend; continuation engines (auto CBDR, Asia breakout)
+  are held in ranges. Shown on every card (`🌡 Regime …`) and stored with each snapshot.
+- **Terminal**: `https://wildchance-system.onrender.com/terminal?token=YOUR_OPS_TOKEN` — strength matrix, rotation,
+  exposure + open signals, signal results by engine, regimes, CME dealer walls (on live spot), calendar, COT/retail,
+  backtests, data audit. Refreshes every 60 s; works on a phone.

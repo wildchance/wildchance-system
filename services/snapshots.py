@@ -70,6 +70,12 @@ async def context_for(symbol: str, side: str) -> Dict:
         ctx["next_events"] = [f"{e['ccy']} {e['title']} {e['time_utc']}" for e in nxt]
     except Exception:
         pass
+    try:
+        from services import regime
+        ctx["regime"] = await regime.compute(symbol)
+        ctx["risk_pct"] = regime.cached_risk_pct(symbol)
+    except Exception:
+        pass
     ctx["hour_utc"] = dt.datetime.now(dt.timezone.utc).hour
     ctx["weekday"] = dt.datetime.now(dt.timezone.utc).weekday()
     return ctx

@@ -73,7 +73,7 @@ async def on_bars(symbol: str, timeframe: str) -> Dict:
             out["swing"] = r.get("status")
             if r.get("status") in ("ENTRY", "LIMIT"):
                 from services import council_gate
-                cg = await council_gate.check(sym, r["side"], "swing")
+                cg = await council_gate.check(sym, r["side"], "swing", style="reversion")
                 out["council"] = cg["verdict"]
                 if cg["pass"]:
                     day = time.strftime("%Y-%m-%d", time.gmtime())

@@ -554,6 +554,11 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
                 from services import fx_rotation as _fxr
                 if not (await _fxr.exposure_for(sym, side))["allow"]:
                     continue                                       # same currency bet already on
+                try:
+                    from services import regime as _rg
+                    await _rg.risk_for(sym)                        # sizes the lot ladder on the card
+                except Exception:
+                    pass
                 promoted = f"{sym}:{side}:{dt.date.today()}" in _held
                 text = ("⬆️ *PROMOTED* — held earlier, now 4 agents agree\n" if promoted else "") + card(sym, row)
                 if await alert_once(key, text, ttl_hours=24):

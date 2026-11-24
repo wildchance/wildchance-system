@@ -40,7 +40,8 @@ async def _agent_scores() -> Optional[Dict]:
     return _scores["v"]
 
 
-async def check(symbol: str, side: str, trade_type: str = "intraday") -> Dict:
+async def check(symbol: str, side: str, trade_type: str = "intraday", style: Optional[str] = None) -> Dict:
+    """style: 'reversion' / 'continuation' for regime routing (None = no routing)."""
     from services import council as cn
     yearly = None
     try:
@@ -54,9 +55,18 @@ async def check(symbol: str, side: str, trade_type: str = "intraday") -> Dict:
                               scores=await _agent_scores())
     except Exception as e:
         return {"pass": not GATE_ALL, "verdict": "ERROR", "line": f"🏛 Council unavailable ({type(e).__name__})"}
-    from services import fx_rotation
+    from services import fx_rotation, regime
     ex = await fx_rotation.exposure_for(symbol, norm_side(side))
-    line = cn.summary(cv) + ("\n" + ex["line"] if ex.get("line") else "")
-    return {"pass": (cv["verdict"] == "GO" or not GATE_ALL) and ex["allow"], "verdict": cv["verdict"]
-            if ex["allow"] else "EXPOSURE", "line": line, "for": cv["for"], "against": cv["against"],
+    try:
+        rb = await regime.risk_for(symbol)
+        blocked = regime.route(rb["regime"], style, norm_side(side))
+    except Exception:
+        rb, blocked = None, None
+    line = cn.summary(cv) + ("\n" + ex["line"] if ex.get("line") else "") + \
+        ("\n" + regime.line(rb) if rb else "") + (f"\n⛔ {blocked}" if blocked else "")
+    ok = (cv["verdict"] == "GO" or not GATE_ALL) and ex["allow"] and not blocked
+    verdict = cv["verdict"] if ex["allow"] else "EXPOSURE"
+    verdict = "REGIME" if blocked else verdict
+    return {"pass": ok, "verdict": verdict, "line": line, "for": cv["for"], "against": cv["against"],
+            "risk_pct": (rb or {}).get("risk_pct"), "regime": (rb or {}).get("regime"),
             "votes": {v["agent"]: v["vote"] for v in cv.get("votes") or []}}

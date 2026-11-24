@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WildChance Terminal</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#121821; --line:#1f2a36; --text:#d7e0ea; --muted:#7f8ea3;
+          --up:#2bd47d; --down:#ff5c6c; --warn:#f5b84b; --accent:#4cc3ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:baseline; padding:12px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2; }
+  header h1 { font-size:15px; margin:0; letter-spacing:.08em; color:var(--accent); }
+  header .meta { color:var(--muted); }
+  main { display:grid; gap:12px; padding:12px 16px 32px; grid-template-columns:repeat(auto-fill, minmax(330px, 1fr)); }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; min-width:0; }
+  section h2 { font-size:11px; margin:0 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; }
+  table { width:100%; border-collapse:collapse; }
+  td, th { padding:3px 4px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
+  th { color:var(--muted); font-weight:normal; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .up { color:var(--up); } .down { color:var(--down); } .warn { color:var(--warn); } .muted { color:var(--muted); }
+  .bar { height:6px; background:var(--line); border-radius:3px; position:relative; }
+  .bar i { position:absolute; top:0; bottom:0; border-radius:3px; }
+  td.wrap { white-space:normal; }
+  .chip { display:inline-block; padding:1px 6px; border:1px solid var(--line); border-radius:10px; margin:2px 4px 2px 0; }
+  .scroll { overflow-x:auto; }
+  .err { color:var(--down); padding:16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>WILDCHANCE TERMINAL</h1>
+  <span class="meta" id="asof">loading…</span>
+  <span class="meta" id="macro"></span>
+</header>
+<main id="grid"></main>
+<script>
+const token = new URLSearchParams(location.search).get("token") || "";
+const fmt = (v, d = 2) => v == null ? "—" : Number(v).toLocaleString(undefined, {maximumFractionDigits: d});
+const cls = v => v == null ? "muted" : v > 0 ? "up" : v < 0 ? "down" : "muted";
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
+function tile(title, html) { return `<section><h2>${esc(title)}</h2><div class="scroll">${html}</div></section>`; }
+
+function strength(d) {
+  const s = d.strength || {};
+  const rows = Object.entries(s).map(([c, v]) => {
+    const x = v.score, w = Math.abs(x) * 50, left = x >= 0 ? 50 : 50 - w;
+    return `<tr><td>${c}</td><td class="num ${cls(x)}">${fmt(x)}</td>
+      <td style="width:55%"><div class="bar"><i style="left:${left}%;width:${w}%;background:${x >= 0 ? "var(--up)" : "var(--down)"}"></i></div></td></tr>`;
+  }).join("");
+  const p = (d.pairings || []).map(p => `<span class="chip ${p.side === "BUY" ? "up" : "down"}">${p.side} ${p.symbol} · ${p.gap}</span>`).join("");
+  return tile("Currency strength", `<table>${rows}</table><div style="margin-top:6px">${p || '<span class="muted">no pairing above the gap</span>'}</div>`);
+}
+function rotation(d) {
+  const r = d.rotation || {}, b = Object.entries(r.blocked || {});
+  if (!b.length) return tile("Event rotation", `<span class="muted">${esc(r.note || "no release in the window")}</span>`);
+  const to = (r.rotate_to || []).map(p => `<span class="chip ${p.side === "BUY" ? "up" : "down"}">${p.side} ${p.symbol}</span>`).join("");
+  return tile("Event rotation", `<div class="warn">Stepping aside: ${b.map(([c, w]) => `${c} (${esc(w)})`).join(", ")}</div><div style="margin-top:6px">↪ ${to || "—"}</div>`);
+}
+function exposure(d) {
+  const e = Object.entries(d.exposure || {}), cap = d.exposure_cap;
+  const rows = e.map(([c, v]) => `<tr><td>${c}</td><td class="num ${cls(v)}">${v > 0 ? "long" : "short"} ${Math.abs(v)}</td><td class="num ${Math.abs(v) >= cap ? "warn" : "muted"}">cap ${cap}</td></tr>`).join("");
+  const o = (d.open_signals || []).map(s => `<tr><td>${esc(s.symbol)}</td><td class="${s.side === "BUY" ? "up" : "down"}">${s.side}</td><td class="num">${fmt(s.entry, 5)}</td><td class="num">${fmt(s.stop, 5)}</td><td class="muted">${esc(s.source)}${(s.hits || []).length ? " · TP" + s.hits.length : ""}</td></tr>`).join("");
+  return tile("Exposure & open signals", `<table>${rows || '<tr><td class="muted">flat</td></tr>'}</table><table style="margin-top:6px"><tr><th>pair</th><th>side</th><th>entry</th><th>stop</th><th>engine</th></tr>${o || '<tr><td class="muted" colspan="5">none open</td></tr>'}</table>`);
+}
+function results(d) {
+  const s = d.signal_stats || {}, by = Object.entries(s.by_source || {});
+  const rows = by.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num up">${v.win}</td><td class="num down">${v.loss}</td><td class="num muted">${v.breakeven}</td><td class="num ${cls(v.pips)}">${fmt(v.pips, 1)}</td></tr>`).join("");
+  return tile("Signals followed", `<div>${s.closed || 0} closed · win rate <b>${s.win_rate_pct ?? "—"}%</b> · <span class="${cls(s.pips)}">${fmt(s.pips, 1)} pips</span> · ${s.open || 0} open</div>
+    <table style="margin-top:6px"><tr><th>engine</th><th>W</th><th>L</th><th>BE</th><th>pips</th></tr>${rows || '<tr><td class="muted" colspan="5">no closed signals yet</td></tr>'}</table>`);
+}
+function regimes(d) {
+  const rows = Object.entries(d.regimes || {}).map(([s, r]) => `<tr><td>${s}</td><td class="${r.regime === "TRENDING" ? "up" : r.regime === "STRESSED" || r.regime === "EVENT" ? "warn" : "muted"}">${r.regime || "—"}${r.trend ? " " + r.trend : ""}</td><td class="num">${r.er ?? "—"}</td><td class="num">${r.atr_pct ?? "—"}</td></tr>`).join("");
+  return tile("Regime", `<table><tr><th>market</th><th>regime</th><th>ER</th><th>ATR pct</th></tr>${rows}</table>`);
+}
+function walls(d) {
+  const rows = Object.entries(d.walls || {}).map(([s, w]) => {
+    const lv = w.levels.map(l => `<span class="chip ${/floor|shelf/.test(l.label) ? "up" : /ceiling|hedge/.test(l.label) ? "down" : "muted"}" title="${esc(l.label)}">${fmt(l.price, s.includes("JPY") ? 3 : s.length === 7 && !s.startsWith("XAU") ? 5 : 1)}</span>`).join("");
+    return `<tr><td class="wrap" style="width:38%">${s}<div class="muted">${esc(w.source)} · ${esc(w.asof || "live")} · P/C ${w.pc ?? "—"}${w.live ? "" : " · futures terms"}</div></td><td class="wrap">${lv}</td></tr>`;
+  }).join("");
+  return tile("Dealer walls (green floors · red ceilings)", `<table>${rows || '<tr><td class="muted">no chains</td></tr>'}</table>`);
+}
+function calendar(d) {
+  const rows = (d.calendar || []).map(e => `<tr><td class="muted">${esc(e.time_utc).slice(5, 16).replace("T", " ")}</td><td>${esc(e.ccy)}</td><td>${esc(e.title)}</td><td class="num muted">${esc(e.forecast || "")}</td></tr>`).join("");
+  return tile("High-impact, next 3 days (UTC)", `<table>${rows || '<tr><td class="muted">none</td></tr>'}</table>`);
+}
+function positioning(d) {
+  const rows = (d.positioning || []).map(p => `<tr><td>${esc(p.pair)}</td><td class="${p.verdict === "LONG" ? "up" : p.verdict === "SHORT" ? "down" : "muted"}">${esc(p.verdict)}</td><td class="num">${p.confidence ?? "—"}</td><td class="num">${p.retail_long ?? "—"}%</td><td class="num">${p.cot_rank ?? "—"}</td></tr>`).join("");
+  return tile("COT + retail positioning", `<table><tr><th>pair</th><th>verdict</th><th>conf</th><th>retail L</th><th>COT pct</th></tr>${rows}</table>`);
+}
+function backtests(d) {
+  let html = "";
+  for (const [eng, rows] of Object.entries(d.backtests || {})) {
+    html += `<div class="muted" style="margin-top:4px">${eng} engine</div><table>` + rows.sort((a, b) => b.expectancy_r - a.expectancy_r).map(r =>
+      `<tr><td>${r.stable ? "✅" : r.expectancy_r > 0 ? "⚠️" : "❌"} ${esc(r.symbol)}</td><td class="num">${r.trades}</td><td class="num">${r.win_rate_pct}%</td><td class="num ${cls(r.expectancy_r)}">${fmt(r.expectancy_r)}R</td><td class="num muted">DD ${r.max_drawdown_r}R</td></tr>`).join("") + "</table>";
+  }
+  return tile("Backtests (walk-forward)", html || '<span class="muted">run /research/backtest/all — results appear here</span>');
+}
+function audit(d) {
+  const a = d.audit || {};
+  const rows = (a.issues || []).map(i => `<tr><td>${i.status}</td><td>${esc(i.source)} ${esc(i.symbol || "")}</td><td class="muted">${esc([...(i.problems || []), ...(i.notes || [])].join("; "))}</td></tr>`).join("");
+  return tile("Data audit", `<div>${esc(a.summary || "not run yet")} <span class="muted">${esc(a.as_of || "")}</span></div><table>${rows}</table>`);
+}
+
+async function load() {
+  try {
+    const r = await fetch(`/terminal/data?token=${encodeURIComponent(token)}`);
+    if (!r.ok) throw new Error(r.status === 401 ? "add ?token=YOUR_OPS_TOKEN to the address" : "HTTP " + r.status);
+    const d = await r.json();
+    document.getElementById("asof").textContent = "as of " + d.as_of.replace("T", " ").slice(0, 19) + " UTC · refreshes every 60 s";
+    const v = d.macro && d.macro.vix, y = d.macro && d.macro.yields;
+    document.getElementById("macro").textContent = (v ? `VIX ${v.close} (${v.regime})` : "") + (y ? ` · US10Y ${y.us10y}% · 2s10s ${y.curve_2s10s}` : "");
+    document.getElementById("grid").innerHTML = [strength(d), rotation(d), exposure(d), results(d), regimes(d),
+      walls(d), calendar(d), positioning(d), backtests(d), audit(d)].join("");
+  } catch (e) {
+    document.getElementById("grid").innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
