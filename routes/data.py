@@ -142,3 +142,43 @@ async def _opt(sym: str, price: Optional[float]):
         except Exception:
             price = None
     return await ol.run(sym, price)
+
+
+# ── economic calendar (automatic blackouts, learns each release's move) ──────────────
+@router.get("/calendar")
+async def calendar(days: int = Query(7, ge=1, le=30), high_only: bool = Query(True)):
+    from services import econ_calendar as ec
+    await ec.ensure_loaded()
+    return {"events": ec.upcoming(days, high_only)}
+
+
+@router.get("/calendar/refresh")
+async def calendar_refresh():
+    from services import econ_calendar as ec
+    return await ec.refresh()
+
+
+@router.get("/calendar/learn")
+async def calendar_learn():
+    from services import econ_calendar as ec
+    return await ec.learn()
+
+
+@router.get("/calendar/moves")
+async def calendar_moves():
+    from services import econ_calendar as ec
+    await ec.ensure_loaded()
+    return dict(sorted(ec._moves.items(), key=lambda kv: -kv[1]["avg_pips"]))
+
+
+@router.get("/calendar/week")
+async def calendar_week(notify: bool = Query(False)):
+    import datetime as dt
+    from services import econ_calendar as ec
+    from services.realtime import alert_once
+    await ec.ensure_loaded()
+    ev = ec.upcoming(7, high_only=True)
+    out = {"events": ev}
+    if notify:
+        out["sent"] = await alert_once(f"calweek:{dt.date.today():%G-%V}", ec.week_card(ev), ttl_hours=24 * 6)
+    return out

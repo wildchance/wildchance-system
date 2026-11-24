@@ -131,3 +131,18 @@ database, Telegram) without showing their values.
 
 EA v4.53 inputs: `InpDealPushSec` (10 s), `InpDealBackfillDays` (90 — the first run sends 90 days of history to the journal).
 Endpoints (ops token): `/journal/stats?days=30`, `/journal/trades`, `/journal/report?period=day|week|month`.
+
+## Economic calendar (automatic, no key needed)
+
+Forex Factory's public weekly export, refreshed 00/06/12/18:15 UTC. HIGH-impact releases block new entries
+for that currency (USD also covers gold, BTC, US indices, NVDA). Each release's move is measured nightly; a MEDIUM
+event that averages ≥ `CAL_PROMOTE_PIPS` gets promoted to a blackout. `data/event_blackouts.csv` still works for
+anything extra (hearings, OPEC, owner notes).
+
+| Key | Default | What it does |
+|---|---|---|
+| `CAL_BEFORE_MIN` | `30` | minutes before a release with no new entries |
+| `CAL_AFTER_MIN` | `60` | minutes after |
+| `CAL_PROMOTE_PIPS` | `25` | a medium event averaging this move (≥2 samples) is treated as high impact |
+
+Endpoints: `/data/calendar?days=7`, `/data/calendar/week?notify=true`, `/data/calendar/moves`, `/data/calendar/refresh`.
