@@ -170,3 +170,12 @@ Source health shows in `/data/sources` (`yahoo_intraday`, `binance`, `tiingo_fx`
 Polygon options: uses your existing `POLYGON_API_KEY` (`/v3/snapshot/options`, tried after Tradier, before CBOE).
 Needs a Polygon plan that includes OPTIONS (Options Starter or higher); on Stocks-only/free plans it fails
 quietly and `/data/sources` shows `polygon_options` with the error. `POLYGON_OPT_PAGES` (8) × 250 contracts max.
+
+## CME Daily Bulletin (real COMEX gold options open interest)
+
+Gold dealer levels come FIRST from the CME Daily Bulletin (sections 62 + 64): OG monthly + OG1–OG4 weekly calls/puts,
+open interest per strike, strikes within ±`CME_BAND_PCT` (12%) of the future, shifted onto the front future and
+mapped to live spot. Refreshed 01:40 and 14:40 UTC on weekdays from CME's public bulletin URLs; if those are refused,
+drop the two PDFs (`Section62_Metals_Futures_Products.pdf`, `Section64_Metals_Option_Products.pdf`) into `data/cme/`
+(GitHub → Add file → Upload files). `data/cme_gold_seed.json` holds the last owner-supplied bulletin.
+Needs `pdftotext` (poppler-utils — installed by the Dockerfile). Endpoints: `/data/cme/gold`, `/data/cme/refresh`.

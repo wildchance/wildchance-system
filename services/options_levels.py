@@ -287,6 +287,15 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
     s = symbol.upper().replace("/", "")
     if s not in PROXY and not (s.isalpha() and len(s) <= 5):
         return {"symbol": symbol, "ok": False, "reason": "no listed options proxy (e.g. FX crosses) — CBDR levels only"}
+    if s in ("XAUUSD", "GOLD"):              # real COMEX gold options OI (CME Daily Bulletin) first
+        try:
+            from services.cme_bulletin import cached_chain
+            cme = await cached_chain()
+        except Exception:
+            cme = None
+        if cme and cme.get("strikes"):
+            und = "CME:OG"
+            _cache[und] = (time.time(), cme)
     hit = _cache.get(und)
     chain = hit[1] if hit and time.time() - hit[0] < 1800 else None
     if chain is None:
@@ -317,14 +326,16 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
         return {"symbol": symbol, "underlying": und, "ok": False, "reason": "no option chain"}
     inverse = s in INVERSE
     ratio = (live_price / chain["spot"]) if live_price and chain.get("spot") else 1.0
-    return {"symbol": symbol, "underlying": und, "ok": True, "underlying_spot": chain["spot"],
+    extra = {k: chain[k] for k in ("asof", "expiries", "put_call_ratio", "call_oi", "put_oi") if chain.get(k) is not None}
+    return {"symbol": symbol, "underlying": und, "ok": True, "underlying_spot": chain["spot"], **extra,
             "ratio": round(ratio, 6), "inverse": inverse, "atm_iv": chain.get("atm_iv"), "days": chain.get("days"),
             "levels": mapped(lv, ratio, inverse, chain["spot"], live_price, _dp(symbol)), "raw": lv}
 
 
 def cached_levels(symbol: str, live_price: Optional[float] = None) -> List[Dict]:
     """Cache-only read for hot paths (sniper zones); empty until run() has fetched."""
-    hit = _cache.get(underlying_for(symbol))
+    hit = (_cache.get("CME:OG") if symbol.upper().replace("/", "") in ("XAUUSD", "GOLD") else None) \
+        or _cache.get(underlying_for(symbol))
     if not hit or time.time() - hit[0] > 6 * 3600:
         return []
     lv = levels(hit[1])
