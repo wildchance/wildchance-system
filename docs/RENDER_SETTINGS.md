@@ -200,3 +200,16 @@ all convene the same agent council as the sniper and only send on **GO** (≥ `C
 against); each card carries the 🏛 council line. `false` = append the line but send anyway.
 Auto CBDR signals also need their best target ≥ `MIN_RR` (1.3R). Asia→London: a trigger older than `SESSION_FRESH_MIN`
 (35) minutes, already through the stop / past TP1, or > 0.5R away from the entry is not sent.
+
+EUR/USD (section 39): calls and puts share one listing without labels — each row is classified from its delta vs the
+future (a call is in the money below the future). Validated on bulletin #226: 76/76 rows agree with the sign of their
+settlement change, and the EUU DEC26 block sums to the bulletin's own TOTAL (154,547).
+
+## Owner reminders + polite calendar
+
+| Key | Default | What it does |
+|---|---|---|
+| `OWNER_CHAT_ID` | — | your own Telegram user id (ask @userinfobot), after pressing Start on the bot: private reminders |
+| `CME_STALE_DAYS` | `3` | Saturday/Sunday 09:15 UTC: remind to upload the bulletin when the dealer levels are this old |
+| `CAL_MIN_REFRESH_MIN` | `60` | never call the Forex Factory export more often than this |
+| `CAL_BACKOFF_H` | `3` | after an HTTP 429 (rate limit) wait this long; stored events keep working |

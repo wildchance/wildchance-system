@@ -160,9 +160,16 @@ async def calendar(days: int = Query(7, ge=1, le=30), high_only: bool = Query(Tr
 
 
 @router.get("/calendar/refresh")
-async def calendar_refresh():
+async def calendar_refresh(force: bool = Query(False)):
     from services import econ_calendar as ec
-    return await ec.refresh()
+    return await ec.refresh(force)
+
+
+@router.get("/calendar/status")
+async def calendar_status():
+    from services import econ_calendar as ec
+    await ec.ensure_loaded()
+    return ec.status()
 
 
 @router.get("/calendar/learn")
@@ -225,3 +232,9 @@ async def cme_gold():
             "top_call_strikes": [{"strike": k, "oi": int(v["call_oi"])} for k, v in top_c],
             "top_put_strikes": [{"strike": k, "oi": int(v["put_oi"])} for k, v in top_p],
             "note": "strikes in front-future terms; /data/options-levels/XAU/USD maps them to live spot"}
+
+
+@router.get("/cme/reminder")
+async def cme_reminder(notify: bool = Query(False)):
+    from services.owner_notify import cme_reminder as rem
+    return await rem(notify)

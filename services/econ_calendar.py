@@ -29,6 +29,9 @@ BEFORE_MIN = int(config("CAL_BEFORE_MIN", default="30"))
 AFTER_MIN = int(config("CAL_AFTER_MIN", default="60"))
 PROMOTE_PIPS = float(config("CAL_PROMOTE_PIPS", default="25"))
 KEEP_DAYS = 60
+MIN_REFRESH_MIN = int(config("CAL_MIN_REFRESH_MIN", default="60"))   # never ask more often
+BACKOFF_H = float(config("CAL_BACKOFF_H", default="3"))             # after HTTP 429 (rate limited)
+_meta: Dict = {"last_try": 0.0, "last_ok": 0.0, "blocked_until": 0.0}
 # markets used to measure each currency's event moves
 PROBES = {"USD": ("EUR/USD", "XAU/USD"), "EUR": ("EUR/USD",), "GBP": ("GBP/USD",), "JPY": ("USD/JPY",),
           "AUD": ("AUD/USD",), "NZD": ("NZD/USD",), "CAD": ("USD/CAD",), "CHF": ("USD/CHF",)}
@@ -113,11 +116,25 @@ async def ensure_loaded() -> None:
     _events, _moves, _loaded = list(ev or []), dict(mv or {}), True
 
 
-async def refresh() -> Dict:
+def status() -> Dict:
+    import time as _t
+    now = _t.time()
+    return {"stored": len(_events), "high_upcoming": len(upcoming(7, high_only=True)),
+            "last_ok_h": round((now - _meta["last_ok"]) / 3600, 1) if _meta["last_ok"] else None,
+            "backing_off_min": max(0, round((_meta["blocked_until"] - now) / 60)) or None}
+
+
+async def refresh(force: bool = False) -> Dict:
+    """Polite: at most once per CAL_MIN_REFRESH_MIN, and CAL_BACKOFF_H hours after an HTTP 429."""
     global _events
+    import time as _t
     await ensure_loaded()
     from services import data_store
-    from services.data_feeds import _get
+    from services.data_feeds import _get, _health
+    now = _t.time()
+    if not force and (now < _meta["blocked_until"] or now - _meta["last_try"] < MIN_REFRESH_MIN * 60):
+        return {"fetched": 0, "skipped": "polite interval / back-off", **status()}
+    _meta["last_try"] = now
     got = []
     for url in FEEDS:
         # next week's file only appears late in the week (404 before) — tracked apart so it
@@ -125,10 +142,15 @@ async def refresh() -> Dict:
         data = await _get("forexfactory_calendar" if "thisweek" in url else "forexfactory_nextweek", url)
         if isinstance(data, list):
             got += parse(data)
+        if "thisweek" in url and data is None and "429" in str((_health.get("forexfactory_calendar") or {})
+                                                                   .get("last_err", "")):
+            _meta["blocked_until"] = now + BACKOFF_H * 3600
+            break
     if got:
+        _meta["last_ok"] = now
         _events = merge(_events, got)
         await data_store.put("econ_calendar", _events)
-    return {"fetched": len(got), "stored": len(_events), "high_upcoming": len(upcoming(7, high_only=True))}
+    return {"fetched": len(got), **status()}
 
 
 def upcoming(days: int = 7, high_only: bool = False, now: Optional[dt.datetime] = None) -> List[Dict]:
