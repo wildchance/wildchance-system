@@ -2,14 +2,18 @@
 
   GET /ops/checklist?token=…      ✅ / ⚠️ / ❌ per item + what is still missing (key NAMES only)
 
-Each check calls the app's own endpoint in-process (scheduler token), 60 s cap each,
-all in parallel; the output is trimmed so it can be pasted back in one message.
+Each check calls the app's own endpoint in-process (scheduler token), all in parallel.
+The page ALWAYS answers within ~WAIT_S seconds: checks still queued behind the
+TwelveData limit (7 requests/min on the free plan) keep running in the background and
+show as ⏳ — open the link again a minute later and their results are there (kept
+10 min). The output is trimmed so it can be pasted back in one message.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import Any, Callable, Dict, List, Tuple
 
 from decouple import config
@@ -68,7 +72,7 @@ def _judge_any(label: str) -> Callable:
 
 
 CHECKS: List[Tuple[str, str, Callable]] = [
-    ("live prices", "/data/snapshot", _judge_snapshot),
+    ("live prices", "/data/snapshot?symbols=EUR/USD,USD/JPY,XAU/USD,BTC/USD", _judge_snapshot),
     ("calendar refresh", "/data/calendar/refresh", _judge_calendar),
     ("calendar this week", "/data/calendar?days=7", lambda d: ("✅" if d.get("events") else "⚠️",
                                                               f"{len(d.get('events') or [])} blocking events")),
@@ -82,31 +86,60 @@ CHECKS: List[Tuple[str, str, Callable]] = [
 ]
 
 
-@router.get("/checklist")
-async def checklist():
+WAIT_S = 25
+KEEP_S = 600
+_done: Dict[str, Tuple[float, Dict]] = {}          # path → (finished at, result)
+_running: Dict[str, "asyncio.Task"] = {}
+
+
+async def _run(name: str, path: str, judge: Callable) -> Dict:
     import httpx
     import main
     from services.access import INTERNAL_TOKEN
-    transport = httpx.ASGITransport(app=main.app)
-
-    async def run(name, path, judge):
-        try:
-            async with httpx.AsyncClient(transport=transport, base_url="http://app",
-                                         headers={"x-internal-token": INTERNAL_TOKEN}, timeout=60) as c:
-                r = await c.get(path)
-            if r.status_code != 200:
-                return {"check": name, "status": "❌", "note": f"HTTP {r.status_code}", "path": path}
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=main.app), base_url="http://app",
+                                     headers={"x-internal-token": INTERNAL_TOKEN}, timeout=300) as c:
+            r = await c.get(path)
+        if r.status_code != 200:
+            res = {"check": name, "status": "❌", "note": f"HTTP {r.status_code}", "path": path}
+        else:
             d = r.json()
             st, note = judge(d)
-            return {"check": name, "status": st, "note": note, "path": path, "data": _trim(d)}
-        except Exception as e:
-            return {"check": name, "status": "❌", "note": f"{type(e).__name__}: {str(e)[:120]}", "path": path}
+            res = {"check": name, "status": st, "note": note, "path": path, "data": _trim(d)}
+    except Exception as e:
+        res = {"check": name, "status": "❌", "note": f"{type(e).__name__}: {str(e)[:120]}", "path": path}
+    _done[path] = (time.time(), res)
+    return res
 
-    results = await asyncio.gather(*(run(*c) for c in CHECKS))
+
+@router.get("/checklist")
+async def checklist(fresh: bool = False):
+    now = time.time()
+    tasks = {}
+    for name, path, judge in CHECKS:
+        hit = _done.get(path)
+        if hit and now - hit[0] < KEEP_S and not fresh:
+            continue
+        t = _running.get(path)
+        if t is None or t.done():
+            t = _running[path] = asyncio.ensure_future(_run(name, path, judge))
+        tasks[path] = t
+    if tasks:
+        await asyncio.wait(list(tasks.values()), timeout=WAIT_S)
+    results = []
+    for name, path, _ in CHECKS:
+        hit = _done.get(path)
+        if hit and (path not in tasks or tasks[path].done()):
+            results.append({**hit[1], "age_s": int(time.time() - hit[0])})
+        else:
+            results.append({"check": name, "status": "⏳", "path": path,
+                            "note": "still running (TwelveData queue: 7 requests/min) — open the link again in ~1 min"})
     missing = {k: why for k, why in KEYS.items()
                if not (config(k, default="") or (k == "TELEGRAM_BOT_TOKEN" and config("BOT_TOKEN", default="")))}
-    todo = [f"{r['check']}: {r['note']}" for r in results if r["status"] != "✅"]
+    todo = [f"{r['check']}: {r['note']}" for r in results if r["status"] not in ("✅", "⏳")]
     todo += [f"set {k} in Render ({why})" for k, why in missing.items()]
-    return {"summary": f"{sum(r['status'] == '✅' for r in results)}/{len(results)} checks ✅ · "
-                       f"{len(missing)} settings missing",
+    pending = sum(r["status"] == "⏳" for r in results)
+    return {"summary": f"{sum(r['status'] == '✅' for r in results)}/{len(results)} checks ✅"
+                       + (f" · {pending} still running — reload in a minute" if pending else "")
+                       + f" · {len(missing)} settings missing",
             "todo": todo, "checks": results, "missing_settings": missing}
