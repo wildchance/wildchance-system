@@ -47,7 +47,7 @@ def jobs() -> List[Job]:
               (P, "/gold/zones/digest?touch_only=true"), (P, "/gold/recon?armed_only=true"),
               (P, "/gold/retracement"), (P, "/gold/confirm?deploy=true"),
               (P, "/gold/levels/refresh?interval=4h"), (P, "/gold/alerter/scan?notify=true"),
-              (P, "/sniper/scan?notify=true")]
+              (P, "/sniper/scan?notify=true"), (G, "/fx/rotation?notify=true")]
     exec_token = config("EXECUTION_TOKEN", default=None)
     if exec_token:
         hourly.insert(1, (P, f"/execution/reconcile?token={exec_token}"))
@@ -133,6 +133,8 @@ def jobs() -> List[Job]:
             days=WEEKDAYS),
         Job("asia_london_b", NY, (3, 4, 5, 6, 7, 8, 9, 10, 11), 35, ((G, "/cbdr/session/run?notify=true"),),
             days=WEEKDAYS),
+        # Currency strength matrix + today's rotation, before London
+        Job("fx_strength_morning", UTC, (6,), 40, ((G, "/fx/strength?notify=true"),), days=WEEKDAYS),
         # Economic calendar — refresh 4×/day, learn each release's move nightly, week card Sunday
         Job("calendar_refresh", UTC, (0, 6, 12, 18), 15, ((G, "/data/calendar/refresh"),)),
         Job("calendar_learn", UTC, (23,), 20, ((G, "/data/calendar/learn"),), days=WEEKDAYS),

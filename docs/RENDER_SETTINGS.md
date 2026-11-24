@@ -236,3 +236,13 @@ CME bulletin now also covers **AUD/USD** (section 38: futures from its own table
 Nasdaq-100 (40: EOM, QN weeklies, heading-only weekly blocks), Dow (60: strikes quoted /10). `CME_INDEX_BAND_PCT` (10).
 Agent scoring now grades the council on every engine's tracked signals (TP1 first = held, stop first = broke), and the
 daily / weekly journal reports include the signal tracker's win / loss / breakeven results by engine.
+
+## Hedge-fund FX layer: strength matrix · event rotation · exposure caps
+
+- `/fx/strength` — USD EUR GBP JPY CHF CAD AUD NZD scored −1…+1 (5-day momentum, COT percentile, retail contrarian,
+  CME put/call) → strongest-vs-weakest pairings. Telegram card 06:40 UTC weekdays; the top pairings join the sniper scan.
+- `/fx/rotation` — any currency with a high-impact release within `ROTATE_AHEAD_H` (3 h) steps aside; the sniper rotates
+  to pairs WITHOUT it, ranked by strength gap and by how little that release has historically moved them (the calendar
+  now measures 12 crosses on every release). Card once per event set per day.
+- `/fx/exposure` — open tracked signals netted per currency; a card that would push any currency beyond `EXPOSURE_MAX`
+  (2) units is blocked in the council gate and the sniper. `STRENGTH_MIN_GAP` (0.5) = minimum score gap for a pairing.

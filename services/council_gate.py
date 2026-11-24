@@ -54,6 +54,9 @@ async def check(symbol: str, side: str, trade_type: str = "intraday") -> Dict:
                               scores=await _agent_scores())
     except Exception as e:
         return {"pass": not GATE_ALL, "verdict": "ERROR", "line": f"🏛 Council unavailable ({type(e).__name__})"}
-    return {"pass": cv["verdict"] == "GO" or not GATE_ALL, "verdict": cv["verdict"],
-            "line": cn.summary(cv), "for": cv["for"], "against": cv["against"],
+    from services import fx_rotation
+    ex = await fx_rotation.exposure_for(symbol, norm_side(side))
+    line = cn.summary(cv) + ("\n" + ex["line"] if ex.get("line") else "")
+    return {"pass": (cv["verdict"] == "GO" or not GATE_ALL) and ex["allow"], "verdict": cv["verdict"]
+            if ex["allow"] else "EXPOSURE", "line": line, "for": cv["for"], "against": cv["against"],
             "votes": {v["agent"]: v["vote"] for v in cv.get("votes") or []}}
