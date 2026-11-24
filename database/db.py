@@ -96,36 +96,7 @@ async def get_db():
         yield session
 
 
-# Columns added to gold_positions AFTER the first deploy. create_all never
-# ALTERs an existing table, so a table created by an earlier deploy is missing
-# these — and any SELECT that reads them 500s (e.g. /gold/scorecard reading
-# trade_type). Each ALTER is idempotent (ADD COLUMN IF NOT EXISTS), so it is safe
-# to run on every cold start and is a no-op once the column exists.
-_GOLD_POSITION_MIGRATIONS = [
-    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS trade_type VARCHAR DEFAULT 'swing'",
-    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS deadline TIMESTAMPTZ",
-    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS stop_initial DOUBLE PRECISION",
-    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS tp4 DOUBLE PRECISION",
-    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS limit_price DOUBLE PRECISION",
-    "ALTER TABLE gold_positions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
-    # Per-account copy-trade fan-out: each execution order carries which fleet
-    # account (acc1..acc5) it belongs to, so each VPS connector pulls only its own.
-    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS account VARCHAR",
-    # Members can log in with email + password (the API key still works).
-    "ALTER TABLE saas_users ADD COLUMN IF NOT EXISTS password_hash VARCHAR",
-    # Council votes stored with each live sniper shot (agent scoring).
-    "ALTER TABLE live_cases ADD COLUMN IF NOT EXISTS council TEXT",
-    # Partial scale-out + runner break-even metadata (the 250/500 exit plan).
-    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS group_id VARCHAR",
-    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS scale_role VARCHAR",
-    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS be_price DOUBLE PRECISION",
-    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS be_after VARCHAR",
-    "ALTER TABLE execution_orders ADD COLUMN IF NOT EXISTS be_done INTEGER DEFAULT 0",
-    # Member subscriptions (website billing).
-    "ALTER TABLE saas_users ADD COLUMN IF NOT EXISTS paid_until TIMESTAMPTZ",
-    "ALTER TABLE saas_users ADD COLUMN IF NOT EXISTS provider VARCHAR",
-    "ALTER TABLE saas_users ADD COLUMN IF NOT EXISTS provider_ref VARCHAR",
-]
+# Column backfills / schema changes now live in database/migrations.py (versioned, recorded).
 
 
 async def init_db():
@@ -150,16 +121,6 @@ async def init_db():
         # data; dropping on startup would silently wipe it. create_all is
         # idempotent, so it is safe to run on every (cold) start.
         await conn.run_sync(Base.metadata.create_all)
-        # Bring an already-created gold_positions table up to the current schema.
-        # Postgres only (ADD COLUMN IF NOT EXISTS); SQLite test DBs are always
-        # created fresh by create_all above, so they already have every column.
-        if conn.dialect.name == "postgresql":
-            from sqlalchemy import text
-            for stmt in _GOLD_POSITION_MIGRATIONS:
-                try:
-                    await conn.execute(text(stmt))
-                except Exception:
-                    # A failed backfill must never block startup — the defensive
-                    # read path (services.scorecard_service.gold_report) still
-                    # degrades gracefully if a column is genuinely absent.
-                    pass
+    # Versioned migrations (ordered, recorded in schema_migrations, never blocking startup).
+    from database import migrations
+    await migrations.apply(engine)

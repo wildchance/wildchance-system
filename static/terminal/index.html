@@ -36,7 +36,13 @@
 </header>
 <main id="grid"></main>
 <script>
-const token = new URLSearchParams(location.search).get("token") || "";
+// The ops token is read ONCE from ?token=…, kept in this browser only, and removed from the
+// address bar (so it never sits in history / screenshots); every request sends it as a header.
+let token = new URLSearchParams(location.search).get("token") || "";
+try {
+  if (token) { localStorage.setItem("wc_ops", token); history.replaceState(null, "", location.pathname); }
+  else { token = localStorage.getItem("wc_ops") || ""; }
+} catch (e) {}
 const fmt = (v, d = 2) => v == null ? "—" : Number(v).toLocaleString(undefined, {maximumFractionDigits: d});
 const cls = v => v == null ? "muted" : v > 0 ? "up" : v < 0 ? "down" : "muted";
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
@@ -109,8 +115,8 @@ function audit(d) {
 
 async function load() {
   try {
-    const r = await fetch(`/terminal/data?token=${encodeURIComponent(token)}`);
-    if (!r.ok) throw new Error(r.status === 401 ? "add ?token=YOUR_OPS_TOKEN to the address" : "HTTP " + r.status);
+    const r = await fetch("/terminal/data", {headers: {"X-Ops-Token": token}});
+    if (!r.ok) throw new Error(r.status === 401 ? "open /terminal?token=YOUR_OPS_TOKEN once — it is then remembered in this browser" : "HTTP " + r.status);
     const d = await r.json();
     document.getElementById("asof").textContent = "as of " + d.as_of.replace("T", " ").slice(0, 19) + " UTC · refreshes every 60 s";
     const v = d.macro && d.macro.vix, y = d.macro && d.macro.yields;

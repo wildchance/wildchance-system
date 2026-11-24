@@ -20,7 +20,7 @@ from decouple import config
 
 INTERNAL_TOKEN = secrets.token_hex(24)
 
-PUBLIC_EXACT = {"/", "/pricing", "/members", "/status", "/health", "/favicon.ico",
+PUBLIC_EXACT = {"/", "/pricing", "/members", "/status", "/health", "/favicon.ico", "/terminal",
                 "/telegram/webhook", "/webhook/alertatron", "/macro/brief"}
 PUBLIC_PREFIX = ("/static/", "/saas/", "/members/", "/billing/", "/bridge/", "/cron/",
                  "/execution/")
