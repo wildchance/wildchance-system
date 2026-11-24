@@ -153,3 +153,30 @@ def test_owner_reminder_message():
     from services.owner_notify import bulletin_message
     m = bulletin_message({"gold": 4, "EURUSD": 4})
     assert "sections 62 + 64" in m and "data/cme" in m and "gold 4 days" in m
+
+
+def test_index_expiry_and_month_codes():
+    assert cb.index_expiry("EOW2 MINI S&P", "DEC26") == dt.date(2026, 12, 11)
+    assert cb.index_expiry("MINI NSDQ EOM", "NOV26") == dt.date(2026, 11, 30)
+    assert cb.index_expiry("QN1", "DEC26") == dt.date(2026, 12, 4)
+    assert cb.index_expiry("MINI $5 DOW", "DEC26") == dt.date(2026, 12, 18)
+
+
+IDX = """PG40 BULLETIN # 226@      NASDAQ      Mon, Nov 23, 2026     PG40
+DEC26               25561.50          27137.00          25426.75          26808.0     +   168150          4049     1075586   308808 +    2566      31385.50B      15760.00A
+TOTAL
+MINI NSDQ EOM C
+DEC26     MINI NSDQ EOM C
+26800     ----     ----     ----     ----          500.00+     100     .520    ----     ----        900     UNCH
+                     NASDAQ 100 WEEKLY-1 CALLS
+DEC26
+27500      ----                   2.00232.00B    1.00218.00A----               204.75+    96500     .326     ----    -     1,200 +   5
+20261100 MINI NSDQ EOM P
+26500    ----     ----     ----     ----          10.00-     5     .020    ----     ----        700     UNCH
+"""
+
+
+def test_index_chain_parses_all_three_layouts():
+    ch = cb.index_chain("NAS100", [IDX], max_days=45)
+    assert ch["spot"] == 26808.0
+    assert ch["call_oi"] == 900 + 1200 and ch["put_oi"] == 700

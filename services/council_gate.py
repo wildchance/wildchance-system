@@ -33,7 +33,8 @@ async def _agent_scores() -> Optional[Dict]:
             if c.get("source") == "live" and c.get("case_id") not in seen:
                 seen.add(c.get("case_id"))
                 live.append(c)
-        _scores.update(t=time.time(), v=cn.agent_scores(live))
+        from services import signal_tracker
+        _scores.update(t=time.time(), v=cn.agent_scores(live + await signal_tracker.scoring_cases()))
     except Exception:
         _scores.update(t=time.time(), v={})
     return _scores["v"]
@@ -54,4 +55,5 @@ async def check(symbol: str, side: str, trade_type: str = "intraday") -> Dict:
     except Exception as e:
         return {"pass": not GATE_ALL, "verdict": "ERROR", "line": f"🏛 Council unavailable ({type(e).__name__})"}
     return {"pass": cv["verdict"] == "GO" or not GATE_ALL, "verdict": cv["verdict"],
-            "line": cn.summary(cv), "for": cv["for"], "against": cv["against"]}
+            "line": cn.summary(cv), "for": cv["for"], "against": cv["against"],
+            "votes": {v["agent"]: v["vote"] for v in cv.get("votes") or []}}

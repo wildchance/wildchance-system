@@ -34,7 +34,8 @@ def bulletin_message(ages: Dict[str, int]) -> str:
              "Dealer levels are getting old: " + ", ".join(f"{k} {v} days" for k, v in ages.items()),
              "",
              "1. cmegroup.com/market-data/daily-bulletin.html — Friday's bulletin",
-             "2. Download sections 62 + 64 (gold), 27–30 + 33–36 (GBP, CAD, JPY, CHF), 39 (EUR)",
+             "2. Download sections 62 + 64 (gold), 27–30 + 33–36 (GBP, CAD, JPY, CHF), 38 (AUD), 39 (EUR),",
+             "   40 (Nasdaq), 47 + 48 (S&P 500), 60 (Dow)",
              "3. GitHub → wildchance-system → data/cme → Add file → Upload files → commit",
              "Render picks them up on the next refresh (01:40 / 14:40 UTC)."]
     return "\n".join(lines)
@@ -46,7 +47,7 @@ async def cme_reminder(notify: bool = False) -> Dict:
     ages: Dict[str, int] = {}
     g = await cb.cached_chain(max_age_days=365)
     ages["gold"] = (today - dt.date.fromisoformat(g["asof"])).days if g else 999
-    for p in ("EURUSD", "USDJPY", "GBPUSD", "USDCHF", "USDCAD"):
+    for p in ("EURUSD", "USDJPY", "GBPUSD", "USDCHF", "USDCAD", "AUDUSD", "NAS100", "SPX500", "US30"):
         c = await cb.cached_fx_chain(p, max_age_days=365)
         ages[p] = (today - dt.date.fromisoformat(c["asof"])).days if c else 999
     stale = {k: v for k, v in ages.items() if v >= STALE_DAYS}

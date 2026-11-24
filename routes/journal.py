@@ -34,8 +34,12 @@ async def report(period: str = Query("day", pattern="^(day|week|month)$"), notif
     since = {"day": now - dt.timedelta(days=1), "week": now - dt.timedelta(days=7),
              "month": now - dt.timedelta(days=30)}[period]
     s = tj.summarise(await tj.rows_since(since))
-    out = {"period": period, **{k: v for k, v in s.items() if k != "equity_curve"}}
-    if notify and s.get("trades"):
+    from services import signal_tracker as stk
+    sig = stk.period_summary(await stk._load(), since.timestamp())
+    out = {"period": period, **{k: v for k, v in s.items() if k != "equity_curve"}, "signals": sig}
+    if notify and (s.get("trades") or sig.get("closed")):
         from services.realtime import alert_once
-        out["sent"] = await alert_once(f"journal:{period}:{now:%Y-%m-%d}", tj.report_card(period, s), ttl_hours=20)
+        text = (tj.report_card(period, s) if s.get("trades") else f"📒 *Trade journal — {period}*: no broker closes "
+                "(EA not connected).") + "\n" + "\n".join(stk.report_lines(sig))
+        out["sent"] = await alert_once(f"journal:{period}:{now:%Y-%m-%d}", text, ttl_hours=20)
     return out

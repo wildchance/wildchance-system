@@ -45,7 +45,7 @@ async def _save(rows: List[Dict]) -> None:
 
 
 def new_signal(symbol: str, side: str, entry: float, stop: float, targets: List[float], source: str,
-               pending: bool = False, ts: Optional[float] = None) -> Dict:
+               pending: bool = False, ts: Optional[float] = None, votes: Optional[Dict] = None) -> Dict:
     side = "BUY" if str(side).upper() in ("BUY", "LONG") else "SELL"
     tps = [float(t) for t in targets if t is not None]
     sgn = 1 if side == "BUY" else -1
@@ -53,13 +53,13 @@ def new_signal(symbol: str, side: str, entry: float, stop: float, targets: List[
     return {"id": uuid.uuid4().hex[:10], "symbol": symbol.upper(), "side": side, "entry": float(entry),
             "stop": float(stop), "targets": tps, "source": source, "pending": bool(pending),
             "filled": not pending, "sent_at": ts if ts is not None else time.time(), "hits": [], "result": "open",
-            "stop_now": float(stop), "closed_at": None, "pips": None}
+            "stop_now": float(stop), "closed_at": None, "pips": None, "votes": dict(votes or {})}
 
 
 async def record(symbol: str, side: str, entry: float, stop: float, targets: List[float], source: str,
-                 pending: bool = False) -> Optional[Dict]:
+                 pending: bool = False, votes: Optional[Dict] = None) -> Optional[Dict]:
     try:
-        s = new_signal(symbol, side, entry, stop, targets, source, pending)
+        s = new_signal(symbol, side, entry, stop, targets, source, pending, votes=votes)
         if not s["targets"] or (s["stop"] - s["entry"]) * (1 if s["side"] == "BUY" else -1) >= 0:
             return None
         rows = await _load()
@@ -191,3 +191,40 @@ def summarise(rows: List[Dict]) -> Dict:
 
 async def stats() -> Dict:
     return summarise(await _load())
+
+
+def to_cases(rows: List[Dict]) -> List[Dict]:
+    """Closed signals with council votes → agent-grading cases (TP1 first = held, stop first = broke).
+    Sniper shots are graded from their own LiveCase rows already, so they are skipped here."""
+    out = []
+    for r in rows:
+        if r.get("source") == "sniper" or not r.get("votes"):
+            continue
+        if r["hits"]:
+            out.append({"outcome": "held", "votes": r["votes"], "source": f"tracker:{r['source']}", "case_id": r["id"]})
+        elif r["result"] == "loss":
+            out.append({"outcome": "broke", "votes": r["votes"], "source": f"tracker:{r['source']}", "case_id": r["id"]})
+    return out
+
+
+async def scoring_cases() -> List[Dict]:
+    try:
+        return to_cases(await _load())
+    except Exception:
+        return []
+
+
+def period_summary(rows: List[Dict], since_ts: float) -> Dict:
+    return summarise([r for r in rows if (r.get("closed_at") or 0) >= since_ts])
+
+
+def report_lines(s: Dict) -> List[str]:
+    if not s.get("closed"):
+        return ["📡 Signals followed: none closed in this period."]
+    lines = [f"📡 *Signals followed* (every card we sent, checked on live prices): {s['closed']} closed · "
+             f"✅ {s['wins']} · ❌ {s['losses']} · ➖ {s['breakeven']} · win rate "
+             f"{s['win_rate_pct'] if s['win_rate_pct'] is not None else '—'}% · {s['pips']:+,.1f} pips"]
+    if s.get("by_source"):
+        lines.append("By engine: " + " · ".join(f"{k} {v['win']}W/{v['loss']}L/{v['breakeven']}BE ({v['pips']:+,.1f}p)"
+                                                for k, v in s["by_source"].items()))
+    return lines

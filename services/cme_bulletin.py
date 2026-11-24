@@ -359,7 +359,7 @@ def fx_chain(call_text: str, put_text: str, max_days: int = 45, band_pct: float 
 
 
 def _fx_assemble(pair: str, inv: bool, rows: List[Dict], futs: Dict[str, float], asof: dt.date,
-                 max_days: int, band_pct: float, fut_of_row=None) -> Dict:
+                 max_days: int, band_pct: float, fut_of_row=None, expiry_of=None) -> Dict:
     """Typed rows (code, month, strike, oi, type) + futures by month → pair-terms chain."""
     if not futs:
         return {}
@@ -377,14 +377,14 @@ def _fx_assemble(pair: str, inv: bool, rows: List[Dict], futs: Dict[str, float],
     strikes: Dict[float, Dict] = {}
     used, calls, puts = set(), 0, 0
     for r in rows:
-        exp = fx_expiry(r["code"], r["month"])
+        exp = expiry_of(r) if expiry_of else fx_expiry(r["code"], r["month"])
         if not exp or not 0 <= (exp - asof).days <= max_days or not r["oi"]:
             continue
         f_u = (fut_of_row(r, exp) if fut_of_row else None) or fut_for(r["month"])
         k_fut = r["strike"] * _scale(r["strike"], f_u)
         k_pair, u_pair = (1 / k_fut, 1 / f_u) if inv else (k_fut, f_u)
         typ = ({"CALL": "PUT", "PUT": "CALL"}[r["type"]]) if inv else r["type"]
-        k = round(k_pair * front / u_pair, 5 if front < 20 else 3)
+        k = round(k_pair * front / u_pair, 5 if front < 20 else 3 if front < 1000 else 1)
         if abs(k / front - 1) * 100 > band_pct:
             continue
         row = strikes.setdefault(k, {"call_oi": 0.0, "put_oi": 0.0, "gex": 0.0})
@@ -520,6 +520,27 @@ async def refresh_fx(max_days: int = 45) -> Dict:
                                    "put_call_ratio": ch["put_call_ratio"]}
         else:
             out[ccy] = "no bulletin (download refused and no PDFs in data/cme/)"
+    for sym, files in [("AUDUSD", (AUD_SECTION,))] + list(INDEX_SECTIONS.items()):
+        texts = []
+        for name in files:
+            raw = await _fetch_pdf(BASE + name)
+            local = sorted(glob.glob(os.path.join(CME_DIR, f"{name.split('_')[0]}_*.pdf")), key=os.path.getmtime)
+            try:
+                if raw:
+                    with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+                        f.write(raw)
+                        f.flush()
+                        texts.append(pdf_text(f.name))
+                elif local:
+                    texts.append(pdf_text(local[-1]))
+            except Exception:
+                pass
+        ch = (aud_chain(texts[0], max_days) if sym == "AUDUSD" else index_chain(sym, texts, max_days)) if texts else {}
+        if ch.get("strikes"):
+            await data_store.put(f"cme_fx_chain:{sym}", {**ch, "strikes": {str(k): v for k, v in ch["strikes"].items()}})
+            out[sym] = {"asof": ch["asof"], "strikes": len(ch["strikes"]), "put_call_ratio": ch["put_call_ratio"]}
+        else:
+            out[sym] = "no bulletin (download refused and no PDFs in data/cme/)"
     try:                                       # Euro FX: one mixed section
         raw = await _fetch_pdf(BASE + EUR_SECTION)
         local = sorted(glob.glob(os.path.join(CME_DIR, "Section39_*.pdf")), key=os.path.getmtime)
@@ -558,3 +579,161 @@ async def cached_fx_chain(pair: str, max_age_days: int = 5) -> Optional[Dict]:
     if (dt.date.today() - dt.date.fromisoformat(c["asof"])).days > max_age_days:
         return None
     return {**c, "strikes": {float(k): v for k, v in c["strikes"].items()}}
+
+
+# ── AUD (section 38: CALL and PUT blocks in one file, futures table on top) ───────
+AUD_SECTION = "Section38_Australian_Dollar_New_Zealand_Dollar_Options.pdf"
+
+
+def parse_table_futures(text: str, header: str) -> Dict[str, float]:
+    """Settlements from a futures table that starts with ``header`` (e.g. 'AUST DLR FUT')."""
+    out: Dict[str, float] = {}
+    inside = False
+    for line in text.splitlines():
+        if line.startswith(header):
+            inside = True
+            continue
+        if inside:
+            if line.startswith("TOTAL") or not line.strip():
+                break
+            m = re.match(r"^([A-Z]{3}\d{2})\s+.*?(\d*\.\d{4,6})\s+\(\s*[\d.]+\)", line)
+            if m:
+                out.setdefault(m.group(1), float(m.group(2)))
+    return out
+
+
+def aud_chain(text: str, max_days: int = 45, band_pct: float = FX_BAND_PCT) -> Dict:
+    futs = parse_table_futures(text, "AUST DLR FUT")
+    if not futs:
+        return {}
+    asof = bulletin_date(text) or dt.date.today()
+    ci, pi = text.find("CALL Options"), text.find("PUT Options")
+    if ci < 0 or pi < 0:
+        return {}
+    parts = [(text[ci:pi], "CALL"), (text[pi:], "PUT")] if ci < pi else [(text[pi:ci], "PUT"), (text[ci:], "CALL")]
+    rows = []
+    for chunk, typ in parts:
+        for r in parse_fx_options(chunk):
+            if r["code"] in ("ADU",) or re.fullmatch(r"[1-5]AD", r["code"] or ""):
+                rows.append({**r, "type": typ})
+    for r in rows:
+        exp = fx_expiry(r["code"], r["month"])
+        r["fut"] = r["fut"] or (eur_underlying(exp, futs) if exp else None) or 0.0
+    return _fx_assemble("AUDUSD", False, [r for r in rows if r["fut"]], futs, asof, max_days, band_pct,
+                        fut_of_row=lambda r, exp: r["fut"])
+
+
+# ── equity index options (S&P 47–50, Nasdaq 40, Dow 60): 'DEC26 EOW1 MINI S&P C' ───
+INDEX_SECTIONS = {"SPX500": ("Section47_E_Mini_S_And_P_500_Call_Options.pdf", "Section48_E_Mini_S_And_P_500_Put_Options.pdf"),
+                  "NAS100": ("Section40_Nasdaq_100_And_E_Mini_Nasdaq_100_Options.pdf",),
+                  "US30": ("Section60_BigDJIAMini_DOW_Options.pdf",)}
+INDEX_WORD = {"SPX500": ("S&P",), "NAS100": ("NSDQ", "NASDAQ", "QN"), "US30": ("DOW",)}
+INDEX_BAND_PCT = float(config("CME_INDEX_BAND_PCT", default="10"))
+_IDX_MONTH = re.compile(r"^(?:([A-Z]{3}\d{2})|(\d{4})(\d{2})00)?\s*([A-Z0-9$&\- ]+?)\s+(C|P|CALL|PUT)\s*"
+                        r"(?:\(FUTURES SETT\.\s*([\d.,]+).*)?$")
+_MON = {v: k for k, v in MONTHS.items()}
+
+
+def index_futures(text: str) -> Dict[str, float]:
+    """The first futures table: 'DEC26  7023.00 7313.25 6992.00 ---- 7254.50 + 31950 …'."""
+    out: Dict[str, float] = {}
+    for line in text.splitlines():
+        m = re.match(r"^([A-Z]{3}\d{2})\s+(.*)$", line)
+        if not m or " C" in line[5:20] or " P" in line[5:20]:
+            if out and not m:
+                if line.startswith("TOTAL"):
+                    break
+            continue
+        s = re.search(r"(\d[\d,]*\.\d+)\s+[+-]\s*[\d.]+", m.group(2))
+        if s and m.group(1) not in out:
+            out[m.group(1)] = float(s.group(1).replace(",", ""))
+    return out
+
+
+def index_expiry(product: str, label: str) -> Optional[dt.date]:
+    y, m = 2000 + int(label[3:]), MONTHS[label[:3]]
+    fr = _fridays(y, m)
+    w = re.search(r"EOW(\d)", product) or re.search(r"\bQN(\d)\b", product)
+    if w:
+        n = int(w.group(1))
+        return fr[n - 1] if n <= len(fr) else None
+    if "EOM" in product:
+        d = dt.date(y + (m == 12), m % 12 + 1, 1) - dt.timedelta(days=1)
+        while d.weekday() > 4:
+            d -= dt.timedelta(days=1)
+        return d
+    if re.search(r"\b(MON|TUE|WED|THU|WK|WEEK)", product):
+        return None                                   # day-of-week weeklies: schedule unknown → skipped
+    return fr[2] if len(fr) > 2 else None             # standard quarterly / serial: 3rd Friday
+
+
+def parse_index_options(text: str, words) -> List[Dict]:
+    rows, prod, month, typ = [], None, None, None
+    seen: set = set()
+    nth: Dict[Tuple, int] = {}
+    for line in text.splitlines():
+        if "ADDITIONAL" in line and "**" in line:
+            nth = {}
+            continue
+        hd = re.search(r"NASDAQ 100 WEEKLY-(\d) (CALLS|PUTS)", line)
+        if hd and "QN" in words:                               # heading-only weekly blocks
+            prod, typ, month = f"QN{hd.group(1)}", "CALL" if hd.group(2) == "CALLS" else "PUT", None
+            continue
+        bare = re.match(r"^([A-Z]{3}\d{2})\s*$", line)
+        if bare and prod:
+            month = bare.group(1)
+            continue
+        mm = _IDX_MONTH.match(line)
+        if mm and any(w in (mm.group(4) or "") for w in words) and not re.match(r"^\s*\d{3,5}\s", line):
+            if mm.group(1):
+                month = mm.group(1)
+            elif mm.group(2):                                    # '20261100 MINI NSDQ EOM P'
+                month = f"{_MON[int(mm.group(3))]}{mm.group(2)[2:]}"
+            new = mm.group(4).strip()
+            if new != prod and not (mm.group(1) or mm.group(2)):
+                month = None                                     # new product, month follows
+            prod, typ = new, "CALL" if mm.group(5) in ("C", "CALL") else "PUT"
+            continue
+        if line.startswith(("TOTAL", "THE INFORMATION", "IS ACCEPTED")) or not (prod and month):
+            continue
+        r = _ROW.match(line)
+        if not r:
+            continue
+        ois = _OI.findall(line)
+        k0 = (prod, typ, month, float(r.group(1)))
+        nth[k0] = nth.get(k0, -1) + 1
+        key = (*k0, nth[k0])
+        if not ois or key in seen:
+            continue
+        seen.add(key)
+        rows.append({"code": prod, "type": typ, "month": month, "strike": float(r.group(1)),
+                     "oi": int(ois[-1].replace(",", ""))})
+    return rows
+
+
+def index_chain(symbol: str, texts: List[str], max_days: int = 45, band_pct: float = INDEX_BAND_PCT) -> Dict:
+    futs: Dict[str, float] = {}
+    for t in texts:
+        for k, v in index_futures(t).items():
+            futs.setdefault(k, v)
+    if not futs:
+        return {}
+    asof = next((d for d in (bulletin_date(t) for t in texts) if d), dt.date.today())
+    quarterly = {k: v for k, v in futs.items() if MONTHS[k[:3]] in (3, 6, 9, 12)} or futs
+    rows = []
+    for t in texts:
+        for r in parse_index_options(t, INDEX_WORD[symbol]):
+            exp = index_expiry(r["code"], r["month"])
+            if not exp:
+                continue
+            f = eur_underlying(exp, quarterly) or quarterly[max(quarterly, key=lambda l: (int(l[3:]), MONTHS[l[:3]]))]
+            if f:
+                k = r["strike"]
+                scale = min((0.01, 0.1, 1.0, 10.0, 100.0), key=lambda x: abs(k * x - f))  # Dow quotes /10
+                rows.append({**r, "strike": k * scale, "fut": f, "exp": exp})
+    rows2 = [{**r, "code": r["code"]} for r in rows]
+    # index option labels are not FX codes → give fx_expiry-free assembly an expiry via fut_of_row
+    exp_of = {id(r): r["exp"] for r in rows2}
+    ch = _fx_assemble(symbol, False, rows2, quarterly, asof, max_days, band_pct,
+                      fut_of_row=lambda r, exp: r["fut"], expiry_of=lambda r: exp_of.get(id(r)))
+    return ch

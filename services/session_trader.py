@@ -261,7 +261,8 @@ async def run_one(symbol: str, notify: bool = False, now: Optional[dt.datetime] 
             if out["sent"]:
                 from services import signal_tracker
                 await signal_tracker.record(symbol, side, s["entry"], s["stop"],
-                                            [t["price"] for t in s["targets"]], "asia-london")
+                                            [t["price"] for t in s["targets"]], "asia-london",
+                                            votes=cg.get("votes"))
     return out
 
 
