@@ -158,3 +158,11 @@ Source health shows in `/data/sources` (`yahoo_intraday`, `binance`, `tiingo_fx`
 |---|---|---|
 | `PRICE_POOL_ENABLED` | `true` | `false` = old behaviour (TwelveData queue only) |
 | `POOL_TD_WAIT_S` | `3` | how long to wait for a TwelveData slot before using the free pool |
+
+## Tradier options (licensed dealer levels — tried before CBOE's public file)
+
+| Key | Default | What it does |
+|---|---|---|
+| `TRADIER_TOKEN` | — | Tradier API access token (brokerage account → API Access, or developer sandbox token) |
+| `TRADIER_BASE` | `https://api.tradier.com/v1` | sandbox token → `https://sandbox.tradier.com/v1` (15-min delayed) |
+| `TRADIER_MAX_EXPIRIES` | `6` | chains read per underlying (≤ `OPT_MAX_DAYS`) |

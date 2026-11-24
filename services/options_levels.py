@@ -29,6 +29,11 @@ from typing import Dict, List, Optional, Tuple
 from decouple import config
 
 MAX_DAYS = int(config("OPT_MAX_DAYS", default="45"))
+# Tradier (licensed; free with a Tradier brokerage account, or its developer sandbox =
+# delayed data). When TRADIER_TOKEN is set it is tried FIRST, CBOE's public file second.
+TRADIER_TOKEN = config("TRADIER_TOKEN", default=None)
+TRADIER_BASE = str(config("TRADIER_BASE", default="https://api.tradier.com/v1")).rstrip("/")
+TRADIER_MAX_EXPIRIES = int(config("TRADIER_MAX_EXPIRIES", default="6"))
 PROXY = {"XAUUSD": "GLD", "XAGUSD": "SLV", "NAS100": "_NDX", "US100": "_NDX", "US30": "DIA",
          "SPX500": "_SPX", "US500": "_SPX", "SPX": "_SPX", "US2000": "_RUT",
          # currencies — CBOE-listed currency ETFs (thin OI: rougher walls than index/gold)
@@ -170,6 +175,73 @@ def parse_deribit(rows: List[Dict], today: Optional[dt.date] = None, max_days: i
     return {"spot": spot, "strikes": strikes, "atm_iv": atm_iv, "days": days_atm}
 
 
+def parse_tradier(options: List[Dict], spot: Optional[float], today: Optional[dt.date] = None,
+                  max_days: int = MAX_DAYS) -> Dict:
+    """Tradier chain rows (all fetched expiries) → the same per-strike shape as parse_chain."""
+    today = today or dt.date.today()
+    strikes: Dict[float, Dict] = {}
+    atm_iv, best_gap, nearest = None, None, None
+    for o in options or []:
+        try:
+            exp = dt.date.fromisoformat(str(o["expiration_date"]))
+            k = float(o["strike"])
+            typ = str(o["option_type"]).lower()
+        except (KeyError, TypeError, ValueError):
+            continue
+        days = (exp - today).days
+        if days < 0 or days > max_days:
+            continue
+        oi = float(o.get("open_interest") or 0)
+        gk = o.get("greeks") or {}
+        g = float(gk.get("gamma") or 0)
+        row = strikes.setdefault(k, {"call_oi": 0.0, "put_oi": 0.0, "gex": 0.0})
+        gex = g * oi * 100 * (spot or 0) ** 2 * 0.01
+        if typ == "call":
+            row["call_oi"] += oi
+            row["gex"] += gex
+        else:
+            row["put_oi"] += oi
+            row["gex"] -= gex
+        iv = gk.get("mid_iv") or gk.get("smv_vol")
+        if spot and iv:
+            gap = abs(k - spot) + days / 1000
+            if best_gap is None or gap < best_gap:
+                best_gap, atm_iv, nearest = gap, float(iv), max(days, 1)
+    return {"spot": spot, "strikes": strikes, "atm_iv": atm_iv, "days": nearest}
+
+
+async def _tradier_chain(und: str) -> Dict:
+    """Spot + the next TRADIER_MAX_EXPIRIES chains (≤ OPT_MAX_DAYS) for one underlying."""
+    from services.data_feeds import _get
+    sym = und.lstrip("_")
+    h = {"Authorization": f"Bearer {TRADIER_TOKEN}", "Accept": "application/json"}
+    q = await _get("tradier", f"{TRADIER_BASE}/markets/quotes", {"symbols": sym}, headers=h)
+    try:
+        quote = q["quotes"]["quote"]
+        quote = quote[0] if isinstance(quote, list) else quote
+        spot = float(quote.get("last") or quote.get("close") or quote.get("prevclose"))
+    except (TypeError, KeyError, ValueError):
+        return {}
+    ex = await _get("tradier", f"{TRADIER_BASE}/markets/options/expirations", {"symbol": sym}, headers=h)
+    try:
+        dates = ex["expirations"]["date"]
+        dates = [dates] if isinstance(dates, str) else list(dates)
+    except (TypeError, KeyError):
+        return {}
+    today = dt.date.today()
+    dates = [d for d in dates if 0 <= (dt.date.fromisoformat(d) - today).days <= MAX_DAYS][:TRADIER_MAX_EXPIRIES]
+    rows: List[Dict] = []
+    for d in dates:
+        c = await _get("tradier", f"{TRADIER_BASE}/markets/options/chains",
+                       {"symbol": sym, "expiration": d, "greeks": "true"}, headers=h)
+        try:
+            opt = c["options"]["option"]
+            rows += [opt] if isinstance(opt, dict) else list(opt)
+        except (TypeError, KeyError):
+            continue
+    return parse_tradier(rows, spot, today) if rows else {}
+
+
 _cache: Dict[str, Tuple[float, Dict]] = {}
 
 
@@ -188,8 +260,15 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
                               {"currency": und.split(":")[1], "kind": "option"})
             chain = parse_deribit((data or {}).get("result") or []) if data else {}
         else:
-            data = await _get("cboe_options", f"https://cdn.cboe.com/api/global/delayed_quotes/options/{und}.json")
-            chain = parse_chain(data) if data else {}
+            chain = {}
+            if TRADIER_TOKEN:
+                try:
+                    chain = await _tradier_chain(und)
+                except Exception:
+                    chain = {}
+            if not chain.get("strikes"):
+                data = await _get("cboe_options", f"https://cdn.cboe.com/api/global/delayed_quotes/options/{und}.json")
+                chain = parse_chain(data) if data else {}
         if chain.get("strikes"):
             _cache[und] = (time.time(), chain)
     lv = levels(chain)
