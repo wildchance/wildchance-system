@@ -29,7 +29,7 @@ KEYS = {  # name → why (values are never shown)
     "BTC_CONTRACT_SIZE": "BTC lots — using default 1; confirm in MT5 Specification",
     "INDEX_USD_PER_POINT": "index lots — using default 1; confirm in MT5 Specification",
     "STOCK_LOT_SHARES": "stock lots — using default 1; confirm in MT5 Specification",
-    "TRADIER_TOKEN": "dealer options levels (licensed; CBOE blocks Render)",
+    "OWNER_CHAT_ID": "your private Telegram chat for owner reminders (CME bulletin, outages)",
     "COINGECKO_API_KEY": "optional: crypto macro", "BLS_API_KEY": "optional: US jobs data"}
 
 
@@ -39,9 +39,14 @@ def _trim(x: Any, n: int = 600) -> Any:
 
 
 def _judge_calendar(d):
-    f = d.get("fetched", 0)
-    return ("✅" if f else "❌", f"{f} events fetched, {d.get('high_upcoming')} high-impact this week"
-            if f else "Forex Factory unreachable from Render — fallback needed")
+    h, n = d.get("last_ok_h"), d.get("stored", 0)
+    if h is not None and h <= 12:
+        return "✅", f"{n} events stored · refreshed {h} h ago · {d.get('high_upcoming')} high-impact this week"
+    if n:
+        why = f"backing off {d['backing_off_min']} min after a rate limit" if d.get("backing_off_min") else \
+            "no successful refresh since restart"
+        return "⚠️", f"{n} stored events still in use · {why}"
+    return "❌", "no calendar — Forex Factory unreachable from Render"
 
 
 def _judge_journal(d):
@@ -76,13 +81,18 @@ def _judge_any(label: str) -> Callable:
 
 CHECKS: List[Tuple[str, str, Callable]] = [
     ("live prices", "/data/snapshot?symbols=EUR/USD,USD/JPY,XAU/USD,BTC/USD", _judge_snapshot),
-    ("calendar refresh", "/data/calendar/refresh", _judge_calendar),
+    ("calendar feed", "/data/calendar/status", _judge_calendar),
     ("calendar this week", "/data/calendar?days=7", lambda d: ("✅" if d.get("events") else "⚠️",
                                                               f"{len(d.get('events') or [])} blocking events")),
     ("EA link", "/bridge/status", _judge_bridge),
     ("trade journal", "/journal/stats", _judge_journal),
     ("gold sweep", "/sweep/asset/XAU/USD", _judge_ok("ok", "zones computed")),
-    ("gold dealer levels", "/data/options-levels/XAU/USD", _judge_ok("ok", "CBOE chain read")),
+    ("gold dealer levels", "/data/options-levels/XAU/USD", lambda d: (
+        ("✅", f"{d.get('underlying')} · as of {d.get('asof') or 'live'}") if d.get("ok")
+        else ("❌", d.get("reason") or "no chain"))),
+    ("EUR/USD dealer levels", "/data/options-levels/EUR/USD", lambda d: (
+        ("✅", f"{d.get('underlying')} · as of {d.get('asof') or 'live'}") if d.get("ok")
+        else ("❌", d.get("reason") or "no chain"))),
     ("gold weekly map", "/cbdr/week/XAU/USD", _judge_ok("ok", "Monday box found")),
     ("data sources", "/data/sources", _judge_any("health table")),
     ("council agents", "/sniper/agents", _judge_any("scores table")),

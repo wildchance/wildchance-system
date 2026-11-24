@@ -278,7 +278,7 @@ async def _polygon_chain(und: str) -> Dict:
     return parse_polygon(rows) if rows else {}
 
 
-CME_FX = ("USDJPY", "USDCHF", "USDCAD", "GBPUSD")
+CME_FX = ("USDJPY", "USDCHF", "USDCAD", "GBPUSD", "EURUSD")
 _cache: Dict[str, Tuple[float, Dict]] = {}
 
 

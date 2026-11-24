@@ -113,3 +113,43 @@ def test_fx_chain_inverts_yen_to_usdjpy():
     assert ch["strikes"][k_call]["put_oi"] == 950 and ch["strikes"][k_call]["call_oi"] == 0
     k_put = round(1 / 0.0062, 3)                                      # yen PUT 6200 → USD/JPY CALL ≈ 161.29
     assert ch["strikes"][k_put]["call_oi"] == 500
+
+
+EUR = """PG39 BULLETIN # 226@          EURO FX & CME$INDEX OPTIONS          Mon, Nov 23, 2026       PG39
+                                     EURO FX & CME$INDEX FUTURES
+DEC26               1.09805              1.10150             1.08910          1.09135     (     .9163) -         66             26163     287015    791583 -      7215     1.22095    1.14085
+MAR27               1.10270              1.10590B            1.09360A         1.09580     (     .9126) -         66             25023       8404     95918 +     20467     1.22840B   1.14605
+                              ADDITIONAL EURO FX & CME$INDEX -FUTURES-
+DEC26             .15003                   .15028             .14994A              ----                0.000180                   ----        516      2206 +       240   .15017B     .14840
+DEC26     EUU OPT
+10800     0.50                    2.00        .50         ----                       1.60+      9   .204    ----       187     616 +     33   7.70      .30
+10800     ----                    20.80B      11.40A      ----                      12.90-     58   .794    ----      ----       7     UNCH   93.00B    63.90A
+10950     3.20                    8.50        2.50A       ----                       7.10+     34   .611    ----      1542    4333 +    694   9.90B     .50A
+10950     7.30                    8.60B       2.70        ----                       3.40-     33   .387    ----       111      73 +     70   78.40B    50.40A
+EUU OPT
+11000     5.10                    12.20       4.20A       ----                      10.50+     44   .750    ----       284    3169 -     58   12.40     .50
+TOTAL                                                                                                                    0       0
+                     ADDITIONAL EUROFX & CME$INDEX CALLS & PUTS **SETT. PRICE**
+DEC26     EUU OPT
+10800     0.50                    2.00        .50         ----                       1.60+      9   .204    ----       187     616 +     33   7.70      .30
+"""
+
+
+def test_eur_futures_and_classification():
+    assert cb.parse_eur_futures(EUR) == {"DEC26": 1.09135, "MAR27": 1.0958}
+    assert cb.classify(1.08, 1.09135, 0.204) == "PUT" and cb.classify(1.08, 1.09135, 0.794) == "CALL"
+    assert cb.classify(1.095, 1.09135, 0.611) == "PUT" and cb.classify(1.095, 1.09135, 0.387) == "CALL"
+    assert cb.classify(1.20, 1.09135, None) == "CALL" and cb.classify(1.00, 1.09135, None) == "PUT"
+
+
+def test_eur_rows_page_break_and_additional():
+    rows = cb.parse_eur_options(EUR)
+    assert [r["oi"] for r in rows] == [616, 7, 4333, 73, 3169]      # bare 'EUU OPT' keeps DEC26; repeat dropped
+    ch = cb.eur_chain(EUR, max_days=45)
+    assert ch["pair"] == "EURUSD" and ch["put_oi"] == 616 + 4333 + 3169 and ch["call_oi"] == 7 + 73
+
+
+def test_owner_reminder_message():
+    from services.owner_notify import bulletin_message
+    m = bulletin_message({"gold": 4, "EURUSD": 4})
+    assert "sections 62 + 64" in m and "data/cme" in m and "gold 4 days" in m

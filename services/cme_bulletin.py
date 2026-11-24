@@ -355,6 +355,12 @@ def fx_chain(call_text: str, put_text: str, max_days: int = 45, band_pct: float 
     for r in rows:
         if r["fut"]:
             futs.setdefault(r["month"], r["fut"])
+    return _fx_assemble(pair, inv, rows, futs, asof, max_days, band_pct)
+
+
+def _fx_assemble(pair: str, inv: bool, rows: List[Dict], futs: Dict[str, float], asof: dt.date,
+                 max_days: int, band_pct: float, fut_of_row=None) -> Dict:
+    """Typed rows (code, month, strike, oi, type) + futures by month → pair-terms chain."""
     if not futs:
         return {}
     order = sorted(futs, key=lambda l: (int(l[3:]), MONTHS[l[:3]]))
@@ -374,7 +380,7 @@ def fx_chain(call_text: str, put_text: str, max_days: int = 45, band_pct: float 
         exp = fx_expiry(r["code"], r["month"])
         if not exp or not 0 <= (exp - asof).days <= max_days or not r["oi"]:
             continue
-        f_u = fut_for(r["month"])
+        f_u = (fut_of_row(r, exp) if fut_of_row else None) or fut_for(r["month"])
         k_fut = r["strike"] * _scale(r["strike"], f_u)
         k_pair, u_pair = (1 / k_fut, 1 / f_u) if inv else (k_fut, f_u)
         typ = ({"CALL": "PUT", "PUT": "CALL"}[r["type"]]) if inv else r["type"]
@@ -389,6 +395,98 @@ def fx_chain(call_text: str, put_text: str, max_days: int = 45, band_pct: float 
     return {"pair": pair, "spot": front, "strikes": strikes, "atm_iv": None, "days": None, "asof": asof.isoformat(),
             "expiries": sorted(used), "call_oi": calls, "put_oi": puts,
             "put_call_ratio": round(puts / calls, 2) if calls else None}
+
+
+# ── Euro FX (section 39): calls and puts MIXED in one listing, no CALL/PUT label ───
+EUR_SECTION = "Section39_Euro_FX_And_Cme$Index_Options.pdf"
+_EUR_MONTH = re.compile(r"^\s*([A-Z]{3}\d{2})?\s+([A-Z0-9]{2,4}) OPT(?: - ([A-Z0-9]{2,4}))?\s*$")
+_DELTA = re.compile(r"^(?:\.\d{3}|1\.000)$")
+
+
+def parse_eur_futures(text: str) -> Dict[str, float]:
+    """EURO FX futures settlements (the first futures table: 'DEC26 … 1.09135 ( .9163)')."""
+    out: Dict[str, float] = {}
+    for line in text.splitlines():
+        if "ADDITIONAL EURO FX" in line and "FUTURES" in line:
+            break
+        m = re.match(r"^([A-Z]{3}\d{2})\s+.*?(\d\.\d{4,5})\s+\(\s*[\d.]+\)", line)
+        if m:
+            out.setdefault(m.group(1), float(m.group(2)))
+    return out
+
+
+def classify(strike: float, fut: float, delta: Optional[float]) -> str:
+    """No CALL/PUT label: a call is in the money below the future (delta > .5), a put above.
+    Without a delta (cabinet rows), the cheap out-of-the-money side is assumed."""
+    below = strike < fut
+    if delta is None:
+        return "PUT" if below else "CALL"
+    return "CALL" if (delta > 0.5) == below else "PUT"
+
+
+def parse_eur_options(text: str) -> List[Dict]:
+    rows, code, month = [], None, None
+    seen: set = set()
+    nth: Dict[Tuple, int] = {}
+    for line in text.splitlines():
+        if "ADDITIONAL" in line and "**" in line:
+            nth = {}
+            continue
+        mm = _EUR_MONTH.match(line)
+        if mm:
+            new_code = mm.group(3) or mm.group(2)
+            if mm.group(1):
+                month = mm.group(1)
+            elif new_code != code:            # a bare 'EUU OPT' after a page break keeps the month
+                month = None
+            code = new_code
+            continue
+        if line.startswith(("TOTAL", "THE INFORMATION", "IS ACCEPTED")) or not (code and month):
+            continue
+        r = _ROW.match(line)
+        if not r:
+            continue
+        ois = _OI.findall(line)
+        k0 = (code, month, float(r.group(1)))
+        nth[k0] = nth.get(k0, -1) + 1
+        key = (*k0, nth[k0])
+        if not ois or key in seen:
+            continue
+        seen.add(key)
+        d = next((float(t) for t in line.split() if _DELTA.match(t)), None)
+        rows.append({"code": code, "month": month, "strike": float(r.group(1)), "delta": d,
+                     "oi": int(ois[-1].replace(",", ""))})
+    return rows
+
+
+def eur_underlying(exp: dt.date, futs: Dict[str, float]) -> Optional[float]:
+    """First futures month at/after the expiry (a mid-month expiry after the ~14th rolls on)."""
+    def key(l):
+        return (2000 + int(l[3:]), MONTHS[l[:3]])
+    for l in sorted(futs, key=key):
+        y, m = key(l)
+        if (y, m) > (exp.year, exp.month) or ((y, m) == (exp.year, exp.month) and exp.day <= 14):
+            return futs[l]
+    return None
+
+
+def eur_chain(text: str, max_days: int = 45, band_pct: float = FX_BAND_PCT) -> Dict:
+    futs = parse_eur_futures(text)
+    if not futs:
+        return {}
+    asof = bulletin_date(text) or dt.date.today()
+    rows = []
+    for r in parse_eur_options(text):
+        exp = fx_expiry(r["code"], r["month"])
+        if not exp:
+            continue
+        f = eur_underlying(exp, futs)
+        if not f:
+            continue
+        k = r["strike"] * _scale(r["strike"], f)
+        rows.append({**r, "fut": f, "type": classify(k, f, r["delta"])})
+    return _fx_assemble("EURUSD", False, rows, futs, asof, max_days, band_pct,
+                        fut_of_row=lambda r, exp: r["fut"])
 
 
 FX_SEED = "data/cme_fx_seed.json"
@@ -422,6 +520,25 @@ async def refresh_fx(max_days: int = 45) -> Dict:
                                    "put_call_ratio": ch["put_call_ratio"]}
         else:
             out[ccy] = "no bulletin (download refused and no PDFs in data/cme/)"
+    try:                                       # Euro FX: one mixed section
+        raw = await _fetch_pdf(BASE + EUR_SECTION)
+        local = sorted(glob.glob(os.path.join(CME_DIR, "Section39_*.pdf")), key=os.path.getmtime)
+        text = None
+        if raw:
+            with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+                f.write(raw)
+                f.flush()
+                text = pdf_text(f.name)
+        elif local:
+            text = pdf_text(local[-1])
+        ch = eur_chain(text, max_days) if text else {}
+        if ch.get("strikes"):
+            await data_store.put("cme_fx_chain:EURUSD", {**ch, "strikes": {str(k): v for k, v in ch["strikes"].items()}})
+            out["EURUSD"] = {"asof": ch["asof"], "strikes": len(ch["strikes"]), "put_call_ratio": ch["put_call_ratio"]}
+        else:
+            out["EUR"] = "no bulletin (download refused and no PDFs in data/cme/)"
+    except Exception as e:
+        out["EUR"] = f"{type(e).__name__}: {str(e)[:80]}"
     return out
 
 
