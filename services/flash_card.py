@@ -15,6 +15,7 @@ FLASH_CHAT_ID (group to post to; defaults to TELEGRAM_CHAT_ID), FLASH_CARDS
 from __future__ import annotations
 
 import datetime as dt
+import time
 import io
 from typing import Dict, Optional
 from zoneinfo import ZoneInfo
@@ -179,6 +180,9 @@ def group_deals(deals) -> list:
     return out
 
 
+MAX_AGE_MIN = int(config("FLASH_MAX_AGE_MIN", default="120"))   # only closes this fresh get a card
+
+
 async def post_from_deals(deals) -> dict:
     """Flash cards from the trader's REAL broker closes (any source — sniper, other
     signals, manual). Only net-profitable groups with positive pips; each ticket is
@@ -189,8 +193,10 @@ async def post_from_deals(deals) -> dict:
     seen, _ = await data_store.get("flash_tickets")
     seen = list(seen or [])
     fresh = [d for d in deals or [] if str(d.get("ticket")) not in set(seen)]
+    cutoff = time.time() - MAX_AGE_MIN * 60          # a history backfill goes to the journal, not the channel
+    recent = [d for d in fresh if int(d.get("close_time") or 0) >= cutoff]
     posted, skipped = [], []
-    for g in group_deals(fresh):
+    for g in group_deals(recent):
         if g["net"] <= 0 or pips(g["symbol"], g["side"], g["open"], g["close"]) <= 0:
             skipped.append({"symbol": g["symbol"], "side": g["side"], "why": "not a winning close"})
             continue
@@ -201,4 +207,5 @@ async def post_from_deals(deals) -> dict:
                                                        **({} if r.get("sent") else {"why": r.get("reason")})})
     seen = (seen + [str(d.get("ticket")) for d in fresh])[-2000:]
     await data_store.put("flash_tickets", seen)
-    return {"received": len(deals or []), "new": len(fresh), "posted": posted, "skipped": skipped}
+    return {"received": len(deals or []), "new": len(fresh), "stale": len(fresh) - len(recent),
+            "posted": posted, "skipped": skipped}

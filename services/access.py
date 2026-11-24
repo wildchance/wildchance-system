@@ -33,7 +33,8 @@ def ops_token() -> Optional[str]:
 # Under a public prefix but NOT public: they expose account data / run jobs without
 # their own auth (audit Nov-24). The ops gate (or the scheduler's internal token) applies.
 PRIVATE_EXACT = {"/bridge/status", "/billing/expire", "/cron/jobs", "/execution/status",
-                 "/execution/routing"}
+                 "/execution/routing",
+                 "/journal/stats", "/journal/trades", "/journal/report"}
 
 
 def is_public(path: str) -> bool:
