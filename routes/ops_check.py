@@ -29,6 +29,7 @@ KEYS = {  # name → why (values are never shown)
     "BTC_CONTRACT_SIZE": "BTC lots — using default 1; confirm in MT5 Specification",
     "INDEX_USD_PER_POINT": "index lots — using default 1; confirm in MT5 Specification",
     "STOCK_LOT_SHARES": "stock lots — using default 1; confirm in MT5 Specification",
+    "TRADIER_TOKEN": "dealer options levels (licensed; CBOE blocks Render)",
     "COINGECKO_API_KEY": "optional: crypto macro", "BLS_API_KEY": "optional: US jobs data"}
 
 
