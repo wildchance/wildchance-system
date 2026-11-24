@@ -18,3 +18,27 @@ def test_trim():
 def test_checklist_is_private():
     from services.access import is_public
     assert not is_public("/ops/checklist")
+
+
+def test_checklist_answers_fast_and_resumes(monkeypatch):
+    import asyncio
+    import time as _t
+    oc._done.clear(); oc._running.clear()
+    monkeypatch.setattr(oc, "WAIT_S", 0.2)
+
+    async def slow(name, path, judge):
+        await asyncio.sleep(0.5 if "snapshot" in path else 0)
+        res = {"check": name, "status": "✅", "note": "ok", "path": path}
+        oc._done[path] = (_t.time(), res)
+        return res
+    monkeypatch.setattr(oc, "_run", slow)
+
+    async def go():
+        t0 = _t.time()
+        r1 = await oc.checklist()
+        assert _t.time() - t0 < 0.4
+        assert any(c["status"] == "⏳" for c in r1["checks"]) and "still running" in r1["summary"]
+        await asyncio.sleep(0.5)
+        r2 = await oc.checklist()
+        assert all(c["status"] == "✅" for c in r2["checks"])
+    asyncio.new_event_loop().run_until_complete(go())
