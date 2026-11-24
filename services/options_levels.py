@@ -30,7 +30,16 @@ from decouple import config
 
 MAX_DAYS = int(config("OPT_MAX_DAYS", default="45"))
 PROXY = {"XAUUSD": "GLD", "XAGUSD": "SLV", "NAS100": "_NDX", "US100": "_NDX", "US30": "DIA",
-         "SPX500": "_SPX", "US500": "_SPX", "SPX": "_SPX"}
+         "SPX500": "_SPX", "US500": "_SPX", "SPX": "_SPX", "US2000": "_RUT",
+         # currencies — CBOE-listed currency ETFs (thin OI: rougher walls than index/gold)
+         "EURUSD": "FXE", "GBPUSD": "FXB", "AUDUSD": "FXA", "USDJPY": "FXY", "USDCHF": "FXF",
+         "USDCAD": "FXC", "DXY": "UUP",
+         # commodities
+         "USOIL": "USO", "WTI": "USO", "UKOIL": "BNO", "BRENT": "BNO", "NATGAS": "UNG", "COPPER": "CPER",
+         # crypto → Deribit (the real BTC/ETH options market), ETF chains as fallback
+         "BTCUSD": "DERIBIT:BTC", "ETHUSD": "DERIBIT:ETH"}
+# ETFs that move OPPOSITE to the traded pair (FXY = JPY per USD inverse of USD/JPY)
+INVERSE = {"USDJPY", "USDCHF", "USDCAD"}
 OCC = re.compile(r"^([A-Z]+?)(\d{6})([CP])(\d{8})$")
 
 
@@ -110,10 +119,55 @@ LABELS = {"inventory_ceiling": "Upper inventory ceiling (call wall)", "hedge_wal
           "exhaustion_low": "Liquidity exhaustion floor (−1 EM)"}
 
 
-def mapped(lv: Dict, ratio: float) -> List[Dict]:
-    """Underlying-strike levels → the traded symbol's prices (e.g. GLD × ~10.9 → XAU)."""
-    return sorted(({"label": LABELS[k], "price": round(v * ratio, 2), "key": k}
-                   for k, v in lv.items() if v is not None and k in LABELS), key=lambda x: -x["price"])
+def mapped(lv: Dict, ratio: float, inverse: bool = False, und_spot: Optional[float] = None,
+           live: Optional[float] = None, dp: int = 2) -> List[Dict]:
+    """Underlying-strike levels → the traded symbol's prices. Direct: price = strike ×
+    (live / underlying spot). Inverse (FXY for USD/JPY): price = live × spot / strike,
+    and the ceiling/floor roles swap (an ETF call wall is a pair FLOOR)."""
+    out = []
+    for k, v in lv.items():
+        if v is None or k not in LABELS or not v:
+            continue
+        if inverse and und_spot and live:
+            price = live * und_spot / v
+            key = {"inventory_ceiling": "primary_floor", "hedge_wall": "absorption_shelf",
+                   "primary_floor": "inventory_ceiling", "absorption_shelf": "hedge_wall",
+                   "exhaustion_high": "exhaustion_low", "exhaustion_low": "exhaustion_high"}.get(k, k)
+        else:
+            price, key = v * ratio, k
+        out.append({"label": LABELS[key], "price": round(price, dp), "key": key})
+    return sorted(out, key=lambda x: -x["price"])
+
+
+def _dp(symbol: str) -> int:
+    s = symbol.upper().replace("/", "")
+    return 3 if s.endswith("JPY") else 5 if (len(s) == 6 and s.isalpha() and not s.startswith(("XAU", "XAG", "BTC", "ETH"))) else 2
+
+
+def parse_deribit(rows: List[Dict], today: Optional[dt.date] = None, max_days: int = MAX_DAYS) -> Dict:
+    """Deribit book summaries (BTC-27DEC26-100000-C) → the same per-strike shape.
+    Deribit gives OI + mark IV (no gamma in the summary), so GEX / gamma flip are skipped."""
+    today = today or dt.date.today()
+    strikes: Dict[float, Dict] = {}
+    spot, atm_iv, best, days_atm = None, None, None, None
+    for r in rows or []:
+        try:
+            _, exp_s, k_s, cp = r["instrument_name"].split("-")
+            exp = dt.datetime.strptime(exp_s, "%d%b%y").date()
+        except (KeyError, ValueError):
+            continue
+        days = (exp - today).days
+        if days < 0 or days > max_days:
+            continue
+        k = float(k_s)
+        spot = spot or r.get("underlying_price")
+        row = strikes.setdefault(k, {"call_oi": 0.0, "put_oi": 0.0, "gex": 0.0})
+        row["call_oi" if cp == "C" else "put_oi"] += float(r.get("open_interest") or 0)
+        if spot and r.get("mark_iv"):
+            gap = abs(k - spot) + days / 1000
+            if best is None or gap < best:
+                best, atm_iv, days_atm = gap, float(r["mark_iv"]) / 100, max(days, 1)
+    return {"spot": spot, "strikes": strikes, "atm_iv": atm_iv, "days": days_atm}
 
 
 _cache: Dict[str, Tuple[float, Dict]] = {}
@@ -122,21 +176,30 @@ _cache: Dict[str, Tuple[float, Dict]] = {}
 async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
     """Fetch (cached 30 min), compute and map the dealer levels for ``symbol``."""
     und = underlying_for(symbol)
+    s = symbol.upper().replace("/", "")
+    if s not in PROXY and not (s.isalpha() and len(s) <= 5):
+        return {"symbol": symbol, "ok": False, "reason": "no listed options proxy (e.g. FX crosses) — CBDR levels only"}
     hit = _cache.get(und)
     chain = hit[1] if hit and time.time() - hit[0] < 1800 else None
     if chain is None:
         from services.data_feeds import _get
-        data = await _get("cboe_options", f"https://cdn.cboe.com/api/global/delayed_quotes/options/{und}.json")
-        chain = parse_chain(data) if data else {}
+        if und.startswith("DERIBIT:"):
+            data = await _get("deribit_options", "https://www.deribit.com/api/v2/public/get_book_summary_by_currency",
+                              {"currency": und.split(":")[1], "kind": "option"})
+            chain = parse_deribit((data or {}).get("result") or []) if data else {}
+        else:
+            data = await _get("cboe_options", f"https://cdn.cboe.com/api/global/delayed_quotes/options/{und}.json")
+            chain = parse_chain(data) if data else {}
         if chain.get("strikes"):
             _cache[und] = (time.time(), chain)
     lv = levels(chain)
     if not lv:
         return {"symbol": symbol, "underlying": und, "ok": False, "reason": "no option chain"}
+    inverse = s in INVERSE
     ratio = (live_price / chain["spot"]) if live_price and chain.get("spot") else 1.0
     return {"symbol": symbol, "underlying": und, "ok": True, "underlying_spot": chain["spot"],
-            "ratio": round(ratio, 4), "atm_iv": chain.get("atm_iv"), "days": chain.get("days"),
-            "levels": mapped(lv, ratio), "raw": lv}
+            "ratio": round(ratio, 6), "inverse": inverse, "atm_iv": chain.get("atm_iv"), "days": chain.get("days"),
+            "levels": mapped(lv, ratio, inverse, chain["spot"], live_price, _dp(symbol)), "raw": lv}
 
 
 def cached_levels(symbol: str, live_price: Optional[float] = None) -> List[Dict]:
@@ -146,4 +209,5 @@ def cached_levels(symbol: str, live_price: Optional[float] = None) -> List[Dict]
         return []
     lv = levels(hit[1])
     ratio = (live_price / hit[1]["spot"]) if live_price and hit[1].get("spot") else 1.0
-    return mapped(lv, ratio) if lv else []
+    s = symbol.upper().replace("/", "")
+    return mapped(lv, ratio, s in INVERSE, hit[1].get("spot"), live_price, _dp(symbol)) if lv else []

@@ -393,6 +393,12 @@ async def _record(sym: str, s: Dict) -> None:
 async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dict:
     from services import yearly_cbdr as yc, case_library as cl, trade_gate as tg
     syms = symbols or [x.strip() for x in (DEFAULT_SYMBOLS + "," + STOCKS).split(",") if x.strip()]
+    if not symbols:                                   # + markets the sweeper drones flagged hot
+        try:
+            from services.sweeper import hot_symbols
+            syms += [s for s in hot_symbols() if s not in syms]
+        except Exception:
+            pass
     resolved = await resolve_pending()
     stats_all = await cl.all_cases()
     from services import council as _cn                   # grade agents once per scan

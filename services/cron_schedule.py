@@ -117,6 +117,8 @@ def jobs() -> List[Job]:
             (P, "/cbdr/alert/GBP/USD?window=cbdr"), (P, "/cbdr/alert/USD/JPY?window=cbdr"))
             + newday),
         Job("friday_preclose", NY, (16,), 55, ((P, "/candlerange/friday"),), days=(4,)),
+        # Sweeper drones — whole universe, 3×/day ahead of Asia, London and New York
+        Job("sweeper_drones", UTC, (1, 9, 15), 30, ((P, "/sweep/run?notify=true"),), days=WEEKDAYS),
         # Monday's CBDR closes 20:00 NY → the week's map (SD ladder + COT direction)
         Job("weekly_map_mon", NY, (20,), 10, tuple((G, f"/cbdr/week/{p}?notify=true") for p in (
             "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF", "USD/CAD", "AUD/USD", "XAU/USD")), days=(0,)),
@@ -168,7 +170,8 @@ _ENTRY = _re.compile(r"execute=true|deploy=true|/stratops/deploy|/gold/scan|/gol
                      r"/gold/alerter|/swing/scan|/zconfluence|/cbdr/limits|/gold/prelondon|"
                      r"/gold/recon|/candlerange/crt|/autoalert|/sniper/scan")
 _DIGEST = _re.compile(r"/alerts/session|/intraday/scan|/cbdr/alert|/candlerange/(scan|friday)|"
-                      r"/gold/zones/digest|/gold/kingdom-report|/gold/dxy/flip|/usdjpy/scan|/yearly/alert|/cbdr/week")
+                      r"/gold/zones/digest|/gold/kingdom-report|/gold/dxy/flip|/usdjpy/scan|/yearly/alert|/cbdr/week|"
+                      r"/sweep/run")
 
 
 def call_class(path: str) -> str:
