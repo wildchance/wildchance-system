@@ -56,3 +56,11 @@ def test_measure_range_in_pips():
 def test_currencies():
     assert ec.currencies("GBP/JPY") == {"GBP", "JPY"}
     assert ec.currencies("XAU/USD") == {"USD"} and ec.currencies("NVDA") == {"USD"}
+
+
+def test_status_uses_persisted_health_after_restart(monkeypatch):
+    import time
+    from services import data_feeds as df
+    monkeypatch.setitem(ec._meta, "last_ok", 0.0)
+    monkeypatch.setitem(df._health, "forexfactory_calendar", {"last_ok": time.time() - 2 * 3600})
+    assert ec.status()["last_ok_h"] == 2.0
