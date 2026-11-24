@@ -88,7 +88,7 @@ async def confluence_alerts(min_confidence: int = Query(None),
             blocked.append(f"{pair} (best {best}R < {tg.MIN_RR}R)")
             continue
         from services import council_gate
-        cg = await council_gate.check(pair, side)
+        cg = await council_gate.check(pair, side, style="continuation" if window == "cbdr" else None)
         if not (cg["pass"] or force):
             blocked.append(f"{pair} (council {cg['verdict']})")
             continue

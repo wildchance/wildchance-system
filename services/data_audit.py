@@ -160,7 +160,13 @@ async def run(live: Optional[Dict[str, float]] = None) -> Dict:
     except Exception:
         pass
     n = {k: sum(1 for i in items if i["status"] == k) for k in ("✅", "⚠️", "❌")}
-    return {"as_of": today.isoformat(), "summary": f"✅ {n['✅']} · ⚠️ {n['⚠️']} · ❌ {n['❌']}", "items": items}
+    rep = {"as_of": today.isoformat(), "summary": f"✅ {n['✅']} · ⚠️ {n['⚠️']} · ❌ {n['❌']}", "items": items}
+    try:
+        from services import data_store
+        await data_store.put("data_audit_last", rep)          # the terminal reads the last run
+    except Exception:
+        pass
+    return rep
 
 
 def message(rep: Dict) -> str:

@@ -98,6 +98,12 @@ def card_lines(symbol: str, entry: float, stop: float, targets: List[Dict],
     pv = pip_value_per_lot(symbol, entry)
     if not ps or not pv or not entry or not stop:
         return []
+    if max_risk_pct == 0.5:                 # default → the volatility-scaled budget (services.regime)
+        try:
+            from services.regime import cached_risk_pct
+            max_risk_pct = cached_risk_pct(symbol, 0.5)
+        except Exception:
+            pass
     sl_pips = abs(entry - stop) / ps
     if sl_pips <= 0:
         return []

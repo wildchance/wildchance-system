@@ -226,7 +226,7 @@ async def scan(z_threshold: float = 2.0, notify: bool = False, max_age_s: int = 
         for r in setups:
             if not sendable(r):
                 continue
-            cg = await council_gate.check(r["symbol"], r["lean"])
+            cg = await council_gate.check(r["symbol"], r["lean"], style="reversion")
             r["council"] = cg["verdict"]
             if cg["pass"] and await alert_once(
                     f"z:{r['symbol']}:{r['lean']}:{day}", card(r) + "\n" + cg["line"], ttl_hours=12):
