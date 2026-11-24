@@ -189,3 +189,25 @@ async def calendar_week(notify: bool = Query(False)):
     if notify:
         out["sent"] = await alert_once(f"calweek:{dt.date.today():%G-%V}", ec.week_card(ev), ttl_hours=24 * 6)
     return out
+
+
+# ── CME Daily Bulletin (real COMEX gold options open interest) ─────────────────────
+@router.get("/cme/refresh")
+async def cme_refresh():
+    from services import cme_bulletin as cb
+    return await cb.refresh()
+
+
+@router.get("/cme/gold")
+async def cme_gold():
+    from services import cme_bulletin as cb
+    c = await cb.cached_chain(max_age_days=30)
+    if not c:
+        return {"ok": False, "reason": "no bulletin parsed yet"}
+    top_c = sorted(c["strikes"].items(), key=lambda kv: -kv[1]["call_oi"])[:5]
+    top_p = sorted(c["strikes"].items(), key=lambda kv: -kv[1]["put_oi"])[:5]
+    return {"ok": True, "asof": c["asof"], "front_future": c["spot"], "expiries": c.get("expiries"),
+            "put_call_ratio": c.get("put_call_ratio"), "call_oi": c.get("call_oi"), "put_oi": c.get("put_oi"),
+            "top_call_strikes": [{"strike": k, "oi": int(v["call_oi"])} for k, v in top_c],
+            "top_put_strikes": [{"strike": k, "oi": int(v["put_oi"])} for k, v in top_p],
+            "note": "strikes in front-future terms; /data/options-levels/XAU/USD maps them to live spot"}
