@@ -99,6 +99,10 @@ CHECKS: List[Tuple[str, str, Callable]] = [
         "✅" if "❌ 0" in d.get("summary", "") and "⚠️ 0" in d.get("summary", "")
         else "❌" if "❌ 0" not in d.get("summary", "") else "⚠️", d.get("summary", ""))),
     ("council agents", "/sniper/agents", _judge_any("scores table")),
+    ("database schema", "/ops/schema", lambda d: (
+        "✅" if (d.get("drift") or {}).get("ok") else "❌" if (d.get("drift") or {}).get("ok") is False else "⚠️",
+        "in sync" if (d.get("drift") or {}).get("ok") else f"missing: {(d.get('drift') or {}).get('missing')}"
+        if (d.get("drift") or {}).get("ok") is False else str((d.get("drift") or {}).get("error"))[:120])),
     ("errors today", "/ops/errors", lambda d: (
         "✅" if not (d.get("today") or {}).get("total") else "⚠️" if (d["today"]["total"] < 20) else "❌",
         f"{(d.get('today') or {}).get('total', 0)} problem events · "
@@ -204,3 +208,26 @@ async def errors_digest(notify: bool = False):
         from services.owner_notify import send
         out["sent"] = await send(text)
     return out
+
+
+
+@router.get("/backup")
+async def backup(send: bool = False):
+    """gzip'd JSON of the research tables (download), or ?send=true → owner's Telegram."""
+    from fastapi.responses import Response
+    from services import backup as bk
+    if send:
+        return await bk.send()
+    blob, meta = await bk.build()
+    import datetime as _dt
+    return Response(blob, media_type="application/gzip", headers={
+        "Content-Disposition": f'attachment; filename="wildchance-backup-{_dt.date.today():%Y-%m-%d}.json.gz"',
+        "X-Backup-Rows": str(meta["rows"])})
+
+
+@router.get("/schema")
+async def schema():
+    """Applied / pending migrations + model columns missing from the live database."""
+    from database import migrations
+    from database.db import engine
+    return {"migrations": await migrations.status(engine), "drift": await migrations.drift(engine)}

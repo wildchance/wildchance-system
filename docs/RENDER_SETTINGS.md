@@ -285,3 +285,14 @@ failed Telegram send (`telegram_fail`) and errors swallowed inside the signal tr
 regime engine (`swallowed`). `/ops/errors` (today + last events), a checklist line, a terminal tile, and a private
 daily digest at 05:50 UTC (`errors_digest`, needs `OWNER_CHAT_ID`). The scheduler now has a FAST lane: the 5-minute
 signal tracker runs even while a long hourly bundle is still working, so TP flash cards are never delayed by it.
+
+## Hardening (7–11)
+
+- Sniper: each market is scanned in isolation — one failure is logged (`/ops/errors`) and the rest still run.
+- Schema: versioned migrations in `database/migrations.py` (recorded in `schema_migrations`, once-only, never block
+  startup); `/ops/schema` + a checklist line show pending migrations and any model column missing in Neon.
+- Backups: every Sunday 03:20 UTC a gzip'd JSON of the research tables is sent to your Telegram (`OWNER_CHAT_ID`);
+  `/ops/backup` downloads one on demand. Member / billing tables are not included.
+- Terminal token: open `/terminal?token=…` once; it is stored in that browser, removed from the address bar, and sent
+  as the `X-Ops-Token` header from then on.
+- Runtime: Python 3.12 (Docker + CI), python-telegram-bot 21.11.1, httpx 0.27.

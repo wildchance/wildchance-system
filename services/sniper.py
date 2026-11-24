@@ -418,153 +418,158 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
     agent_scores = _cn.agent_scores(live + await _stk.scoring_cases())     # every engine's outcomes
     out, sent = [], []
     for sym in syms:
-        r = await yc.run(sym)
-        if not r.get("ok"):
-            out.append({"symbol": sym, "skip": r.get("reason")})
-            continue
-        tol = yc.tolerance(sym, r["price"])
-        from services import owner_plans
-        plans = owner_plans.active(sym, r["price"])
-        if plans:                                   # the owner's zones join the cluster map
-            r = {**r, "clusters": list(r["clusters"]) + [owner_plans.as_cluster(p) for p in plans]}
-        if not any(abs(c["mid"] - r["price"]) <= 3 * tol + (c["high"] - c["low"]) for c in r["clusters"]):
-            out.append({"symbol": sym, "skip": "no golden cluster near price"})   # saves a credit
-            continue
-        bars = await _bars_1h(sym, tz="America/New_York")     # NY time → session levels too
-        cands = candidates(r, bars)
-        from services import session_levels as sl
-        intraday = sl.all_levels(sym, bars)
-        by_tf = {"1h": bars}
-        if cands:                       # higher timeframes only when a zone is in play
-            for tf, n in (("4h", 60), ("1day", 40), ("1week", 30)):
-                by_tf[tf] = await _bars(sym, tf, n)
-        for c in cands:
-            tr = triggers(by_tf, c["side"], c["band"])
-            sig = tr["primary"] or {"fired": False, "why": "; ".join(
-                f"{t['tf']} {t['type']}: {t['why']}" for t in tr["all"][:3])}
-            row = {"symbol": sym, "side": c["side"], "zone": [c["low"], c["high"]],
-                   "members": c["members"], "roles": roles_of(c["members"]), "cisd": sig,
-                   "trigger": sig.get("tf") and f"{sig['tf']} {sig['type'].upper()}",
-                   "confirmations": [f"{t['tf']} {t['type'].upper()}" for t in tr["confirmations"]],
-                   "intraday": sl.near(intraday, c["low"], c["high"], tol / 2)}
-            if not sig["fired"]:
-                row["held"] = sig["why"]
-                out.append(row)
+        try:                                   # one market failing never stops the whole scan
+            r = await yc.run(sym)
+            if not r.get("ok"):
+                out.append({"symbol": sym, "skip": r.get("reason")})
                 continue
-            buf = tol / 3
-            stop = sig["extreme"] - buf if c["side"] == "BUY" else sig["extreme"] + buf
-            stop = tg.widen_stop(sym, c["side"], sig["entry"], stop)
-            tps = targets_from(r, c["side"], sig["entry"], stop)
-            ptps = position_targets(r, c["side"], sig["entry"], stop)
-            trade_type = "swing"
-            # NEARER TARGETS: aim only as far as history usually travels (owner: still
-            # trade the setup — just don't target what almost never happens)
-            cap = realistic_cap(r, c["side"])
-            tps = apply_cap(tps, cap, c["side"])
-            ptps = apply_cap(ptps, cap, c["side"])
-            held_reason = None
-            # SWEET-SPOT LADDER: TP1 1R (⅓ + stop to BE) · TP2 2R (⅓) · TP3 inside the
-            # 1σ–2σ expected move (68–95 % band) sized by this market's own volatility
-            from services import tp_study as tps_mod
-            closes = [b["close"] for b in by_tf.get("1day") or []]
-            sig_d = tps_mod.sigma_daily(closes)
-            unit = sig["entry"] * sig_d * (SWING_HORIZON_D ** 0.5) if sig_d else None
-            best_k = None
-            try:
-                st = await tps_mod.study(sym, SWING_HORIZON_D)
-                best_k = st and st.get("best_k")
-            except Exception:
-                st = None
-            lad = tps_mod.ladder(c["side"], sig["entry"], stop, unit, best_k, structure=tps,
-                                 cap_price=cap and cap["price"])
-            sweet = {"zone": lad.get("sweet_zone"), "best_k": best_k, "unit": unit}
-            if lad["targets"]:
-                tps = lad["targets"]
-            elif lad["hold"] and lad["hold"].startswith("stop wider") and not ptps:
-                held_reason = lad["hold"]
-            if not tps and not ptps and cap and not held_reason:
-                from services.trade_gate import MIN_RR
-                move = (cap["price"] - sig["entry"]) * (1 if c["side"] == "BUY" else -1)
-                risk = abs(sig["entry"] - stop)
-                if move > 0 and risk and move / risk >= MIN_RR:
-                    t = {"name": "TP1", "price": cap["price"], "rr": round(move / risk, 2),
-                         "pct": round(100 * move / sig["entry"], 1), "hist": cap["hist"],
-                         "level": f"{cap['year']} {cap['k']:g} (realistic cap)"}
-                    if t["pct"] <= MAX_TARGET_PCT * 100:
-                        tps = [t]
-                    else:
-                        ptps = [{**t, "name": "P1"}]
-                else:
-                    held_reason = (f"realistic cap {cap['year']} {cap['k']:g} (hist {cap['hist']}%) "
-                                   f"is under {MIN_RR}R from entry")
-            if not tps and ptps:                # only yearly objectives → a POSITION trade
-                tps, trade_type = ptps, "position"
-                # bank ⅓ at 1R and move the stop to breakeven before the long hold
-                one_r = sig["entry"] + (1 if c["side"] == "BUY" else -1) * abs(sig["entry"] - stop)
-                if abs(one_r - sig["entry"]) < abs(tps[0]["price"] - sig["entry"]):
-                    tps = [{"name": "TP1", "price": one_r, "rr": 1.0, "level": "1R"}] + tps
-            if c.get("plan"):                          # owner's plan: the owner's targets
-                pl, sgn = c["plan"], (1 if c["side"] == "BUY" else -1)
-                risk = abs(sig["entry"] - stop)
-                own = [t for t in pl["targets"] if (t - sig["entry"]) * sgn > 0]
-                tps = [{"name": f"TP{i + 1}", "price": t, "rr": round(abs(t - sig["entry"]) / risk, 2) if risk else None,
-                        "pct": round(100 * abs(t - sig["entry"]) / sig["entry"], 1), "level": "owner plan"}
-                       for i, t in enumerate(own)]
-                trade_type = "position" if tps and tps[0]["pct"] > MAX_TARGET_PCT * 100 else "swing"
-                held_reason = None if tps else "owner plan: no target beyond entry"
-                row["members"] = [f"PLAN: {pl['label']}"] + [m for m in row["members"] if not m.startswith("PLAN")]
-            stats = cl.score(stats_all, symbol=None)
-            rs = cl.best_role(stats, row["roles"])
-            weekly = await tg.weekly_profile(sym)
-            g = tg.evaluate(sym, c["side"], sig["entry"], stop, [t["price"] for t in tps], weekly=weekly)
-            if not tps:
-                g["reasons"].append("no target ≥ 1.3R")
-            if held_reason:
-                g["reasons"].append(held_reason)
-            if rs and rs["n"] >= 3 and rs["recent_rate"] < MIN_RATE:
-                g["reasons"].append(f"role {rs['role']} recent hit-rate {rs['recent_rate']:.0%} < {MIN_RATE:.0%}")
-            from services import council as cn
-            cv = await cn.convene(sym, c["side"], yearly=r, role_stats=rs, trade_type=trade_type,
-                                  scores=agent_scores)
-            if cv["verdict"] != "GO":
-                g["reasons"].append(f"council {cv['verdict']}: " + (cv.get("need") or
-                                    (f"veto {','.join(cv['veto'])}" if cv["veto"] else f"score {cv['score']}")))
-            if g["reasons"]:
-                _held.add(f"{sym}:{c['side']}:{dt.date.today()}")      # watch it for promotion
-            fit = account_fit(sym, sig["entry"], stop)
-            if fit:
-                g["reasons"].append(fit)
-            g["allow"] = not g["reasons"]
-            row.update(trade_type=trade_type, cap=cap, sweet=sweet,
-                       position_targets=ptps if trade_type == "swing" else [],
-                       entry=sig["entry"], extreme=sig["extreme"], stop=stop, targets=tps,
-                       role_stats=rs, gate=g, council=cv)
-            out.append(row)
-        # one card per market + side: the best-backed shot (most council votes, most anchors)
-        best: Dict[str, Dict] = {}
-        for row in [x for x in out if x.get("symbol") == sym and x.get("gate", {}).get("allow")]:
-            k = row["side"]
-            score = (row["council"]["for"], len(row["members"]))
-            if k not in best or score > (best[k]["council"]["for"], len(best[k]["members"])):
-                best[k] = row
-        for side, row in best.items():
-            if notify:
-                from services.realtime import alert_once
-                key = f"sniper:{sym}:{side}:{dt.date.today()}"
-                from services import fx_rotation as _fxr
-                if not (await _fxr.exposure_for(sym, side))["allow"]:
-                    continue                                       # same currency bet already on
+            tol = yc.tolerance(sym, r["price"])
+            from services import owner_plans
+            plans = owner_plans.active(sym, r["price"])
+            if plans:                                   # the owner's zones join the cluster map
+                r = {**r, "clusters": list(r["clusters"]) + [owner_plans.as_cluster(p) for p in plans]}
+            if not any(abs(c["mid"] - r["price"]) <= 3 * tol + (c["high"] - c["low"]) for c in r["clusters"]):
+                out.append({"symbol": sym, "skip": "no golden cluster near price"})   # saves a credit
+                continue
+            bars = await _bars_1h(sym, tz="America/New_York")     # NY time → session levels too
+            cands = candidates(r, bars)
+            from services import session_levels as sl
+            intraday = sl.all_levels(sym, bars)
+            by_tf = {"1h": bars}
+            if cands:                       # higher timeframes only when a zone is in play
+                for tf, n in (("4h", 60), ("1day", 40), ("1week", 30)):
+                    by_tf[tf] = await _bars(sym, tf, n)
+            for c in cands:
+                tr = triggers(by_tf, c["side"], c["band"])
+                sig = tr["primary"] or {"fired": False, "why": "; ".join(
+                    f"{t['tf']} {t['type']}: {t['why']}" for t in tr["all"][:3])}
+                row = {"symbol": sym, "side": c["side"], "zone": [c["low"], c["high"]],
+                       "members": c["members"], "roles": roles_of(c["members"]), "cisd": sig,
+                       "trigger": sig.get("tf") and f"{sig['tf']} {sig['type'].upper()}",
+                       "confirmations": [f"{t['tf']} {t['type'].upper()}" for t in tr["confirmations"]],
+                       "intraday": sl.near(intraday, c["low"], c["high"], tol / 2)}
+                if not sig["fired"]:
+                    row["held"] = sig["why"]
+                    out.append(row)
+                    continue
+                buf = tol / 3
+                stop = sig["extreme"] - buf if c["side"] == "BUY" else sig["extreme"] + buf
+                stop = tg.widen_stop(sym, c["side"], sig["entry"], stop)
+                tps = targets_from(r, c["side"], sig["entry"], stop)
+                ptps = position_targets(r, c["side"], sig["entry"], stop)
+                trade_type = "swing"
+                # NEARER TARGETS: aim only as far as history usually travels (owner: still
+                # trade the setup — just don't target what almost never happens)
+                cap = realistic_cap(r, c["side"])
+                tps = apply_cap(tps, cap, c["side"])
+                ptps = apply_cap(ptps, cap, c["side"])
+                held_reason = None
+                # SWEET-SPOT LADDER: TP1 1R (⅓ + stop to BE) · TP2 2R (⅓) · TP3 inside the
+                # 1σ–2σ expected move (68–95 % band) sized by this market's own volatility
+                from services import tp_study as tps_mod
+                closes = [b["close"] for b in by_tf.get("1day") or []]
+                sig_d = tps_mod.sigma_daily(closes)
+                unit = sig["entry"] * sig_d * (SWING_HORIZON_D ** 0.5) if sig_d else None
+                best_k = None
                 try:
-                    from services import regime as _rg
-                    await _rg.risk_for(sym)                        # sizes the lot ladder on the card
+                    st = await tps_mod.study(sym, SWING_HORIZON_D)
+                    best_k = st and st.get("best_k")
                 except Exception:
-                    pass
-                promoted = f"{sym}:{side}:{dt.date.today()}" in _held
-                text = ("⬆️ *PROMOTED* — held earlier, now 4 agents agree\n" if promoted else "") + card(sym, row)
-                if await alert_once(key, text, ttl_hours=24):
-                    await _record(sym, row)
-                    sent.append(sym)
-                    from services import signal_tracker
-                    await signal_tracker.record(sym, side, row["entry"], row["stop"],
-                                                [t["price"] for t in row["targets"]], "sniper")
+                    st = None
+                lad = tps_mod.ladder(c["side"], sig["entry"], stop, unit, best_k, structure=tps,
+                                     cap_price=cap and cap["price"])
+                sweet = {"zone": lad.get("sweet_zone"), "best_k": best_k, "unit": unit}
+                if lad["targets"]:
+                    tps = lad["targets"]
+                elif lad["hold"] and lad["hold"].startswith("stop wider") and not ptps:
+                    held_reason = lad["hold"]
+                if not tps and not ptps and cap and not held_reason:
+                    from services.trade_gate import MIN_RR
+                    move = (cap["price"] - sig["entry"]) * (1 if c["side"] == "BUY" else -1)
+                    risk = abs(sig["entry"] - stop)
+                    if move > 0 and risk and move / risk >= MIN_RR:
+                        t = {"name": "TP1", "price": cap["price"], "rr": round(move / risk, 2),
+                             "pct": round(100 * move / sig["entry"], 1), "hist": cap["hist"],
+                             "level": f"{cap['year']} {cap['k']:g} (realistic cap)"}
+                        if t["pct"] <= MAX_TARGET_PCT * 100:
+                            tps = [t]
+                        else:
+                            ptps = [{**t, "name": "P1"}]
+                    else:
+                        held_reason = (f"realistic cap {cap['year']} {cap['k']:g} (hist {cap['hist']}%) "
+                                       f"is under {MIN_RR}R from entry")
+                if not tps and ptps:                # only yearly objectives → a POSITION trade
+                    tps, trade_type = ptps, "position"
+                    # bank ⅓ at 1R and move the stop to breakeven before the long hold
+                    one_r = sig["entry"] + (1 if c["side"] == "BUY" else -1) * abs(sig["entry"] - stop)
+                    if abs(one_r - sig["entry"]) < abs(tps[0]["price"] - sig["entry"]):
+                        tps = [{"name": "TP1", "price": one_r, "rr": 1.0, "level": "1R"}] + tps
+                if c.get("plan"):                          # owner's plan: the owner's targets
+                    pl, sgn = c["plan"], (1 if c["side"] == "BUY" else -1)
+                    risk = abs(sig["entry"] - stop)
+                    own = [t for t in pl["targets"] if (t - sig["entry"]) * sgn > 0]
+                    tps = [{"name": f"TP{i + 1}", "price": t, "rr": round(abs(t - sig["entry"]) / risk, 2) if risk else None,
+                            "pct": round(100 * abs(t - sig["entry"]) / sig["entry"], 1), "level": "owner plan"}
+                           for i, t in enumerate(own)]
+                    trade_type = "position" if tps and tps[0]["pct"] > MAX_TARGET_PCT * 100 else "swing"
+                    held_reason = None if tps else "owner plan: no target beyond entry"
+                    row["members"] = [f"PLAN: {pl['label']}"] + [m for m in row["members"] if not m.startswith("PLAN")]
+                stats = cl.score(stats_all, symbol=None)
+                rs = cl.best_role(stats, row["roles"])
+                weekly = await tg.weekly_profile(sym)
+                g = tg.evaluate(sym, c["side"], sig["entry"], stop, [t["price"] for t in tps], weekly=weekly)
+                if not tps:
+                    g["reasons"].append("no target ≥ 1.3R")
+                if held_reason:
+                    g["reasons"].append(held_reason)
+                if rs and rs["n"] >= 3 and rs["recent_rate"] < MIN_RATE:
+                    g["reasons"].append(f"role {rs['role']} recent hit-rate {rs['recent_rate']:.0%} < {MIN_RATE:.0%}")
+                from services import council as cn
+                cv = await cn.convene(sym, c["side"], yearly=r, role_stats=rs, trade_type=trade_type,
+                                      scores=agent_scores)
+                if cv["verdict"] != "GO":
+                    g["reasons"].append(f"council {cv['verdict']}: " + (cv.get("need") or
+                                        (f"veto {','.join(cv['veto'])}" if cv["veto"] else f"score {cv['score']}")))
+                if g["reasons"]:
+                    _held.add(f"{sym}:{c['side']}:{dt.date.today()}")      # watch it for promotion
+                fit = account_fit(sym, sig["entry"], stop)
+                if fit:
+                    g["reasons"].append(fit)
+                g["allow"] = not g["reasons"]
+                row.update(trade_type=trade_type, cap=cap, sweet=sweet,
+                           position_targets=ptps if trade_type == "swing" else [],
+                           entry=sig["entry"], extreme=sig["extreme"], stop=stop, targets=tps,
+                           role_stats=rs, gate=g, council=cv)
+                out.append(row)
+            # one card per market + side: the best-backed shot (most council votes, most anchors)
+            best: Dict[str, Dict] = {}
+            for row in [x for x in out if x.get("symbol") == sym and x.get("gate", {}).get("allow")]:
+                k = row["side"]
+                score = (row["council"]["for"], len(row["members"]))
+                if k not in best or score > (best[k]["council"]["for"], len(best[k]["members"])):
+                    best[k] = row
+            for side, row in best.items():
+                if notify:
+                    from services.realtime import alert_once
+                    key = f"sniper:{sym}:{side}:{dt.date.today()}"
+                    from services import fx_rotation as _fxr
+                    if not (await _fxr.exposure_for(sym, side))["allow"]:
+                        continue                                       # same currency bet already on
+                    try:
+                        from services import regime as _rg
+                        await _rg.risk_for(sym)                        # sizes the lot ladder on the card
+                    except Exception:
+                        pass
+                    promoted = f"{sym}:{side}:{dt.date.today()}" in _held
+                    text = ("⬆️ *PROMOTED* — held earlier, now 4 agents agree\n" if promoted else "") + card(sym, row)
+                    if await alert_once(key, text, ttl_hours=24):
+                        await _record(sym, row)
+                        sent.append(sym)
+                        from services import signal_tracker
+                        await signal_tracker.record(sym, side, row["entry"], row["stop"],
+                                                    [t["price"] for t in row["targets"]], "sniper")
+        except Exception as e:
+            from services import errors
+            errors.swallow(f"sniper.scan {sym}", e)
+            out.append({"symbol": sym, "skip": f"error: {type(e).__name__}"})
     return {"resolved": resolved, "results": out, "notified": sent}
