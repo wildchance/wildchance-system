@@ -52,5 +52,8 @@ async def agents():
         if c.get("source") == "live" and c.get("case_id") not in seen:
             seen.add(c.get("case_id"))
             live.append(c)
-    return {"resolved_shots": sum(1 for c in live if c["outcome"] in ("held", "broke")),
-            "mute_below": cn.MUTE_BELOW, "min_votes": cn.MUTE_MIN_N, "agents": cn.agent_scores(live)}
+    from services import signal_tracker
+    other = await signal_tracker.scoring_cases()
+    return {"resolved_shots": sum(1 for c in live if c["outcome"] in ("held", "broke")) + len(other),
+            "from_sniper": sum(1 for c in live if c["outcome"] in ("held", "broke")), "from_other_engines": len(other),
+            "mute_below": cn.MUTE_BELOW, "min_votes": cn.MUTE_MIN_N, "agents": cn.agent_scores(live + other)}

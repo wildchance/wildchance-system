@@ -56,3 +56,18 @@ def test_retail_levels_parse_and_trapped_sides(tmp_path):
     lv = rl.levels("USD/JPY", str(p))
     assert [x["price"] for x in lv] == [159.7094, 155.7778]
     assert [x["price"] for x in rl.levels("XAU/USD", str(p))] == [4124.892]     # shorts are in profit
+
+
+def test_votes_become_agent_cases_and_report():
+    from services import council as cn
+    w = st.new_signal("EURUSD", "SELL", 1.0919, 1.0929, [1.0908], "z-setup", ts=0, votes={"cot": 1, "vix": -1})
+    st.step(w, [_b(100, 1.0915, 1.0905)], now=200)                       # TP1 → held
+    l_ = st.new_signal("GBPUSD", "SELL", 1.3048, 1.3058, [1.3040], "asia-london", ts=0, votes={"cot": 1})
+    st.step(l_, [_b(100, 1.3060, 1.3045)], now=200)                      # stop → broke
+    sn = {**w, "source": "sniper"}
+    cases = st.to_cases([w, l_, sn])
+    assert [c["outcome"] for c in cases] == ["held", "broke"]
+    sc = cn.agent_scores(cases)
+    assert sc["cot"]["n"] == 2 and sc["cot"]["right"] == 1 and sc["vix"]["right"] == 0
+    lines = st.report_lines(st.summarise([w, l_]))
+    assert "1 · ❌ 1" in lines[0] and "z-setup 1W" in lines[1]

@@ -278,7 +278,8 @@ async def _polygon_chain(und: str) -> Dict:
     return parse_polygon(rows) if rows else {}
 
 
-CME_FX = ("USDJPY", "USDCHF", "USDCAD", "GBPUSD", "EURUSD")
+CME_FX = ("USDJPY", "USDCHF", "USDCAD", "GBPUSD", "EURUSD", "AUDUSD", "NAS100", "US30", "SPX500")
+CME_ALIAS = {"US100": "NAS100", "NDX": "NAS100", "US500": "SPX500", "SPX": "SPX500", "DJI": "US30"}
 _cache: Dict[str, Tuple[float, Dict]] = {}
 
 
@@ -298,6 +299,7 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
             und = "CME:OG"
             _cache[und] = (time.time(), cme)
     cme_fx = False
+    s = CME_ALIAS.get(s, s)
     if s in CME_FX:                          # real CME currency futures options OI, in pair terms
         try:
             from services.cme_bulletin import cached_fx_chain
@@ -346,6 +348,7 @@ async def run(symbol: str, live_price: Optional[float] = None) -> Dict:
 def cached_levels(symbol: str, live_price: Optional[float] = None) -> List[Dict]:
     """Cache-only read for hot paths (sniper zones); empty until run() has fetched."""
     s0 = symbol.upper().replace("/", "")
+    s0 = CME_ALIAS.get(s0, s0)
     cme_key = "CME:OG" if s0 in ("XAUUSD", "GOLD") else f"CME:{s0}" if s0 in CME_FX else None
     hit = (_cache.get(cme_key) if cme_key else None) or _cache.get(underlying_for(symbol))
     if hit and cme_key and hit is _cache.get(cme_key):

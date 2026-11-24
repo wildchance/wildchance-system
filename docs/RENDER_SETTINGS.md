@@ -231,3 +231,8 @@ prices become 'retail avg' zones for the sweeper and Asia→London targets.
 vol-screen strikes (future expiry left, screenshot age > `DATA_STALE_DAYS` (7), strike order, distance from live price
 vs 3× the expiry's implied move, interpolated / cropped screens), CME chains (bulletin age, strike count, put/call,
 front future vs live), Myfxbook paste age, calendar refresh, failing feeds.
+
+CME bulletin now also covers **AUD/USD** (section 38: futures from its own table) and the **indices**: S&P 500 (47 + 48),
+Nasdaq-100 (40: EOM, QN weeklies, heading-only weekly blocks), Dow (60: strikes quoted /10). `CME_INDEX_BAND_PCT` (10).
+Agent scoring now grades the council on every engine's tracked signals (TP1 first = held, stop first = broke), and the
+daily / weekly journal reports include the signal tracker's win / loss / breakeven results by engine.

@@ -93,7 +93,7 @@ async def audit_cme(today: dt.date, live: Dict[str, float]) -> List[Dict]:
     from services import cme_bulletin as cb
     out = []
     chains = [("XAUUSD", await cb.cached_chain(max_age_days=365))]
-    for p in ("EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD"):
+    for p in ("EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NAS100", "US30", "SPX500"):
         chains.append((p, await cb.cached_fx_chain(p, max_age_days=365)))
     for sym, c in chains:
         if not c:

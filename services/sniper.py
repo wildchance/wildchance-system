@@ -407,7 +407,8 @@ async def scan(symbols: Optional[List[str]] = None, notify: bool = False) -> Dic
         if c.get("source") == "live" and c.get("case_id") not in seen:
             seen.add(c.get("case_id"))
             live.append(c)
-    agent_scores = _cn.agent_scores(live)
+    from services import signal_tracker as _stk
+    agent_scores = _cn.agent_scores(live + await _stk.scoring_cases())     # every engine's outcomes
     out, sent = [], []
     for sym in syms:
         r = await yc.run(sym)
