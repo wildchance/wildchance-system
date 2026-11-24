@@ -231,6 +231,11 @@ async def run_one(symbol: str, notify: bool = False, now: Optional[dt.datetime] 
         return {**out, "setup": None, "reason": "no sweep-reclaim or breakout yet"}
     extra = expiry_levels(symbol, today)
     try:
+        from services import retail_levels
+        extra += retail_levels.levels(symbol)
+    except Exception:
+        pass
+    try:
         from services.options_levels import cached_levels
         extra += [{"price": x["price"], "label": x["label"]} for x in cached_levels(symbol, after[-1]["close"])
                   if any(w in x["label"] for w in ("wall", "floor", "shelf", "pain", "Closest"))]
@@ -253,6 +258,10 @@ async def run_one(symbol: str, notify: bool = False, now: Optional[dt.datetime] 
             from services.realtime import alert_once
             out["sent"] = await alert_once(f"asia:{symbol}:{today}",
                                            card(s, trend, bias.get("why", "")) + "\n" + cg["line"], ttl_hours=20)
+            if out["sent"]:
+                from services import signal_tracker
+                await signal_tracker.record(symbol, side, s["entry"], s["stop"],
+                                            [t["price"] for t in s["targets"]], "asia-london")
     return out
 
 

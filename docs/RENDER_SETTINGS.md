@@ -213,3 +213,14 @@ settlement change, and the EUU DEC26 block sums to the bulletin's own TOTAL (154
 | `CME_STALE_DAYS` | `3` | Saturday/Sunday 09:15 UTC: remind to upload the bulletin when the dealer levels are this old |
 | `CAL_MIN_REFRESH_MIN` | `60` | never call the Forex Factory export more often than this |
 | `CAL_BACKOFF_H` | `3` | after an HTTP 429 (rate limit) wait this long; stored events keep working |
+
+## Signal tracker (flash cards without MT5) + retail average prices
+
+Every card sent by the sniper, Z-setups, auto CBDR and Asia→London is recorded and checked every 5 min on live prices:
+TP1 → flash card at once (then the stop moves to entry), TP2/TP3 → more cards, stop before TP1 → loss, still open after
+`TRACK_EXPIRE_H` (72) → closed at the last price (±`JOURNAL_BE_PIPS` = breakeven). Manual signals (e.g. from another
+platform): `/signals/track?symbol=USDJPY&side=SELL&entry=159.3&stop=159.467&tp=159.064,158.746,158.11&pending=true`.
+Journal: `/signals/stats`, open: `/signals/open`.
+
+`data/retail_levels.csv` (owner paste of Myfxbook community outlook): trapped retail longs' / shorts' average entry
+prices become 'retail avg' zones for the sweeper and Asia→London targets.

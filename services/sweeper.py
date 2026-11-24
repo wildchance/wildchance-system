@@ -112,6 +112,12 @@ async def sweep_one(symbol: str) -> Dict:
             levels.append({"price": (p["low"] + p["high"]) / 2, "src": "owner plan", "label": f"PLAN {p['side']}"})
     except Exception:
         pass
+    try:
+        from services import retail_levels
+        for x in retail_levels.levels(symbol):
+            levels.append({"price": x["price"], "src": "retail avg", "label": x["label"]})
+    except Exception:
+        pass
     tol = yc.tolerance(symbol, price)
     zs = zones(levels, tol, price)
     return {"symbol": symbol, "ok": True, "price": price, "zones": zs[:4],
