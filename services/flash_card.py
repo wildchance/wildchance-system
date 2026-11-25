@@ -163,9 +163,43 @@ async def _copy_to_owner(png: bytes, cap: str, name: str) -> bool:
         return False
 
 
+MATCH_PIPS = float(config("FLASH_MATCH_PIPS", default="15"))
+
+
+def same_trade(recent: list, symbol: str, side: str, open_price: float, now: float,
+               sources: tuple = ("signal", "deal")) -> bool:
+    """A broker close matches a card already posted for the same trade (the signal tracker
+    posted it at its signal entry; the broker fill differs by slippage, or a later partial)."""
+    sym, sd = symbol.upper().replace("/", ""), side.upper()
+    for r in recent or []:
+        if r.get("sym") == sym and r.get("side") == sd and r.get("src", "signal") in sources and now - float(r.get("ts") or 0) < DEDUPE_H * 3600 \
+                and abs(pips(sym, sd, float(r["open"]), open_price)) <= MATCH_PIPS:
+            return True
+    return False
+
+
+async def _same_trade_posted(symbol: str, side: str, open_price: float, source: str) -> bool:
+    """deal → blocked by any earlier card for the trade (tracker TP card or an earlier partial);
+    signal → blocked only by a broker card (the tracker still posts TP1, TP2, TP3 of its own)."""
+    import time as _t
+    from services import data_store
+    now = _t.time()
+    recent, _ = await data_store.get("flash_recent")
+    recent = [r for r in (recent or []) if now - float(r.get("ts") or 0) < DEDUPE_H * 3600]
+    hit = same_trade(recent, symbol, side, open_price, now,
+                     ("signal", "deal") if source == "deal" else ("deal",))
+    if not hit:
+        recent.append({"sym": symbol.upper().replace("/", ""), "side": side.upper(),
+                       "open": float(open_price), "ts": now, "src": source})
+        await data_store.put("flash_recent", recent[-500:])
+    return hit
+
+
 async def post(symbol: str, side: str, open_price: float, close_price: float,
-               when: Optional[dt.datetime] = None) -> Dict:
-    """Send the card as a Telegram photo. Losing / flat trades are never posted."""
+               when: Optional[dt.datetime] = None, source: str = "signal") -> Dict:
+    """Send the card as a Telegram photo. Losing / flat trades are never posted.
+    source='deal' (a broker close from the EA) is skipped when a card for the same trade
+    (same symbol + side, entry within FLASH_MATCH_PIPS, last FLASH_DEDUPE_H) already went out."""
     import asyncio
     global _post_lock
     if pips(symbol, side, open_price, close_price) <= 0:
@@ -176,6 +210,8 @@ async def post(symbol: str, side: str, open_price: float, close_price: float,
         try:
             if await _already_posted(key):
                 return {"sent": False, "reason": "duplicate card (already posted)"}
+            if await _same_trade_posted(symbol, side, open_price, source):
+                return {"sent": False, "reason": "same trade already carded"}
         except Exception:
             pass
     from services.telegram_service import BOT_TOKEN, CHAT_ID
@@ -251,7 +287,7 @@ async def post_from_deals(deals) -> dict:
             skipped.append({"symbol": g["symbol"], "side": g["side"], "why": "not a winning close"})
             continue
         when = dt.datetime.fromtimestamp(g["close_time"], dt.timezone.utc) if g["close_time"] else None
-        r = await post(g["symbol"], g["side"], g["open"], g["close"], when)
+        r = await post(g["symbol"], g["side"], g["open"], g["close"], when, source="deal")
         (posted if r.get("sent") else skipped).append({"symbol": g["symbol"], "side": g["side"],
                                                        "pips": pips(g["symbol"], g["side"], g["open"], g["close"]),
                                                        **({} if r.get("sent") else {"why": r.get("reason")})})
