@@ -422,6 +422,53 @@ def fetch_calendar():
 PRICE_STATUS = {"live": True}   # False → the last fetch fell back to PRICE_FALLBACK
 
 
+def _pool_fill(symbols, out):
+    """Fill missing prices from the free pool (EA bars → Yahoo / Kraken / Tiingo / PAXG)
+    so a TwelveData budget miss never puts the hardcoded snapshot in the chat."""
+    import asyncio
+
+    async def one(sym):
+        from services.price_pool import alt_values
+        from services import broker_feed
+        try:
+            b = await broker_feed.td_values(sym, "1min", 2, "UTC") or await broker_feed.td_values(sym, "15min", 2, "UTC")
+        except Exception:
+            b = None
+        d = b or await alt_values(sym, "1min", 2)
+        return (float(d["values"][0]["close"]), (d.get("source") or "broker")) if d and d.get("values") else None
+
+    async def run():
+        return await asyncio.gather(*(one(s) for s in symbols), return_exceptions=True)
+    try:
+        res = asyncio.run(run())
+    except Exception as e:
+        print(f"[PRICE] pool fill failed: {e}")
+        return 0
+    n = 0
+    for sym, r in zip(symbols, res):
+        if isinstance(r, tuple):
+            out[sym] = r[0]
+            n += 1
+            try:
+                from services.freshness import record
+                record(sym, r[1])
+            except Exception:
+                pass
+    return n
+
+
+def _fallback_prices(symbols):
+    """TwelveData failed: the pool first, the hardcoded snapshot only for what it can't fill."""
+    out = {}
+    got = _pool_fill(symbols, out)
+    PRICE_STATUS["live"] = got == len(symbols)
+    PRICE_STATUS["source"] = "pool" if got else "snapshot"
+    for pair in symbols:
+        out.setdefault(pair, PRICE_FALLBACK[pair])
+    print(f"[PRICE] pool filled {got}/{len(symbols)} symbols")
+    return out
+
+
 def fetch_prices():
     """
     Live prices from Twelve Data /price (batch). Returns {pair: float}.
@@ -435,9 +482,8 @@ def fetch_prices():
     """
     import urllib.request, urllib.parse
     if not TWELVEDATA_KEY:
-        print("[PRICE] TWELVEDATA_KEY not set — using fallback snapshot")
-        PRICE_STATUS["live"] = False
-        return dict(PRICE_FALLBACK)
+        print("[PRICE] TWELVEDATA_KEY not set — using the free pool")
+        return _fallback_prices(list(WATCH.keys()))
     symbols = list(WATCH.keys())
     url = ("https://api.twelvedata.com/price?symbol="
            + urllib.parse.quote(",".join(symbols))
@@ -445,24 +491,24 @@ def fetch_prices():
     try:
         from services.td_limiter import acquire_sync
         if not acquire_sync(credits=len(symbols)):     # 1 credit per symbol in a batch
-            raise RuntimeError("local TwelveData limiter: budget/queue full")
+            print("[PRICE] TwelveData budget full — using the free pool")
+            return _fallback_prices(symbols)
     except ImportError:
         pass
     try:
         with urllib.request.urlopen(url, timeout=30) as r:
             data = json.load(r)
     except Exception as e:
-        print(f"[PRICE] Twelve Data fetch failed ({e}) — using fallback snapshot")
-        PRICE_STATUS["live"] = False
-        return dict(PRICE_FALLBACK)
+        print(f"[PRICE] Twelve Data fetch failed ({e}) — using the free pool")
+        return _fallback_prices(symbols)
 
     # API-level error returned as 200 with a status field
     if isinstance(data, dict) and data.get("status") == "error":
-        print(f"[PRICE] Twelve Data error: {data.get('message')} — using fallback")
-        PRICE_STATUS["live"] = False
-        return dict(PRICE_FALLBACK)
+        print(f"[PRICE] Twelve Data error: {data.get('message')} — using the free pool")
+        return _fallback_prices(symbols)
 
     PRICE_STATUS["live"] = True
+    PRICE_STATUS["source"] = "twelvedata"
     out = {}
     if len(symbols) == 1 and "price" in data:           # single-symbol shape
         out[symbols[0]] = float(data["price"])
@@ -480,6 +526,9 @@ def fetch_prices():
             record(pair, "twelvedata")
     except Exception:
         pass
+    missing = [p for p in symbols if p not in out]
+    if missing:
+        _pool_fill(missing, out)
     # backfill any missing symbol from the snapshot so downstream never KeyErrors
     for pair in symbols:
         out.setdefault(pair, PRICE_FALLBACK[pair])

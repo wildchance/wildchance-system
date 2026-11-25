@@ -377,3 +377,27 @@ replies with options depth (deep ≥100k / ok ≥20k / thin) and, from the secon
 Audit fixes (Nov 25): `/execution/reconcile` is now called with GET by the scheduler (it was failing hourly
 with POST); gold monitor / zones digest fall back to the price pool and skip quietly when no gold price
 exists; Polygon options pause for 24 h after a "not entitled" reply.
+
+### No more "stale data" blackouts (Nov 25 PR)
+- The 6-hourly price scrape no longer falls back to the hardcoded snapshot when TwelveData is busy: it fills
+  each symbol from EA broker bars → Yahoo → Kraken (new, no key) → Tiingo → PAXG/GC=F (gold, basis-corrected).
+  The limiter-full case used to crash the whole scrape; fixed.
+- `/ops/freshness` + checklist "data blackout": any watched market with no real price for > `DATA_BLACKOUT_MIN`
+  (default 90) minutes while open is listed red.
+- New pairs in the sweep universe / probes: GBP/CHF, GBP/CAD, USD/ZAR, USD/CNH (Yahoo `ZAR=X`, `CNH=X`).
+  CME slate now also maps USD/ZAR (RA futures), GBP/CHF (BF), USD/CNH weeklies and copper (HG/HX).
+- `/ops/shfe` + checklist "Shanghai (SHFE)" (experimental, `SHFE_ENABLED`): gold premium of Shanghai over spot
+  and the copper day change from the exchange's daily file. Red in the checklist = Render can't reach shfe.com.cn.
+
+### Copy trader (master → follower accounts)
+EA: `mt5_bridge/WildChance_Copier.mq5` — one file, two roles. Same `BRIDGE_TOKEN` on every account.
+- **MASTER** (main account, next to WildChance v4.54): sends every open position every 2 s
+  (`InpMasterMagic` -1 = all positions incl. manual).
+- **FOLLOWER** (each broker account, any chart): lots = master lots × follower equity ÷ master equity × multiplier,
+  corrected for contract size, rounded down to the broker step (cent accounts handled).
+  Inputs: `InpAccountName`, `InpCopyMagic` (unique per terminal), `InpMaxSlipPips` (10), `InpMaxDailyLossPct` (5),
+  `InpMaxLotsPerTrade` (5), `InpUseMinLot` (false = skip if scaled lot < broker minimum), `InpCopySLTP`,
+  `InpSymbolSuffix` / `InpSymbolMap` (e.g. `XAUUSD=GOLD,NAS100=USTEC`; blank = auto-detect suffixes).
+- Master offline > `COPY_STALE_S` (30) → followers HOLD: nothing opened, nothing closed.
+- Owner: `/copy?token=…` page (pause / resume / multiplier per account), bot `/accounts`, `/copypause <login|all>`,
+  `/copyresume <login|all>`, `/copymult <login> 0.5`.

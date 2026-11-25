@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WildChance Copy Trader</title>
+<style>
+  :root { --bg:#0b0f14; --panel:#121821; --line:#1f2a36; --text:#d7e0ea; --muted:#7f8ea3;
+          --up:#2bd47d; --down:#ff5c6c; --warn:#f5b84b; --accent:#4cc3ff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:baseline; padding:12px 16px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:2; }
+  header h1 { font-size:15px; margin:0; letter-spacing:.08em; color:var(--accent); }
+  header .meta { color:var(--muted); }
+  main { padding:16px; display:grid; gap:12px; max-width:1100px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; min-width:0; overflow-x:auto; }
+  section h2 { font-size:11px; margin:0 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; }
+  table { border-collapse:collapse; width:100%; }
+  td, th { padding:4px 6px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
+  th { color:var(--muted); font-weight:normal; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .up { color:var(--up); } .down { color:var(--down); } .warn { color:var(--warn); } .muted { color:var(--muted); }
+  button { background:transparent; color:var(--text); border:1px solid var(--line); border-radius:6px; padding:3px 9px; font:inherit; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  input.mult { width:56px; background:var(--bg); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:2px 4px; font:inherit; }
+  .err { color:var(--down); padding:16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>COPY TRADER</h1>
+  <span class="meta" id="meta">loading…</span>
+  <span style="flex:1"></span>
+  <button onclick="ctl('all', {paused:true})">⏸ pause all</button>
+  <button onclick="ctl('all', {paused:false})">▶ resume all</button>
+</header>
+<main>
+  <section><h2>Master</h2><div id="master" class="muted">—</div></section>
+  <section><h2>Followers</h2><div id="followers" class="muted">—</div></section>
+  <div id="err"></div>
+</main>
+<script>
+// The ops token is read ONCE from ?token=…, kept in this browser only, and removed from the address bar.
+let token = new URLSearchParams(location.search).get("token") || "";
+try {
+  if (token) { localStorage.setItem("wc_ops", token); history.replaceState(null, "", location.pathname); }
+  else { token = localStorage.getItem("wc_ops") || ""; }
+} catch (e) {}
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+async function ctl(login, opts) {
+  const q = new URLSearchParams({login, ...Object.fromEntries(Object.entries(opts).map(([k, v]) => [k, String(v)]))});
+  await fetch("/copy/control?" + q, {method: "POST", headers: {"X-Ops-Token": token}});
+  load();
+}
+
+function render(d) {
+  const m = d.master || {};
+  document.getElementById("meta").textContent =
+    `master ${m.online ? "online" : "offline"} · ${d.accounts.length} followers · updated ${new Date().toLocaleTimeString()}`;
+  document.getElementById("master").innerHTML = !m.login
+    ? `<span class="warn">Not connected — attach WildChance_Copier with role MASTER on the main account.</span>`
+    : `<div><b>${esc(m.broker)}</b> #${esc(m.login)} · <span class="${m.online ? "up" : "down"}">${m.online ? "online" : "offline"}</span>
+       · $${Number(m.equity_usd).toLocaleString()} · ${m.age_s}s ago</div>
+       <table><tr><th>symbol</th><th>side</th><th class="num">lots</th><th class="num">entry</th><th class="num">SL</th><th class="num">TP</th></tr>
+       ${m.positions.map(p => `<tr><td>${esc(p.symbol)}</td><td class="${p.side === "BUY" ? "up" : "down"}">${p.side}</td>
+         <td class="num">${p.volume}</td><td class="num">${p.open_price}</td><td class="num">${p.sl || "—"}</td><td class="num">${p.tp || "—"}</td></tr>`).join("")
+         || `<tr><td colspan="6" class="muted">flat</td></tr>`}</table>`;
+  document.getElementById("followers").innerHTML = !d.accounts.length
+    ? `No followers yet — attach WildChance_Copier with role FOLLOWER on each broker account.`
+    : `<table><tr><th></th><th>account</th><th>broker</th><th class="num">equity $</th><th class="num">copies</th>
+        <th class="num">not copied</th><th class="num">lag</th><th class="num">day P/L</th><th>guard</th><th>× lots</th><th></th></tr>
+       ${d.accounts.map(a => `<tr>
+         <td>${a.paused ? "⏸" : (a.online ? "🟢" : "🔴")}</td>
+         <td>${esc(a.name) || "—"} <span class="muted">#${esc(a.login)}</span></td><td>${esc(a.broker)}</td>
+         <td class="num">${a.equity_usd == null ? "—" : Number(a.equity_usd).toLocaleString()}</td>
+         <td class="num">${a.copies}</td><td class="num ${a.missing ? "warn" : ""}">${a.missing}</td>
+         <td class="num">${a.lag_ms == null ? "—" : a.lag_ms + " ms"}</td>
+         <td class="num ${a.daily_pl_pct < 0 ? "down" : "up"}">${a.daily_pl_pct == null ? "—" : a.daily_pl_pct.toFixed(2) + "%"}</td>
+         <td class="${a.guard === "ACTIVE" ? "muted" : "down"}">${esc(a.guard)}</td>
+         <td><input class="mult" type="number" step="0.1" min="0" max="10" value="${a.mult}"
+              onchange="ctl('${esc(a.login)}', {mult: this.value})"></td>
+         <td><button onclick="ctl('${esc(a.login)}', {paused: ${!a.paused}})">${a.paused ? "resume" : "pause"}</button></td>
+       </tr>${a.errors.length ? `<tr><td></td><td colspan="10" class="warn">${a.errors.map(esc).join(" · ")}</td></tr>` : ""}`).join("")}</table>`;
+}
+
+async function load() {
+  try {
+    const r = await fetch("/copy/status", {headers: {"X-Ops-Token": token}});
+    if (!r.ok) throw new Error(r.status === 401 ? "open /copy?token=YOUR_OPS_TOKEN once — it is then remembered in this browser" : "HTTP " + r.status);
+    render(await r.json());
+    document.getElementById("err").textContent = "";
+  } catch (e) { document.getElementById("err").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+}
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

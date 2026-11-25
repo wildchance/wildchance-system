@@ -4,6 +4,8 @@
   POST /bridge/account           {"login":…, "balance":…, "equity":…, "guard":"ACTIVE", …}
   POST /bridge/deals             closed trades → profit flash cards (winners only, once each)
   GET  /bridge/status           what has arrived, how fresh, last account snapshots
+  POST /bridge/copy/master      copy trader: master positions · GET /bridge/copy (follower targets)
+  POST /bridge/copy/report      follower state
   GET  /bridge/gate             the EA asks before every entry: council + exposure + regime + calendar
 
 Auth: BRIDGE_TOKEN (falls back to EXECUTION_TOKEN) in the X-Bridge-Token HEADER only —
@@ -119,6 +121,32 @@ async def gate(symbol: str = Query(...), side: str = Query(...),
                x_bridge_token: Optional[str] = Header(None)):
     _auth(x_bridge_token)
     return await gate_verdict(symbol, side)
+
+
+# ── copy trader (WildChance_Copier EA) ─────────────────────────────────────────
+@router.post("/copy/master")
+async def copy_master(snapshot: Dict, x_bridge_token: Optional[str] = Header(None)):
+    """MASTER account: every open position (any source) every ~2 s."""
+    _auth(x_bridge_token)
+    from services import copy_trade
+    return await copy_trade.set_master(snapshot)
+
+
+@router.get("/copy")
+async def copy_targets(login: str = Query(...), equity: float = Query(..., ge=0), ccy: str = Query("USD"),
+                       x_bridge_token: Optional[str] = Header(None)):
+    """FOLLOWER account: the positions it should hold now (equity-scaled volumes)."""
+    _auth(x_bridge_token)
+    from services import copy_trade
+    return await copy_trade.targets(login, equity, ccy)
+
+
+@router.post("/copy/report")
+async def copy_report(rep: Dict, x_bridge_token: Optional[str] = Header(None)):
+    """FOLLOWER account: what it holds, lag, guard state, last errors → /copy/status + bot /accounts."""
+    _auth(x_bridge_token)
+    from services import copy_trade
+    return await copy_trade.report(rep)
 
 
 @router.get("/status")

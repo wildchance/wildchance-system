@@ -512,3 +512,58 @@ HANDLERS.update({"scoutwatch": scoutwatch_cmd, "scoutlist": scoutlist_cmd, "scou
                  "stock": stock_cmd, "ledger": ledger_cmd})
 OWNER_COMMANDS += [("scout", "Hardware scout now (owner)"), ("scoutlist", "Scout searches + prices (owner)"),
                    ("stock", "Hardware stock (owner)"), ("ledger", "Hardware profit + VAT (owner)")]
+
+
+# ── copy trader (owner) ─────────────────────────────────────────────────────────
+async def accounts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await _reply(update, "🔒 Owner only.")
+        return
+
+    async def go():
+        from services import copy_trade
+        await _reply(update, copy_trade.text(await copy_trade.status()))
+    await _guard(update, go)
+
+
+async def _copy_ctl(update: Update, context: ContextTypes.DEFAULT_TYPE, **kw):
+    if not is_owner(update):
+        await _reply(update, "🔒 Owner only.")
+        return
+    args = context.args or []
+    if not args:
+        await _reply(update, "Usage: /copypause <login|all> · /copyresume <login|all> · /copymult <login> <0-10>")
+        return
+
+    async def go():
+        from services import copy_trade
+        if "mult" in kw:
+            try:
+                kw["mult"] = float(args[1])
+            except (IndexError, ValueError):
+                await _reply(update, "Usage: /copymult <login> <multiplier, e.g. 0.5>")
+                return
+        r = await copy_trade.control(args[0], **kw)
+        await _reply(update, "✅ " + ", ".join(f"#{k}: {'paused' if v.get('paused') else 'copying'} x{v.get('mult', 1):g}"
+                                              for k, v in r["accounts"].items()) if r["accounts"] else "No accounts yet.")
+    await _guard(update, go)
+
+
+async def copypause_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _copy_ctl(update, context, paused=True)
+
+
+async def copyresume_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _copy_ctl(update, context, paused=False)
+
+
+async def copymult_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await _copy_ctl(update, context, mult=None)
+
+
+HANDLERS.update({"accounts": accounts_cmd, "copypause": copypause_cmd, "copyresume": copyresume_cmd,
+                 "copymult": copymult_cmd})
+OWNER_COMMANDS += [("accounts", "Copy trader: master + follower accounts (owner)"),
+                   ("copypause", "Pause copying: /copypause <login|all> (owner)"),
+                   ("copyresume", "Resume copying: /copyresume <login|all> (owner)"),
+                   ("copymult", "Lot multiplier: /copymult <login> 0.5 (owner)")]

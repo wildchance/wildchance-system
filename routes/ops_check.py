@@ -97,6 +97,13 @@ CHECKS: List[Tuple[str, str, Callable]] = [
         else ("❌", d.get("reason") or "no chain"))),
     ("gold weekly map", "/cbdr/week/XAU/USD", _judge_ok("ok", "Monday box found")),
     ("data sources", "/data/sources", _judge_any("health table")),
+    ("Shanghai (SHFE)", "/ops/shfe", lambda d: (
+        ("✅", " · ".join(d.get("lines", [])[1:]) or f"settlement {d.get('day')}") if d.get("ok")
+        else ("⚠️", d.get("reason") or "not reachable"))),
+    ("data blackout", "/ops/freshness", lambda d: (
+        ("✅", "every watched market priced within the limit") if not d.get("dark")
+        else ("⏳", "app just woke up — prices arrive with the next scans") if d.get("uptime_min", 99) < 30
+        else ("❌", f"no price > {d.get('limit_min'):.0f} min: {', '.join(d['dark'])}"))),
     ("data audit (options, CME, retail)", "/ops/data-audit", lambda d: (
         "✅" if "❌ 0" in d.get("summary", "") and "⚠️ 0" in d.get("summary", "")
         else "❌" if "❌ 0" not in d.get("summary", "") else "⚠️", d.get("summary", ""))),
@@ -170,6 +177,24 @@ async def checklist(fresh: bool = False):
                        + f" · {len(missing)} settings missing",
             "todo": todo, "checks": results, "missing_settings": missing}
 
+
+
+@router.get("/freshness")
+async def freshness_view():
+    """Data-blackout check: newest real price per watched market (EA / TwelveData / pool)."""
+    from services import freshness
+    up = (time.time() - freshness.BOOT) / 60
+    rep = freshness.blackouts()
+    rep["uptime_min"] = round(up, 1)
+    return rep
+
+
+@router.get("/shfe")
+async def shfe_view():
+    """Shanghai Futures Exchange: gold premium vs spot, copper pulse (experimental)."""
+    from services import shfe
+    rep = await shfe.report()
+    return {**rep, "lines": shfe.lines(rep)}
 
 
 @router.get("/data-audit")
