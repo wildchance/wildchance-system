@@ -258,9 +258,20 @@ def parse_polygon(results: List[Dict], today: Optional[dt.date] = None, max_days
     return parse_tradier(rows, spot, today, max_days) if spot else {}
 
 
+_polygon_off = {"until": 0.0}
+
+
+def polygon_not_entitled(err: Optional[str]) -> bool:
+    return bool(err) and ("NOT_AUTHORIZED" in err or "not entitled" in err)
+
+
 async def _polygon_chain(und: str) -> Dict:
-    """Polygon /v3/snapshot/options (needs a Polygon plan that includes options)."""
-    from services.data_feeds import _get
+    """Polygon /v3/snapshot/options (needs a Polygon plan that includes options).
+    A 'not entitled' reply switches it off for a day instead of failing on every scan."""
+    import time
+    from services.data_feeds import _get, _health
+    if time.time() < _polygon_off["until"]:
+        return {}
     sym = ("I:" + und.lstrip("_")) if und.startswith("_") else und
     last = (dt.date.today() + dt.timedelta(days=MAX_DAYS)).isoformat()
     url = f"https://api.polygon.io/v3/snapshot/options/{sym}"
@@ -269,6 +280,8 @@ async def _polygon_chain(und: str) -> Dict:
     for _ in range(POLYGON_MAX_PAGES):
         d = await _get("polygon_options", url, params)
         if not d:
+            if polygon_not_entitled((_health.get("polygon_options") or {}).get("last_err")):
+                _polygon_off["until"] = time.time() + 86400
             break
         rows += d.get("results") or []
         nxt = d.get("next_url")

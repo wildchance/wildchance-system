@@ -263,7 +263,8 @@ def _private(update: Update) -> bool:
 
 
 async def document_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Owner sends CME bulletin PDFs (or a .zip) → parsed into the dealer-level chains."""
+    """Owner sends CME bulletin PDFs (or a .zip) → dealer-level chains; a Product Slate
+    export (.xlsx or a zip of them) → daily volume / OI per market."""
     if not _private(update):
         return                                           # files in groups are not for the bot
     if not is_owner(update):
@@ -275,7 +276,12 @@ async def document_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from services import cme_ingest
         f = await doc.get_file()
         blob = bytes(await f.download_as_bytearray())
-        rep = await cme_ingest.ingest([(doc.file_name or "file.pdf", blob)])
+        from services import cme_slate
+        name = doc.file_name or "file.pdf"
+        if cme_slate.slates_from(name, blob):                 # CME Product Slate export(s)
+            await update.message.reply_text(cme_slate.reply_text(await cme_slate.ingest([(name, blob)])))
+            return
+        rep = await cme_ingest.ingest([(name, blob)])
         await update.message.reply_text(cme_ingest.reply_text(rep))
     await _guard(update, go)
 

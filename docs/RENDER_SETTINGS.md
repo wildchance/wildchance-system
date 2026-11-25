@@ -367,3 +367,13 @@ eBay Browse API (official) → landed cost in Nairobi → margin vs your local s
 | `SCOUT_VAT_REGISTERED` | `false` | true → /ledger deducts output VAT from sales |
 Bot: `/scoutwatch dell r740 600`, `/price r740 115000`, `/scout`, `/scoutlist`, `/scoutdel 2`, `/bought desc 98000`,
 `/sold 3 145000`, `/stock`, `/ledger`.
+
+### CME Product Slate (daily volume + OI)
+Send the cmegroup.com Product Slate export (.xlsx, or a zip of several) to the bot in private chat.
+It stores futures/options volume + OI for our 19 markets (30 sessions kept, data_store `cme_slate`) and
+replies with options depth (deep ≥100k / ok ≥20k / thin) and, from the second day on, futures OI change
+(new positions vs covering). No setting needed.
+
+Audit fixes (Nov 25): `/execution/reconcile` is now called with GET by the scheduler (it was failing hourly
+with POST); gold monitor / zones digest fall back to the price pool and skip quietly when no gold price
+exists; Polygon options pause for 24 h after a "not entitled" reply.

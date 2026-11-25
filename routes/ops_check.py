@@ -82,8 +82,10 @@ def _judge_any(label: str) -> Callable:
 CHECKS: List[Tuple[str, str, Callable]] = [
     ("live prices", "/data/snapshot?symbols=EUR/USD,USD/JPY,XAU/USD,BTC/USD", _judge_snapshot),
     ("calendar feed", "/data/calendar/status", _judge_calendar),
-    ("calendar this week", "/data/calendar?days=7", lambda d: ("✅" if d.get("events") else "⚠️",
-                                                              f"{len(d.get('events') or [])} blocking events")),
+    ("calendar this week", "/data/calendar?days=7", lambda d: (
+        ("✅", f"{len(d['events'])} blocking events ahead") if d.get("events")
+        else ("✅", "no high-impact events left in the stored week — next week loads when Forex Factory "
+                    "publishes it (Thu–Fri), or paste it to the bot"))),
     ("EA link", "/bridge/status", _judge_bridge),
     ("trade journal", "/journal/stats", _judge_journal),
     ("gold sweep", "/sweep/asset/XAU/USD", _judge_ok("ok", "zones computed")),

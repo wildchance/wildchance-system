@@ -206,6 +206,13 @@ async def bias():
     return {"instrument": "XAU/USD", **(read or {})}
 
 
+def _no_price(where: str) -> dict:
+    """No gold price from any source this run: log it once and skip (not a cron failure)."""
+    from services import errors
+    errors.record("upstream_data", where, "no XAU/USD price (TwelveData + pool)")
+    return {"skipped": True, "reason": "no XAU/USD price this run — retry next hour"}
+
+
 @router.post("/monitor")
 async def monitor(price: float = Query(None, gt=0,
                       description="override live price (else fetched)"),
@@ -223,7 +230,7 @@ async def monitor(price: float = Query(None, gt=0,
         except Exception:
             price = None
     if price is None:
-        raise HTTPException(status_code=502, detail="could not fetch XAU/USD price")
+        return _no_price("gold monitor")
     # Live pre-London CBDR levels — the hands-off session-hold exit rail.
     pl_levels = None
     try:
@@ -852,7 +859,7 @@ async def zones_digest(balance: float = Query(5000, gt=0),
         except Exception:
             price = None
     if price is None:
-        raise HTTPException(status_code=502, detail="could not fetch XAU/USD price")
+        return _no_price("gold zones digest")
     plan = gz.zone_plan(price, balance=balance, risk_usd=risk_usd)
     if touch_only and not plan["armed"]:
         return {"sent": False, "armed": False, "price": plan["price"],
