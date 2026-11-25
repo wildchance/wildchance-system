@@ -52,7 +52,7 @@ def test_every_workflow_call_is_ported():
                  "/gold/alerter/scan?notify=true", "/sentiment/scan", "/swing/scan?notify=true",
                  "/benner/alert", "/quarterly/alert/NAS100", "/gold/stratops/fit"):
         assert must in paths
-    assert len(cs.jobs()) == 54
+    assert len(cs.jobs()) == 55
     assert cs.redact("/execution/reconcile?token=abc&x=1") == "/execution/reconcile?token=***&x=1"
 
 
@@ -90,7 +90,7 @@ def test_tick_endpoint(monkeypatch):
     assert st["ticks"][0]["jobs"][0]["slot"] == "hourly@x"
     assert c.get("/cron/run?job=nope&token=ct").status_code == 404
     jobs = c.get("/cron/jobs").json()["jobs"]
-    assert len(jobs) == 54 and all(j["next_utc"] for j in jobs)
+    assert len(jobs) == 55 and all(j["next_utc"] for j in jobs)
 
 
 # --- data freshness -------------------------------------------------------------------

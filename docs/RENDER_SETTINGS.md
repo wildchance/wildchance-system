@@ -343,3 +343,20 @@ The bot's /calendar and the EdgeFinder news check read the stored calendar (no e
   groups too; the bot never replies to ordinary group chat.
 - Deal watch (owner chat): `/watch rtx 4090 1500`, `/watches`, `/unwatch 2`, `/deals`; checked every 4 h from
   public deal RSS feeds (`DEAL_FEEDS`, default Slickdeals front page); matches arrive in your bot chat.
+
+## Hardware scout (private side business, owner bot chat)
+
+eBay Browse API (official) → landed cost in Nairobi → margin vs your local selling prices → alerts every 6 h.
+| Key | Default | Meaning |
+|---|---|---|
+| `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` | — | developer.ebay.com → Application keys (Production) |
+| `EBAY_MARKETPLACE` | `EBAY_US` | e.g. `EBAY_GB`, `EBAY_DE` |
+| `KES_PER_USD` | `129` | FX; `SCOUT_FX_BUFFER_PCT` 2 adds a cushion |
+| `SCOUT_FREIGHT_USD` / `SCOUT_FREIGHT_SERVER_USD` | `40` / `150` | freight to Nairobi (servers are heavy) |
+| `SCOUT_FORWARDER_USD` | `15` | forwarder handling per item |
+| `SCOUT_DUTY_PCT` | `0` | import duty — CONFIRM per HS code with your clearing agent |
+| `SCOUT_VAT_PCT` / `SCOUT_IDF_PCT` / `SCOUT_RDL_PCT` | `16` / `3.5` / `2` | import VAT, IDF, RDL — confirm current rates |
+| `SCOUT_MIN_MARGIN_PCT` | `25` | alert threshold |
+| `SCOUT_VAT_REGISTERED` | `false` | true → /ledger deducts output VAT from sales |
+Bot: `/scoutwatch dell r740 600`, `/price r740 115000`, `/scout`, `/scoutlist`, `/scoutdel 2`, `/bought desc 98000`,
+`/sold 3 145000`, `/stock`, `/ledger`.

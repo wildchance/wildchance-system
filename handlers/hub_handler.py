@@ -12,6 +12,8 @@ Old names kept as aliases: /summary /profit /wins → /results, /history /last5 
 from __future__ import annotations
 
 import datetime as dt
+import time
+from typing import Optional
 
 from decouple import config
 from telegram import BotCommand, Update
@@ -67,6 +69,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   "🗓 Paste the Forex Factory week here → calendar + blackouts update.",
                   "🛒 /watch rtx 4090 1500 · /watches · /unwatch 2 · /deals — hardware deal alerts",
                   "🆔 /chatid inside a group or topic → ids for GROUP_ROUTES",
+                  "🔧 Hardware: /scoutwatch dell r740 600 · /price r740 115000 · /scout · /scoutlist",
+                  "📦 /bought desc 98000 · /sold 3 145000 · /stock · /ledger",
                   "_Flash cards, backups and daily reports arrive here as files._"]
     await _reply(update, "\n".join(lines))
 
@@ -351,3 +355,154 @@ async def deals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 HANDLERS.update({"watch": watch_cmd, "watches": watches_cmd, "unwatch": unwatch_cmd, "deals": deals_cmd})
 OWNER_COMMANDS += [("watch", "Watch a deal: /watch rtx 4090 1500 (owner)"), ("deals", "Check deals now (owner)")]
+
+
+
+# ── hardware scout (owner) ─────────────────────────────────────────────────────
+def _num(x: str) -> Optional[float]:
+    try:
+        return float(x.replace(",", "").lstrip("$").lower().replace("kes", ""))
+    except (ValueError, AttributeError):
+        return None
+
+
+async def _owner_only(update: Update) -> bool:
+    if not is_owner(update):
+        await _reply(update, "🔒 Owner only.")
+        return False
+    return True
+
+
+async def scoutwatch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _owner_only(update):
+        return
+    from services import hardware_scout as hs
+    args = list(context.args or [])
+    mx = _num(args[-1]) if args and len(args) > 1 and _num(args[-1]) is not None else None
+    words = [a.lower() for a in (args[:-1] if mx is not None else args)]
+    if not words:
+        await _reply(update, "Usage: /scoutwatch dell r740 600  (search words, optional max USD)")
+        return
+    v = await hs.load()
+    v["watches"].append({"words": words, "max_usd": mx, "min_seller": 98})
+    await hs.save(v)
+    await _reply(update, f"🔧 Scouting eBay for: {' '.join(words)}" + (f" ≤ ${mx:g}" if mx else "") + " (seller ≥ 98 %)")
+
+
+async def scoutlist_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _owner_only(update):
+        return
+    from services import hardware_scout as hs
+    v = await hs.load()
+    w = "\n".join(f"{i}. {' '.join(x['words'])}" + (f" ≤ ${x['max_usd']:g}" if x.get("max_usd") else "")
+                  for i, x in enumerate(v["watches"], 1)) or "— empty (/scoutwatch …)"
+    p = "\n".join(f"• {k}: KES {kes:,.0f}" for k, kes in sorted(v["prices"].items())) or "— empty (/price …)"
+    await _reply(update, f"🔧 Scout list\n{w}\n\n💵 Local selling prices\n{p}")
+
+
+async def scoutdel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _owner_only(update):
+        return
+    from services import hardware_scout as hs
+    v = await hs.load()
+    n = int(_num((context.args or ["0"])[0]) or 0)
+    if 1 <= n <= len(v["watches"]):
+        v["watches"].pop(n - 1)
+        await hs.save(v)
+    await _reply(update, f"🔧 {len(v['watches'])} searches left.")
+
+
+async def price_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _owner_only(update):
+        return
+    from services import hardware_scout as hs
+    args = list(context.args or [])
+    kes = _num(args[-1]) if args else None
+    if kes is None or len(args) < 2:
+        await _reply(update, "Usage: /price rtx 3090 145000  (what it sells for locally, KES)")
+        return
+    v = await hs.load()
+    phrase = " ".join(a.lower() for a in args[:-1])
+    v["prices"][phrase] = kes
+    await hs.save(v)
+    await _reply(update, f"💵 {phrase} sells for KES {kes:,.0f}")
+
+
+async def scout_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _owner_only(update):
+        return
+
+    async def go():
+        from services import hardware_scout as hs
+        r = await hs.scout(notify=False)
+        if not r.get("ok"):
+            await _reply(update, f"🔧 {r['reason']}")
+            return
+        if not r["opportunities"]:
+            await _reply(update, f"🔧 Scanned {r['scanned']} listings — nothing above your margin yet.")
+            return
+        await _reply(update, hs.card(r["opportunities"][:6]))
+    await _guard(update, go)
+
+
+async def bought_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _owner_only(update):
+        return
+    from services import hardware_scout as hs
+    args = list(context.args or [])
+    cost = _num(args[-1]) if args else None
+    if cost is None or len(args) < 2:
+        await _reply(update, "Usage: /bought rtx 3090 founders 98000  (description, landed cost KES)")
+        return
+    v = await hs.load()
+    nid = max([x["id"] for x in v["ledger"]] or [0]) + 1
+    v["ledger"].append({"id": nid, "desc": " ".join(args[:-1]), "cost_kes": cost, "bought": time.strftime("%Y-%m-%d")})
+    await hs.save(v)
+    await _reply(update, f"📦 #{nid} in stock: {' '.join(args[:-1])} · cost KES {cost:,.0f}")
+
+
+async def sold_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _owner_only(update):
+        return
+    from services import hardware_scout as hs
+    args = list(context.args or [])
+    if len(args) < 2 or _num(args[0]) is None or _num(args[1]) is None:
+        await _reply(update, "Usage: /sold 3 145000  (stock #, sale price KES)")
+        return
+    v = await hs.load()
+    it = next((x for x in v["ledger"] if x["id"] == int(_num(args[0]))), None)
+    if not it:
+        await _reply(update, "No such stock number — see /stock")
+        return
+    it["sold_kes"], it["sold"] = _num(args[1]), time.strftime("%Y-%m-%d")
+    await hs.save(v)
+    await _reply(update, f"💰 #{it['id']} sold for KES {it['sold_kes']:,.0f} · profit KES {it['sold_kes'] - it['cost_kes']:,.0f}")
+
+
+async def stock_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _owner_only(update):
+        return
+    from services import hardware_scout as hs
+    v = await hs.load()
+    st = [x for x in v["ledger"] if not x.get("sold_kes")]
+    await _reply(update, "📦 In stock\n" + "\n".join(f"#{x['id']} {x['desc']} · KES {x['cost_kes']:,.0f} · {x['bought']}"
+                                                      for x in st) if st else "📦 No stock on hand.")
+
+
+async def ledger_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await _owner_only(update):
+        return
+    from decouple import config as _cfg
+    from services import hardware_scout as hs
+    v = await hs.load()
+    t = hs.ledger_totals(v["ledger"], str(_cfg("SCOUT_VAT_REGISTERED", default="false")).lower() in ("1", "true", "yes"))
+    await _reply(update, f"📒 Hardware ledger\n{t['sold']} sold · revenue KES {t['revenue_kes']:,.0f} · cost KES "
+                         f"{t['cost_kes']:,.0f} · output VAT KES {t['output_vat_kes']:,.0f}\nProfit KES {t['profit_kes']:,.0f}"
+                         f"\nStock: {t['in_stock']} items · KES {t['stock_value_kes']:,.0f}")
+
+
+HANDLERS.update({"scoutwatch": scoutwatch_cmd, "scoutlist": scoutlist_cmd, "scoutdel": scoutdel_cmd,
+                 "price": price_cmd, "scout": scout_cmd, "bought": bought_cmd, "sold": sold_cmd,
+                 "stock": stock_cmd, "ledger": ledger_cmd})
+OWNER_COMMANDS += [("scout", "Hardware scout now (owner)"), ("scoutlist", "Scout searches + prices (owner)"),
+                   ("stock", "Hardware stock (owner)"), ("ledger", "Hardware profit + VAT (owner)")]
