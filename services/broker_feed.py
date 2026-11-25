@@ -36,7 +36,7 @@ _ALIASES = {"GOLD": "XAUUSD", "SILVER": "XAGUSD", "XTIUSD": "USOIL", "WTI": "USO
             "DAX": "GER40", "USDX": "DXY", "DX": "DXY"}
 _ROOTS = ("XAUUSD", "XAGUSD", "BTCUSD", "ETHUSD", "USOIL", "UKOIL", "US500", "NAS100",
           "US30", "GER40", "UK100", "JP225", "DXY")
-_CCY = {"USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF", "XAU", "XAG"}
+_CCY = {"USD", "EUR", "GBP", "JPY", "AUD", "NZD", "CAD", "CHF", "XAU", "XAG", "ZAR", "CNH", "MXN"}
 
 
 def canon(symbol: str) -> str:

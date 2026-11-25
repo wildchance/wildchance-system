@@ -57,6 +57,29 @@ def grade(age_min: Optional[float], now: Optional[dt.datetime] = None,
     return "OK" if age_min <= STALE_MIN else "STALE"
 
 
+WATCH = ("XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "BTCUSD")
+BLACKOUT_MIN = float(config("DATA_BLACKOUT_MIN", default="90"))
+
+
+def blackouts(symbols=WATCH, now_ts: Optional[float] = None, max_min: float = BLACKOUT_MIN,
+              now: Optional[dt.datetime] = None) -> Dict:
+    """Per-symbol 'data blackout' view: which watched markets had no real price for
+    longer than ``max_min`` while the market is open (crypto counts every day)."""
+    t = now_ts if now_ts is not None else time.time()
+    fx_open = market_open(now)
+    rows, dark = [], []
+    for s in symbols:
+        hit = LAST_OK.get(s)
+        age = round((t - hit["t"]) / 60, 1) if hit else None
+        live = fx_open or s.startswith(("BTC", "ETH"))
+        bad = live and (age is None or age > max_min)
+        rows.append({"symbol": s, "age_min": age, "source": hit["source"] if hit else None,
+                     "status": "DARK" if bad else ("CLOSED" if not live else "OK")})
+        if bad:
+            dark.append(s)
+    return {"dark": dark, "limit_min": max_min, "market_open": fx_open, "symbols": rows}
+
+
 async def gold_status(symbol: str = "XAUUSD") -> Dict:
     ages = {}
     mem = LAST_OK.get(symbol)

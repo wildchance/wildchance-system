@@ -34,7 +34,10 @@ CRYPTO = ("BTC", "ETH", "SOL", "XRP", "DOGE", "BNB", "ADA", "LTC")
 YAHOO_IDX = {"NAS100": "^NDX", "US100": "^NDX", "NDX": "^NDX", "US30": "^DJI", "SPX500": "^GSPC",
              "US500": "^GSPC", "SPX": "^GSPC", "US2000": "^RUT", "DXY": "DX-Y.NYB", "XAGUSD": "SI=F",
              "USOIL": "CL=F", "WTI": "CL=F", "UKOIL": "BZ=F"}
-PROXIES = {"XAUUSD": ("binance:PAXGUSDT", "yahoo:GC=F")}
+PROXIES = {"XAUUSD": ("binance:PAXGUSDT", "kraken:PAXGUSD", "yahoo:GC=F")}
+# Kraken spot FX (public, no key) — a second free FX feed independent of Yahoo
+KRAKEN_FX = {"EURUSD", "GBPUSD", "USDJPY", "USDCAD", "USDCHF", "AUDUSD", "EURGBP"}
+YAHOO_FX_ALIAS = {"USDCNH": "CNH=X", "USDZAR": "ZAR=X"}
 
 _cache: Dict[str, Tuple[float, List[Dict]]] = {}
 _ref: Dict[str, Tuple[float, float]] = {}          # symbol → (unix time, real spot close)
@@ -183,18 +186,46 @@ async def _tiingo_fx(symbol: str, interval: str, n: int) -> List[Dict]:
     return parse_tiingo_fx(data) if isinstance(data, list) else []
 
 
+def parse_kraken(data) -> List[Dict]:
+    """Kraken /0/public/OHLC → bars (rows: time, open, high, low, close, vwap, volume, count)."""
+    res = (data or {}).get("result") or {}
+    rows = next((v for k, v in res.items() if k != "last" and isinstance(v, list)), [])
+    out = []
+    for r in rows:
+        try:
+            out.append({"t": int(r[0]), "open": float(r[1]), "high": float(r[2]),
+                        "low": float(r[3]), "close": float(r[4])})
+        except (TypeError, ValueError, IndexError):
+            continue
+    return out
+
+
+async def _kraken(pair: str, interval: str, n: int) -> List[Dict]:
+    from services.data_feeds import _get
+    ki = {"1min": 1, "5min": 5, "15min": 15, "30min": 30, "1h": 60, "4h": 240, "1day": 1440,
+          "1week": 10080}.get(interval)
+    if not ki:
+        return []
+    data = await _get("kraken", "https://api.kraken.com/0/public/OHLC", {"pair": pair, "interval": ki})
+    if not data or data.get("error"):
+        return []
+    return parse_kraken(data)[-max(2, n):]
+
+
 def plan(symbol: str) -> List[Tuple[str, str]]:
     """(source, ticker) candidates for a symbol, before health ranking."""
     s, k = _s(symbol), kind(symbol)
     if k == "crypto":
         base = next(b for b in CRYPTO if s.startswith(b))
-        return [("binance", f"{base}USDT"), ("yahoo_intraday", f"{base}-USD")]
+        kr = {"BTC": "XBTUSD", "ETH": "ETHUSD", "SOL": "SOLUSD", "XRP": "XRPUSD"}.get(base)
+        return [("binance", f"{base}USDT"), ("yahoo_intraday", f"{base}-USD")] + ([("kraken", kr)] if kr else [])
     if k == "proxy":
         return [tuple(x.split(":")) for x in PROXIES[s]]
     if k == "index":
         return [("yahoo_intraday", YAHOO_IDX[s])]
     if k == "fx":
-        return [("yahoo_intraday", f"{s}=X"), ("tiingo_fx", s)]
+        return [("yahoo_intraday", YAHOO_FX_ALIAS.get(s, f"{s}=X"))] + \
+            ([("kraken", s)] if s in KRAKEN_FX else []) + [("tiingo_fx", s)]
     return [("yahoo_intraday", s)]
 
 
@@ -218,6 +249,10 @@ async def alt_values(symbol: str, interval: str, outputsize: int, timezone: str 
                     bars = await _binance(tick, interval, outputsize)
                 elif src == "tiingo_fx":
                     bars = await _tiingo_fx(tick, interval, outputsize)
+                elif src == "kraken":
+                    bars = await _kraken(tick, interval, outputsize)
+                    if interval == "2h":
+                        bars = aggregate(bars, 120, tz)
                 else:
                     bars = await _yahoo(tick, interval, outputsize * (4 if interval == "4h" else 2 if interval == "2h" else 1))
             except Exception:

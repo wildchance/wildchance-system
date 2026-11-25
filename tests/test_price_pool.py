@@ -9,7 +9,10 @@ def test_kind_and_plan():
     assert pp.kind("BTC/USD") == "crypto" and pp.plan("BTC/USD")[0] == ("binance", "BTCUSDT")
     assert pp.kind("XAU/USD") == "proxy" and pp.plan("XAU/USD")[0] == ("binance", "PAXGUSDT")
     assert pp.kind("NAS100") == "index" and pp.plan("NAS100") == [("yahoo_intraday", "^NDX")]
-    assert pp.plan("EUR/USD") == [("yahoo_intraday", "EURUSD=X"), ("tiingo_fx", "EURUSD")]
+    assert pp.plan("EUR/USD") == [("yahoo_intraday", "EURUSD=X"), ("kraken", "EURUSD"), ("tiingo_fx", "EURUSD")]
+    assert pp.plan("GBP/CAD") == [("yahoo_intraday", "GBPCAD=X"), ("tiingo_fx", "GBPCAD")]
+    assert pp.plan("USD/CNH")[0] == ("yahoo_intraday", "CNH=X") and pp.plan("USD/ZAR")[0] == ("yahoo_intraday", "ZAR=X")
+    assert ("kraken", "PAXGUSD") in pp.plan("XAU/USD") and ("kraken", "XBTUSD") in pp.plan("BTC/USD")
     assert pp.kind("NVDA") == "stock"
 
 
@@ -76,3 +79,10 @@ def test_time_series_falls_back_to_pool_when_td_queue_full(monkeypatch):
     d = asyncio.new_event_loop().run_until_complete(
         os_.time_series({"symbol": "EUR/USD", "interval": "1h", "outputsize": 5}, broker=False))
     assert d["source"] == "pool:yahoo_intraday" and calls == [pp.POOL_TD_WAIT_S]
+
+
+def test_kraken_parser():
+    d = {"error": [], "result": {"ZEURZUSD": [[1700000000, "1.0850", "1.0860", "1.0840", "1.0855", "1.085", "12.5", 9]],
+                                 "last": 1700000000}}
+    assert pp.parse_kraken(d) == [{"t": 1700000000, "open": 1.085, "high": 1.086, "low": 1.084, "close": 1.0855}]
+    assert pp.parse_kraken({"error": ["EQuery:Unknown asset pair"]}) == []

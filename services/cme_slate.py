@@ -33,7 +33,9 @@ MAP: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "USDCAD": (("C1",), ("CAU",)),
     "USDCHF": (("E1",), ("CHU",)),
     "NZDUSD": (("NE",), ("NE",)),
-    "USDCNH": (("CNH",), ("6H",)),
+    "USDCNH": (("CNH", "6H"), ("6H",)),
+    "USDZAR": (("RA",), ()),
+    "GBPCHF": (("BF",), ()),
     "EURGBP": (("RP",), ()),
     "EURJPY": (("RY",), ()),
     "EURCHF": (("RF",), ("RF",)),
@@ -45,12 +47,13 @@ MAP: Dict[str, Tuple[Tuple[str, ...], Tuple[str, ...]]] = {
     "BTCUSD": (("BTC", "MBT"), ("BTC", "WM")),
     "ETHUSD": (("ETH",), ("ETH",)),
     "WTI": (("CL",), ("LO",)),
+    "COPPER": (("HG", "MHG"), ("HX",)),
 }
 # weekly / EOM option series that belong to the same market (matched on product name)
 WEEKLY_NAME = {
     "EURUSD": "EUR/USD Weekly", "USDJPY": "JPY/USD Weekly", "GBPUSD": "GBP/USD Weekly",
     "AUDUSD": "AUD/USD Weekly", "USDCAD": "CAD/USD Weekly", "USDCHF": "CHF/USD Weekly",
-    "XAUUSD": "Gold Weekly", "SPX500": "E-mini S&P 500 ", "NAS100": "E-mini Nasdaq-100 ",
+    "XAUUSD": "Gold Weekly", "USDCNH": "CNH/USD Weekly", "SPX500": "E-mini S&P 500 ", "NAS100": "E-mini Nasdaq-100 ",
 }
 HEADER = ("Product Name", "Clearing")
 

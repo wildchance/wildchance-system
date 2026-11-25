@@ -24,7 +24,7 @@ from decouple import config
 
 UNIVERSE = str(config("SWEEP_UNIVERSE", default=(
     "EUR/USD,GBP/USD,USD/JPY,USD/CHF,USD/CAD,AUD/USD,NZD/USD,"
-    "EUR/JPY,GBP/JPY,EUR/GBP,AUD/JPY,EUR/CHF,"
+    "EUR/JPY,GBP/JPY,EUR/GBP,AUD/JPY,EUR/CHF,GBP/CHF,GBP/CAD,USD/ZAR,USD/CNH,"
     "XAU/USD,XAG/USD,BTC/USD,ETH/USD,NAS100,US30,NVDA")))
 NEAR_PCT = float(config("SWEEP_NEAR_PCT", default="1.5"))     # report zones within this % of price
 HOT_SCORE = float(config("SWEEP_HOT_SCORE", default="3"))

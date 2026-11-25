@@ -37,7 +37,7 @@ PROBES = {"USD": ("EUR/USD", "XAU/USD"), "EUR": ("EUR/USD",), "GBP": ("GBP/USD",
           "AUD": ("AUD/USD",), "NZD": ("NZD/USD",), "CAD": ("USD/CAD",), "CHF": ("USD/CHF",)}
 # crosses measured on EVERY high/medium release → the rotation knows which pairs sit still
 CROSS_PROBES = ("EUR/GBP", "EUR/CHF", "EUR/AUD", "GBP/AUD", "EUR/NZD", "GBP/NZD", "EUR/JPY", "GBP/JPY", "AUD/JPY",
-                "AUD/NZD", "EUR/CAD", "GBP/CHF")
+                "AUD/NZD", "EUR/CAD", "GBP/CHF", "GBP/CAD")
 USD_ASSETS = ("XAU", "XAG", "BTC", "ETH", "NAS", "US30", "US100", "US500", "SPX", "US2000", "NVDA")
 
 _events: List[Dict] = []
