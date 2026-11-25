@@ -41,26 +41,19 @@ application = None
 if BOT_TOKEN:
     # updater(None): no polling loop — we feed updates in via the webhook route.
     application = ApplicationBuilder().token(BOT_TOKEN).updater(None).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("history", handle_history))
-    application.add_handler(CommandHandler("last5", handle_last5))
-    application.add_handler(CommandHandler("profit", handle_profit))
-    application.add_handler(CommandHandler("wins", handle_wins))
-    application.add_handler(CommandHandler("summary", handle_summary))
+    from handlers import hub_handler as hub
+    for _name, _fn in hub.HANDLERS.items():                 # the hub: every read on the current system
+        application.add_handler(CommandHandler(_name, _fn))
     application.add_handler(CommandHandler("admin", handle_admin))
     application.add_handler(CommandHandler("create_signal", handle_create_signal))
-    # On-demand market reads
-    application.add_handler(CommandHandler("edge", handle_edge))
-    application.add_handler(CommandHandler("board", handle_edge))      # alias
     application.add_handler(CommandHandler("bias", handle_bias))
     application.add_handler(CommandHandler("setup", handle_setup))
-    application.add_handler(CommandHandler("calendar", handle_calendar))
 
-    async def echo(update, context: ContextTypes.DEFAULT_TYPE):
+    async def nudge(update, context: ContextTypes.DEFAULT_TYPE):
         if update.message and update.message.text:
-            await update.message.reply_text(f"You said: {update.message.text}")
+            await update.message.reply_text("Type /help for the menu.")
 
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, nudge))
 else:
     print("[telegram] TELEGRAM_BOT_TOKEN/BOT_TOKEN not set — bot disabled")
 
@@ -79,6 +72,11 @@ async def _start_and_register_webhook():
                 kwargs["secret_token"] = WEBHOOK_SECRET
             await application.bot.set_webhook(**kwargs)
             print(f"🤖 Telegram webhook registered: {url}")
+        try:                                             # refresh the command menu (old list is cached)
+            from handlers.hub_handler import register_menu
+            await register_menu(application.bot)
+        except Exception as e:
+            print(f"[telegram] command menu not updated: {e}")
         else:
             print("[telegram] WEBHOOK_BASE_URL/RENDER_EXTERNAL_URL not set — "
                   "webhook NOT registered (set it so Telegram can reach the bot)")
