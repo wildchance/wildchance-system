@@ -148,6 +148,17 @@ def filter_high_impact(events, currencies: Optional[Set[str]] = None) -> List[di
 
 async def high_impact_calendar(currencies: Optional[Set[str]] = None) -> List[dict]:
     """Live tier-1 calendar from the ForexFactory feed (best-effort, this week)."""
+    try:                                          # the stored, polite calendar first (no extra FF calls)
+        from services import econ_calendar as ec
+        await ec.ensure_loaded()
+        rows = [e for e in ec._events if e.get("impact") == "High"]
+        if rows:
+            out = [{"date": e["time_utc"][:10], "time": e["time_utc"][11:16], "ccy": e["ccy"], "event": e["title"],
+                    "impact": "High", "forecast": e.get("forecast"), "previous": e.get("previous"),
+                    "actual": e.get("actual")} for e in rows]
+            return [e for e in out if not currencies or e["ccy"] in currencies]
+    except Exception:
+        pass
     try:
         from wildchance.wildchance_scraper import fetch_calendar
         events = await asyncio.to_thread(fetch_calendar)

@@ -315,3 +315,10 @@ signal tracker runs even while a long hourly bundle is still working, so TP flas
 - Partials: when an open tracked trade is in profit and the 1h z-score reaches the opposite extreme
   (`PARTIAL_Z` 2.0 — a sell going oversold, a buy overbought) a "🎯 Close partials" card is sent once per trade.
 - Candle-range limit plans and confirmed CRT gold trades now need a council GO like every other engine.
+
+## WildChance bot = owner hub
+
+Commands (menu re-registered at every deploy): /strength /rotation /walls EURUSD /calendar [USD,EUR] /results /recent
+/edge /terminal /help — and in the owner's own chat (`OWNER_CHAT_ID`) also /open /health /audit. The old USD/JPY
+forward-test commands now read the signal tracker (/summary /profit /wins → /results, /history /last5 → /recent).
+The bot's /calendar and the EdgeFinder news check read the stored calendar (no extra Forex Factory calls → fewer 429s).
