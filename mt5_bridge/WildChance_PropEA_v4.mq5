@@ -14,6 +14,9 @@
 //|   - HTF Bollinger +-1/+-2 sigma confluence for M/W reversals        |
 //|   - Pushes broker bars, account snapshot and the MT5 economic      |
 //|     calendar to the app (/bridge); token sent as a header          |
+//|   - v4.54 APP GATE: before every entry asks GET /bridge/gate       |
+//|     (council GO + currency exposure caps + regime + app calendar)  |
+//|     and caps risk at the app's risk budget                          |
 //|   - Risk sizing that SKIPS (never rounds up) when min lot over-    |
 //|     risks; auto filling mode; 1/3-1/3-1/3 R ladder + BE after TP1  |
 //|                                                                    |
@@ -23,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.53"
+#property version   "4.54"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -167,6 +170,10 @@ input int      InpDealBackfillDays  = 90;     // first run: send this many days 
 input string   InpAppSymbol         = "";     // Name to send (blank = chart symbol; app strips suffixes)
 input string   InpSendTFs           = "M15,H1,H4,D1,W1";
 input int      InpInitialBars       = 300;    // First push per timeframe; afterwards the last 3 bars
+input bool     InpUseAppGate        = true;   // Ask the app (council/exposure/regime/calendar) before every entry
+input bool     InpGateFailOpen      = true;   // App unreachable: true = trade on the EA's own filters, false = skip
+input bool     InpUseAppRisk        = true;   // Cap risk % at the app's regime risk budget (never raises it)
+input int      InpGateTimeoutMs     = 8000;   // Gate request timeout (the app may be waking up)
 
 input group "=== 9. HUD ==="
 input ENUM_BASE_CORNER InpCorner    = CORNER_LEFT_UPPER;
@@ -787,6 +794,20 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
    else if(InpMaxSLxATR>0 && risk > InpMaxSLxATR*atrN)         why = "SL TOO WIDE ("+DoubleToString(risk/atrN,1)+"xATR)";
    if(why != "") { g_newSignalTxt = "BLOCKED: "+why; Print("WildChance blocked ",_Symbol,": ",why); return; }
 
+   double appRisk = 0;
+   if(InpUseAppGate && !MQLInfoInteger(MQL_TESTER))
+     {
+      string gwhy = "";
+      int g = AppGate(isBuy, appRisk, gwhy);
+      if(g == 0 || (g < 0 && !InpGateFailOpen))
+        {
+         g_newSignalTxt = "BLOCKED: APP "+gwhy;
+         Print("WildChance blocked by app gate ",_Symbol,": ",gwhy);
+         return;
+        }
+      if(g < 0) Print("WildChance: app gate unreachable (",gwhy,") - fail-open, EA filters only");
+     }
+
    if(InpFixedSLPips > 0) { risk = InpFixedSLPips * pip; sl = isBuy ? entry-risk : entry+risk; }
    if(InpRandomizeSL) { sl += (isBuy?-1:1) * (1 + MathRand()%3) * pip; risk = MathAbs(entry-sl); }
    // Respect the broker's minimum stop distance
@@ -796,6 +817,7 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
    int d = isBuy ? 1 : -1;
    double riskPct = InpRiskPct;
    if(InpUseLunarEngine && g_inLunarObsWindow && InpLunarShiftMode==LUNAR_HALF_RISK) riskPct *= 0.5;
+   if(InpUseAppRisk && appRisk > 0) riskPct = MathMin(riskPct, appRisk);   // app budget only lowers risk
    double tpR  = (InpTargetTP<=1) ? InpTP1R : (InpTargetTP==2 ? InpTP2R : InpTP3R);
    double lots = (InpSizingMode == SIZING_TARGET) ? TargetLots(risk*tpR, risk, riskPct)
                                                 : CalculateLotSize(risk, riskPct);
@@ -1203,6 +1225,49 @@ bool PostJson(string path, string body)
    return code==200;
   }
 
+//+------------------------------------------------------------------+
+//| App gate: 1 = GO, 0 = blocked by the app, -1 = app unreachable     |
+//+------------------------------------------------------------------+
+int AppGate(bool isBuy, double &appRisk, string &reason)
+  {
+   appRisk = 0; reason = "";
+   if(InpBridgeToken == "") { reason = "NO TOKEN"; return -1; }
+   string url = InpAppUrl; if(StringSubstr(url, StringLen(url)-1)=="/") url = StringSubstr(url,0,StringLen(url)-1);
+   string sym = (InpAppSymbol!="") ? InpAppSymbol : _Symbol;
+   url += "/bridge/gate?symbol=" + sym + "&side=" + (isBuy ? "BUY" : "SELL");
+   char data[], result[]; string resHeaders;
+   string headers = "X-Bridge-Token: " + InpBridgeToken + "\r\n";
+   ResetLastError();
+   int code = WebRequest("GET", url, headers, MathMax(2000, InpGateTimeoutMs), data, result, resHeaders);
+   if(code == -1) { reason = "ERR "+IntegerToString(GetLastError()); return -1; }
+   if(code != 200) { reason = "HTTP "+IntegerToString(code); return -1; }
+   string js = CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8);
+   appRisk = JsonNum(js, "risk_pct");
+   reason  = JsonStr(js, "reason");
+   if(StringFind(js, "\"allow\":true") >= 0)  return 1;
+   if(StringFind(js, "\"allow\":false") >= 0) return 0;
+   reason = "BAD REPLY"; return -1;
+  }
+
+double JsonNum(string js, string key)
+  {
+   int p = StringFind(js, "\""+key+"\":");
+   if(p < 0) return 0;
+   p += StringLen(key) + 3;
+   int e = p;
+   while(e < StringLen(js)) { ushort c = StringGetCharacter(js, e); if(c==',' || c=='}') break; e++; }
+   return StringToDouble(StringSubstr(js, p, e - p));
+  }
+
+string JsonStr(string js, string key)
+  {
+   int p = StringFind(js, "\""+key+"\":\"");
+   if(p < 0) return "";
+   p += StringLen(key) + 4;
+   int e = StringFind(js, "\"", p);
+   return (e > p) ? StringSubstr(js, p, e - p) : "";
+  }
+
 string JsonEsc(string v)
   {
    StringReplace(v, "\\", "\\\\"); StringReplace(v, "\"", "\\\"");
@@ -1356,7 +1421,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title","v4.5 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title","v4.54 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :

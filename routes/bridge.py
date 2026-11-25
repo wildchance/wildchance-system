@@ -4,6 +4,7 @@
   POST /bridge/account           {"login":…, "balance":…, "equity":…, "guard":"ACTIVE", …}
   POST /bridge/deals             closed trades → profit flash cards (winners only, once each)
   GET  /bridge/status           what has arrived, how fresh, last account snapshots
+  GET  /bridge/gate             the EA asks before every entry: council + exposure + regime + calendar
 
 Auth: BRIDGE_TOKEN (falls back to EXECUTION_TOKEN) in the X-Bridge-Token HEADER only —
 a ?token= query parameter is ignored so the secret never lands in request logs.
@@ -79,6 +80,45 @@ async def deals(body: DealsIn, background: BackgroundTasks,
     background.add_task(record, body.deals)               # journal: every close, W / L / BE
     background.add_task(post_from_deals, body.deals)      # flash cards: winners only
     return {"ok": True, "received": len(body.deals)}
+
+
+_gate_cache: Dict[str, tuple] = {}
+GATE_CACHE_S = 60
+
+
+async def gate_verdict(symbol: str, side: str) -> Dict:
+    """One flat answer for the EA: allow (bool), risk_pct (app risk budget), reason.
+    Council GO + currency exposure caps + regime routing (council_gate.check) and the
+    app's economic-calendar blackout (Forex Factory / owner paste / EA calendar)."""
+    import time
+    from services import council_gate, econ_calendar
+    sym = broker_feed.canon(symbol).replace("/", "")
+    sd = council_gate.norm_side(side)
+    key = f"{sym}:{sd}"
+    hit = _gate_cache.get(key)
+    if hit and time.time() - hit[0] < GATE_CACHE_S:
+        return hit[1]
+    pair = f"{sym[:3]}/{sym[3:]}" if len(sym) == 6 and sym.isalpha() else sym
+    try:
+        await econ_calendar.ensure_loaded()
+        bo = econ_calendar.blackout(pair)
+    except Exception:
+        bo = None
+    g = await council_gate.check(pair, sd)
+    allow = bool(g.get("pass")) and not bo
+    reason = bo or ("GO" if allow else str(g.get("verdict") or "BLOCKED"))
+    out = {"allow": allow, "verdict": "EVENT" if bo else g.get("verdict"), "reason": reason[:60],
+           "risk_pct": g.get("risk_pct") or 0, "regime": g.get("regime") or "",
+           "for": g.get("for"), "against": g.get("against"), "symbol": pair, "side": sd}
+    _gate_cache[key] = (time.time(), out)
+    return out
+
+
+@router.get("/gate")
+async def gate(symbol: str = Query(...), side: str = Query(...),
+               x_bridge_token: Optional[str] = Header(None)):
+    _auth(x_bridge_token)
+    return await gate_verdict(symbol, side)
 
 
 @router.get("/status")

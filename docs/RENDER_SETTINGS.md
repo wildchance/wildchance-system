@@ -130,6 +130,13 @@ database, Telegram) without showing their values.
 | `FLASH_MAX_AGE_MIN` | `120` | only closes this recent get a flash card (history backfill goes to the journal only) |
 
 EA v4.53 inputs: `InpDealPushSec` (10 s), `InpDealBackfillDays` (90 — the first run sends 90 days of history to the journal).
+
+EA v4.54 adds the **app gate**: before every entry the EA calls `GET /bridge/gate?symbol=&side=` (header `X-Bridge-Token`)
+and only trades on council GO + exposure caps + regime routing + no calendar blackout. Inputs: `InpUseAppGate` (true),
+`InpGateFailOpen` (true = if Render is asleep/unreachable, trade on the EA's own filters), `InpUseAppRisk` (true = risk %
+is capped at the app's regime risk budget, never raised), `InpGateTimeoutMs` (8000).
+Flash cards: a broker close no longer posts a second card when the signal tracker already carded the same trade
+(same symbol + side, entry within `FLASH_MATCH_PIPS`, default 15, inside `FLASH_DEDUPE_H`).
 Endpoints (ops token): `/journal/stats?days=30`, `/journal/trades`, `/journal/report?period=day|week|month`.
 
 ## Economic calendar (automatic, no key needed)

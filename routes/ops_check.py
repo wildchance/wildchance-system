@@ -52,7 +52,7 @@ def _judge_calendar(d):
 def _judge_journal(d):
     n = d.get("trades", 0)
     return ("✅" if n else "⚠️", f"{n} trades logged · win {d.get('win_rate_pct')}% · BE {d.get('breakeven')}"
-            if n else "no trades yet — install EA v4.53")
+            if n else "no trades yet — install EA v4.54")
 
 
 def _judge_bridge(d):

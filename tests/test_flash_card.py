@@ -82,7 +82,7 @@ def test_post_from_deals_winners_only_and_once(monkeypatch):
         store[k] = v
         return True
 
-    async def post(sym, side, o, c, when=None):
+    async def post(sym, side, o, c, when=None, source="signal"):
         sent.append((sym, side))
         return {"sent": True}
     monkeypatch.setattr(data_store, "get", get)
