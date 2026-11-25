@@ -138,6 +138,8 @@ def jobs() -> List[Job]:
                                               (G, "/research/backtest/all?engine=asia&notify=true")), days=(6,)),
         # Weekly backup of the research tables → owner's Telegram (Sunday)
         Job("backup_weekly", UTC, (3,), 20, ((G, "/ops/backup?send=true"),), days=(6,)),
+        # Hardware scout (eBay → landed cost → margin vs local prices) every 6 h
+        Job("hardware_scout", UTC, (2, 8, 14, 20), 35, ((G, "/ops/scout"),)),
         # Hardware deal watch (owner's list) every 4 h
         Job("deal_watch", UTC, (1, 5, 9, 13, 17, 21), 25, ((G, "/ops/deals/check"),)),
         # Daily health digest (crashes, failed / slow jobs, failed sends, swallowed errors) → owner

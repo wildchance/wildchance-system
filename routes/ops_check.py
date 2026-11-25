@@ -238,3 +238,10 @@ async def schema():
 async def deals_check():
     from services import deal_tracker
     return await deal_tracker.check(notify=True)
+
+
+
+@router.get("/scout")
+async def hardware_scout_run():
+    from services import hardware_scout
+    return await hardware_scout.scout(notify=True)
