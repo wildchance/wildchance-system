@@ -63,6 +63,15 @@ async def get_fallback_price(symbol: str) -> Optional[float]:
 
     price = await _twelvedata_price(pair_clean)
     if price is not None:
+        try:
+            from services.price_pool import note_reference
+            note_reference(symbol, price)            # keeps the gold proxy basis fresh
+        except Exception:
+            pass
+        return price
+
+    price = await _pool_price(symbol)                # free pool: Binance / Yahoo / Tiingo (basis-corrected gold)
+    if price is not None:
         return price
 
     if re.fullmatch(r"[A-Z]{6}", pair_clean):
@@ -77,6 +86,18 @@ async def get_fallback_price(symbol: str) -> Optional[float]:
     if pair_clean.startswith("XAU") or pair_clean.startswith("XAG"):
         return await _metals_price(pair_clean)
 
+    return None
+
+
+async def _pool_price(symbol: str) -> Optional[float]:
+    """Last 1-minute close from the price pool (no TwelveData credit)."""
+    try:
+        from services.price_pool import alt_values
+        d = await alt_values(symbol, "1min", 2)
+        if d and d.get("values"):
+            return float(d["values"][0]["close"])
+    except Exception:
+        return None
     return None
 
 

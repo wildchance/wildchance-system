@@ -50,7 +50,7 @@ def jobs() -> List[Job]:
               (P, "/sniper/scan?notify=true"), (G, "/fx/rotation?notify=true")]
     exec_token = config("EXECUTION_TOKEN", default=None)
     if exec_token:
-        hourly.insert(1, (P, f"/execution/reconcile?token={exec_token}"))
+        hourly.insert(1, (G, f"/execution/reconcile?token={exec_token}"))   # GET route
     newday = ((P, "/gold/recon?force=true"), (P, "/gold/retracement?deploy=true"),
               (G, "/swing/scan?notify=true"))
     return [
