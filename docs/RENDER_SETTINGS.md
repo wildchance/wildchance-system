@@ -305,3 +305,13 @@ signal tracker runs even while a long hourly bundle is still working, so TP flas
   nearest expiry with both sides → 10Δ/25Δ call ceilings, ATM pin, 25Δ/10Δ put floors. They show in the terminals,
   the sniper zones and on event-rotation picks (`[walls floor / ceiling]`). Live today: GBP/JPY, EUR/JPY. Send
   EUR/GBP, EUR/AUD, EUR/CHF, NZD/USD screens to light up those pairs.
+
+## Flash cards, partials, owner copies
+
+- A flash card is posted once per trade (symbol + side + open + close) within `FLASH_DEDUPE_H` (24 h); the tracker
+  merges the same trade sent by two engines into one record (`sniper+z-setup`) and never runs two checks at once.
+- `FLASH_COPY_OWNER` (true): every flash card is also sent as a downloadable PNG file to your private chat with the
+  bot (`OWNER_CHAT_ID`) — the channel can keep "restrict saving content" on.
+- Partials: when an open tracked trade is in profit and the 1h z-score reaches the opposite extreme
+  (`PARTIAL_Z` 2.0 — a sell going oversold, a buy overbought) a "🎯 Close partials" card is sent once per trade.
+- Candle-range limit plans and confirmed CRT gold trades now need a council GO like every other engine.

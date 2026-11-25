@@ -71,3 +71,53 @@ def test_votes_become_agent_cases_and_report():
     assert sc["cot"]["n"] == 2 and sc["cot"]["right"] == 1 and sc["vix"]["right"] == 0
     lines = st.report_lines(st.summarise([w, l_]))
     assert "1 · ❌ 1" in lines[0] and "z-setup 1W" in lines[1]
+
+
+def test_partial_due_rules():
+    s = st.new_signal("EURUSD", "SELL", 1.09637, 1.0975, [1.0939, 1.0920], "z-setup", ts=0)
+    assert st.partial_due(s, -2.28, 1.09365)                  # sell in profit + oversold → bank partials
+    assert not st.partial_due(s, +2.3, 1.09365)               # wrong extreme
+    assert not st.partial_due(s, -2.3, 1.0970)                # not in profit
+    assert not st.partial_due(s, -1.5, 1.09365)               # not stretched enough
+    s["partial_alerted"] = True
+    assert not st.partial_due(s, -2.5, 1.0930)                # only once
+
+
+def test_flash_dedupe(monkeypatch):
+    import asyncio
+    from services import data_store, flash_card as fc
+    store = {}
+
+    async def get(k):
+        return store.get(k), None
+
+    async def put(k, v):
+        store[k] = v
+        return True
+    monkeypatch.setattr(data_store, "get", get)
+    monkeypatch.setattr(data_store, "put", put)
+    loop = asyncio.new_event_loop()
+    assert loop.run_until_complete(fc._already_posted("EURUSD:SELL:1.0964:1.0939")) is False
+    assert loop.run_until_complete(fc._already_posted("EURUSD:SELL:1.0964:1.0939")) is True
+
+
+def test_same_trade_from_two_engines_is_one_signal(monkeypatch):
+    import asyncio
+    rows = []
+
+    async def load():
+        return rows
+
+    async def save(r):
+        rows[:] = r
+    monkeypatch.setattr(st, "_load", load)
+    monkeypatch.setattr(st, "_save", save)
+    import services.snapshots as sn
+
+    async def cap(s):
+        return True
+    monkeypatch.setattr(sn, "capture", cap)
+    loop = asyncio.new_event_loop()
+    a = loop.run_until_complete(st.record("EUR/USD", "SELL", 1.09637, 1.0975, [1.0939], "sniper"))
+    b = loop.run_until_complete(st.record("EUR/USD", "SELL", 1.09640, 1.0976, [1.0939], "z-setup"))
+    assert len(rows) == 1 and b["id"] == a["id"] and rows[0]["source"] == "sniper+z-setup"

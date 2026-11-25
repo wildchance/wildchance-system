@@ -265,6 +265,17 @@ async def add_plans(result: dict) -> dict:
                      (lock == "SELL_ONLY" and p["side"] == "BUY")):
             g["allow"] = False
             g["reasons"].append(f"macro lock {lock}")
+        if g["allow"]:                                     # owner rule: every trade card needs the council
+            try:
+                from services import council_gate
+                cg = await council_gate.check(sym, p["side"], style="continuation" if a.get("state") == "continuation"
+                                              else "reversion")
+                if not cg["pass"]:
+                    g["allow"] = False
+                    g["reasons"].append(f"council {cg['verdict']}")
+            except Exception as e:
+                from services import errors
+                errors.swallow(f"candlerange council {sym}", e)
         p["gate"] = g
         a["plan"] = p
     return result
