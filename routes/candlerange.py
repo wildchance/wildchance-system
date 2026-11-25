@@ -59,10 +59,18 @@ async def crt(symbols: str = Query(None),
         if r is None:
             continue
         reads.append(r)
-        text = crs.format_crt_alert(r)
+        conf = (r.get("confirmation") or {})
+        if conf.get("confirmed"):                         # owner rule: a confirmed trade needs the council
+            from services import council_gate
+            o = conf.get("order") or {}
+            cg = await council_gate.check(sym, "BUY" if o.get("side") == "long" else "SELL")
+            r["council"] = cg["verdict"]
+            if not cg["pass"]:
+                conf["confirmed"] = False
+                r["held"] = f"council {cg['verdict']}"
+        text = crs.format_crt_alert(r) if not r.get("held") else None
         if text:
             alerts.append(text)
-        conf = (r.get("confirmation") or {})
         if track and sym.upper().replace("-", "/") == "XAU/USD" and conf.get("confirmed"):
             card = size_limit(conf["order"], balance, risk_usd)   # confirmed = fills now
             pos = await gp.open_from_signal(db, card, source="gold_crt")

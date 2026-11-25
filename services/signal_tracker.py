@@ -64,6 +64,13 @@ async def record(symbol: str, side: str, entry: float, stop: float, targets: Lis
             return None
         rows = await _load()
         day = time.strftime("%Y-%m-%d", time.gmtime(s["sent_at"]))
+        for r in rows:                         # another engine already tracks this trade → one record
+            if r["result"] == "open" and r["symbol"] == s["symbol"] and r["side"] == s["side"] \
+                    and abs(r["entry"] - s["entry"]) <= 0.0005 * s["entry"] and s["sent_at"] - r["sent_at"] < 6 * 3600:
+                if s["source"] not in r["source"].split("+"):
+                    r["source"] = f"{r['source']}+{s['source']}"
+                    await _save(rows)
+                return r
         for r in rows:                         # same signal re-sent the same day → keep one
             if (r["symbol"], r["side"], r["source"], round(r["entry"], 3)) == \
                     (s["symbol"], s["side"], s["source"], round(s["entry"], 3)) and \
@@ -143,7 +150,20 @@ def _bars_ts(bars: List[Dict]) -> List[Dict]:
     return out
 
 
+_check_lock = None
+
+
 async def check() -> Dict:
+    import asyncio
+    global _check_lock
+    _check_lock = _check_lock or asyncio.Lock()
+    if _check_lock.locked():                   # a check is already running → never two at once
+        return {"skipped": "check already running"}
+    async with _check_lock:
+        return await _check()
+
+
+async def _check() -> Dict:
     from services.flash_card import post
     from services.ohlc_service import fetch_ohlc_raw
     rows = await _load()
@@ -175,9 +195,55 @@ async def check() -> Dict:
                     closed.append({"symbol": sym, "result": e["result"], "pips": s["pips"]})
                     from services import snapshots
                     await snapshots.close(s)
+    partials = await partial_alerts([r for r in rows if r["result"] == "open"])
     if open_rows:
         await _save(rows)
-    return {"open": sum(1 for r in rows if r["result"] == "open"), "flash_cards": posted, "closed": closed}
+    return {"open": sum(1 for r in rows if r["result"] == "open"), "flash_cards": posted, "closed": closed,
+            "partials": partials}
+
+
+Z_PARTIAL = float(config("PARTIAL_Z", default="2.0"))
+
+
+def partial_due(s: Dict, z: Optional[float], last: Optional[float]) -> bool:
+    """The 1h z-score reached the OPPOSITE extreme of a winning open trade → bank partials:
+    a SELL is in profit and price is now oversold (z ≤ −2); a BUY in profit and overbought."""
+    if z is None or last is None or not s.get("filled") or s.get("partial_alerted"):
+        return False
+    sgn = 1 if s["side"] == "BUY" else -1
+    in_profit = (last - s["entry"]) * sgn > 0
+    return in_profit and z * sgn >= Z_PARTIAL
+
+
+async def partial_alerts(open_rows: List[Dict]) -> List[Dict]:
+    try:
+        from services import intraday_service as isvc
+        if time.time() - isvc.LAST_SCAN.get("t", 0) > 75 * 60:
+            return []
+        zs = {str(b.get("symbol", "")).upper().replace("/", ""): b for b in isvc.LAST_SCAN.get("results") or []
+              if b.get("ok")}
+    except Exception:
+        return []
+    out = []
+    for s in open_rows:
+        b = zs.get(s["symbol"].upper().replace("/", ""))
+        if not b:
+            continue
+        z, last = b.get("z"), b.get("last_close")
+        if not partial_due(s, z, last):
+            continue
+        p = round(_pips(s["symbol"], s["side"], s["entry"], last), 1)
+        text = (f"🎯 *Close partials — {s['symbol']} {s['side']}* (+{p} pips from {s['entry']})\n"
+                f"1h z-score {z:+.2f} → {'oversold' if z < 0 else 'overbought'} against the trade: bank 50 %, "
+                f"stop to entry, let the rest run to the next target.")
+        try:
+            from services.realtime import alert_once
+            sent = await alert_once(f"partial:{s['id']}", text, ttl_hours=72)
+        except Exception:
+            sent = False
+        s["partial_alerted"] = True
+        out.append({"symbol": s["symbol"], "side": s["side"], "z": z, "pips": p, "sent": sent})
+    return out
 
 
 def summarise(rows: List[Dict]) -> Dict:

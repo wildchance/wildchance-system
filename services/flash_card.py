@@ -126,11 +126,58 @@ def caption(symbol: str, side: str, open_price: float, close_price: float) -> st
             f"({_price(symbol, open_price)} → {_price(symbol, close_price)})")
 
 
+_post_lock = None
+DEDUPE_H = float(config("FLASH_DEDUPE_H", default="24"))
+COPY_OWNER = str(config("FLASH_COPY_OWNER", default="true")).lower() in ("1", "true", "yes", "on")
+
+
+async def _already_posted(key: str) -> bool:
+    """Same symbol + side + open + close within FLASH_DEDUPE_H → never post the card twice
+    (two engines tracking one trade, or two checks running at once)."""
+    import time as _t
+    from services import data_store
+    seen, _ = await data_store.get("flash_sent")
+    seen = {k: v for k, v in (seen or {}).items() if _t.time() - v < DEDUPE_H * 3600}
+    if key in seen:
+        return True
+    seen[key] = _t.time()
+    await data_store.put("flash_sent", seen)
+    return False
+
+
+async def _copy_to_owner(png: bytes, cap: str, name: str) -> bool:
+    """A downloadable copy in the owner's private chat with the bot (the channel blocks saving)."""
+    if not COPY_OWNER:
+        return False
+    try:
+        import httpx
+        from services.owner_notify import BOT_TOKEN, OWNER_CHAT_ID
+        if not (BOT_TOKEN and OWNER_CHAT_ID):
+            return False
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+                             data={"chat_id": OWNER_CHAT_ID, "caption": cap},
+                             files={"document": (name, png, "image/png")})
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
 async def post(symbol: str, side: str, open_price: float, close_price: float,
                when: Optional[dt.datetime] = None) -> Dict:
     """Send the card as a Telegram photo. Losing / flat trades are never posted."""
+    import asyncio
+    global _post_lock
     if pips(symbol, side, open_price, close_price) <= 0:
         return {"sent": False, "reason": "not a winning trade"}
+    _post_lock = _post_lock or asyncio.Lock()
+    key = f"{symbol.upper().replace('/', '')}:{side.upper()}:{round(open_price, 4)}:{round(close_price, 4)}"
+    async with _post_lock:
+        try:
+            if await _already_posted(key):
+                return {"sent": False, "reason": "duplicate card (already posted)"}
+        except Exception:
+            pass
     from services.telegram_service import BOT_TOKEN, CHAT_ID
     chat = config("FLASH_CHAT_ID", default=None) or CHAT_ID
     if not BOT_TOKEN or not chat:
@@ -138,11 +185,14 @@ async def post(symbol: str, side: str, open_price: float, close_price: float,
     import httpx
     png = render(symbol, side, open_price, close_price, when)
     try:
+        cap = caption(symbol, side, open_price, close_price)
         async with httpx.AsyncClient(timeout=20) as c:
             r = await c.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
-                             data={"chat_id": chat, "caption": caption(symbol, side, open_price, close_price)},
+                             data={"chat_id": chat, "caption": cap},
                              files={"photo": ("flash.png", png, "image/png")})
-        return {"sent": r.status_code == 200, "status": r.status_code}
+        stamp = (when or dt.datetime.now(dt.timezone.utc)).strftime("%Y%m%d-%H%M")
+        owner = await _copy_to_owner(png, cap, f"wildchance-{symbol.replace('/', '')}-{side.lower()}-{stamp}.png")
+        return {"sent": r.status_code == 200, "status": r.status_code, "owner_copy": owner}
     except Exception as e:
         return {"sent": False, "reason": str(e)[:120]}
 

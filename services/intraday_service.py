@@ -84,4 +84,6 @@ def format_alert(breaches: List[dict]) -> str:
             f"• {b['symbol']}  z {b['z']:+.2f}  {b['direction']}  →  {arrow}  "
             f"@ {b['last_close']}"
         )
+    lines.append("_Watch list, not a trade — stretched markets. Open trades in profit on the other side: "
+                 "consider partials._")
     return "\n".join(lines)
