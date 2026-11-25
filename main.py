@@ -34,6 +34,8 @@ class _RedactTokens(_log.Filter):
 for _name in ("uvicorn.access", "uvicorn.error"):
     _log.getLogger(_name).addFilter(_RedactTokens())
 _td_limiter.install()
+from services import group_router as _group_router
+_group_router.install()                       # copies channel posts to the configured groups / topics
 # every Telegram post is also stored for the members' web feed
 from services import signal_feed as _signal_feed
 _signal_feed.install()
