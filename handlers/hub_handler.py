@@ -62,7 +62,10 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
              "🖥 /terminal — open the terminal"]
     if is_owner(update):
         lines += ["", "*Owner*", "📂 /open — open signals + exposure", "🩺 /health — errors today",
-                  "🧾 /audit — data audit", "", "_Flash cards, backups and daily reports arrive here as files._"]
+                  "🧾 /audit — data audit", "",
+                  "📥 Send CME bulletin PDFs (or a .zip) here → dealer walls update.",
+                  "🗓 Paste the Forex Factory week here → calendar + blackouts update.",
+                  "_Flash cards, backups and daily reports arrive here as files._"]
     await _reply(update, "\n".join(lines))
 
 
@@ -236,3 +239,35 @@ async def register_menu(bot) -> None:
                                       scope=BotCommandScopeChat(int(OWNER_CHAT_ID)))
         except Exception:
             pass
+
+
+
+async def document_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner sends CME bulletin PDFs (or a .zip) → parsed into the dealer-level chains."""
+    if not is_owner(update):
+        await _reply(update, "🔒 Files are accepted from the owner only.")
+        return
+    doc = update.message.document
+
+    async def go():
+        from services import cme_ingest
+        f = await doc.get_file()
+        blob = bytes(await f.download_as_bytearray())
+        rep = await cme_ingest.ingest([(doc.file_name or "file.pdf", blob)])
+        await update.message.reply_text(cme_ingest.reply_text(rep))
+    await _guard(update, go)
+
+
+async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner pastes the Forex Factory week → stored as calendar events; anything else → /help."""
+    text = update.message.text or ""
+    from services import calendar_paste as cp
+    if is_owner(update) and cp.looks_like_ff(text):
+        async def go():
+            ev = cp.parse(text)
+            r = await cp.store(ev)
+            await _reply(update, f"🗓 Calendar paste: {r['added']} releases stored ({r['high']} high impact) — "
+                                 "blackouts and rotation use them now. Check with /calendar.")
+        await _guard(update, go)
+        return
+    await update.message.reply_text("Type /help for the menu.")
