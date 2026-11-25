@@ -332,3 +332,14 @@ The bot's /calendar and the EdgeFinder news check read the stored calendar (no e
   (the paste loses FF's colours); times are converted from `CAL_PASTE_UTC_OFFSET` (+3) to UTC.
 - The data audit now separates expected blocks (CBOE, CME downloads, Polygon options, FF next-week) from real failing
   feeds and shows each failure's reason.
+
+## Groups, topics and the deal watch
+
+- `GROUP_ROUTES` (JSON): copies every main-channel post to groups / forum topics by market family, e.g.
+  `{"gold":"-1001234567890:12","fx":"-1001234567890:15","crypto":"-1009876543210","indices":"-1001234567890:20",
+  "dxy":"-1001234567890:22","general":"-1001234567890:3","results":"-1005555555555","all":""}` — one family → that
+  route, mixed / none → `general`, flash cards + track-record reports → also `results`, `all` gets everything.
+  Get ids with **/chatid** typed inside the group or topic (the bot must be a member / admin). Commands work in
+  groups too; the bot never replies to ordinary group chat.
+- Deal watch (owner chat): `/watch rtx 4090 1500`, `/watches`, `/unwatch 2`, `/deals`; checked every 4 h from
+  public deal RSS feeds (`DEAL_FEEDS`, default Slickdeals front page); matches arrive in your bot chat.

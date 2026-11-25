@@ -65,6 +65,8 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
                   "🧾 /audit — data audit", "",
                   "📥 Send CME bulletin PDFs (or a .zip) here → dealer walls update.",
                   "🗓 Paste the Forex Factory week here → calendar + blackouts update.",
+                  "🛒 /watch rtx 4090 1500 · /watches · /unwatch 2 · /deals — hardware deal alerts",
+                  "🆔 /chatid inside a group or topic → ids for GROUP_ROUTES",
                   "_Flash cards, backups and daily reports arrive here as files._"]
     await _reply(update, "\n".join(lines))
 
@@ -242,8 +244,24 @@ async def register_menu(bot) -> None:
 
 
 
+async def chatid_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ids for GROUP_ROUTES: type /chatid inside a group or a forum topic."""
+    chat = update.effective_chat
+    thread = getattr(update.message, "message_thread_id", None) if update.message else None
+    ref = f"{chat.id}:{thread}" if thread else f"{chat.id}"
+    await update.message.reply_text(
+        f"🆔 chat id: {chat.id}\ntopic id: {thread or '— (not a topic)'}\ntype: {getattr(chat, 'type', '?')}\n"
+        f"Use in GROUP_ROUTES as \"{ref}\"")
+
+
+def _private(update: Update) -> bool:
+    return getattr(update.effective_chat, "type", "private") == "private"
+
+
 async def document_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Owner sends CME bulletin PDFs (or a .zip) → parsed into the dealer-level chains."""
+    if not _private(update):
+        return                                           # files in groups are not for the bot
     if not is_owner(update):
         await _reply(update, "🔒 Files are accepted from the owner only.")
         return
@@ -260,6 +278,8 @@ async def document_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Owner pastes the Forex Factory week → stored as calendar events; anything else → /help."""
+    if not _private(update):
+        return                                           # never chat back to every group message
     text = update.message.text or ""
     from services import calendar_paste as cp
     if is_owner(update) and cp.looks_like_ff(text):
@@ -271,3 +291,63 @@ async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await _guard(update, go)
         return
     await update.message.reply_text("Type /help for the menu.")
+
+
+HANDLERS["chatid"] = chatid_cmd
+
+
+async def watch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await _reply(update, "🔒 Owner only.")
+        return
+    from services import deal_tracker as dt_
+    w = dt_.parse_watch(context.args or [])
+    if not w:
+        await _reply(update, "Usage: /watch rtx 4090 1500  (words to match, optional max price)")
+        return
+    ws = await dt_.add(w)
+    await _reply(update, f"🛒 Watching: {' '.join(w['words'])}" + (f" ≤ ${w['max']:g}" if w.get("max") else "")
+                 + f" · {len(ws)} on the list")
+
+
+async def watches_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await _reply(update, "🔒 Owner only.")
+        return
+    from services import deal_tracker as dt_
+    ws = (await dt_._load())["watches"]
+    await _reply(update, "🛒 Watch list:\n" + "\n".join(
+        f"{i}. {' '.join(w['words'])}" + (f" ≤ ${w['max']:g}" if w.get("max") else "") for i, w in enumerate(ws, 1))
+        if ws else "🛒 Watch list is empty — /watch rtx 4090 1500")
+
+
+async def unwatch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await _reply(update, "🔒 Owner only.")
+        return
+    from services import deal_tracker as dt_
+    try:
+        n = int((context.args or ["0"])[0])
+    except ValueError:
+        n = 0
+    ws = await dt_.remove(n)
+    await _reply(update, f"🛒 Removed #{n}. {len(ws)} left.")
+
+
+async def deals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await _reply(update, "🔒 Owner only.")
+        return
+
+    async def go():
+        from services import deal_tracker as dt_
+        r = await dt_.check(notify=False)
+        if not r["hits"]:
+            await _reply(update, f"🛒 No new matches ({r['watches']} watches, {r.get('items', 0)} deals scanned).")
+            return
+        await _reply(update, "🛒 New matches:\n" + "\n".join(f"• {h['title'][:110]}\n  {h['link']}" for h in r["hits"][:8]))
+    await _guard(update, go)
+
+
+HANDLERS.update({"watch": watch_cmd, "watches": watches_cmd, "unwatch": unwatch_cmd, "deals": deals_cmd})
+OWNER_COMMANDS += [("watch", "Watch a deal: /watch rtx 4090 1500 (owner)"), ("deals", "Check deals now (owner)")]

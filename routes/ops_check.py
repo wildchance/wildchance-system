@@ -231,3 +231,10 @@ async def schema():
     from database import migrations
     from database.db import engine
     return {"migrations": await migrations.status(engine), "drift": await migrations.drift(engine)}
+
+
+
+@router.get("/deals/check")
+async def deals_check():
+    from services import deal_tracker
+    return await deal_tracker.check(notify=True)
