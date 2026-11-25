@@ -322,3 +322,13 @@ Commands (menu re-registered at every deploy): /strength /rotation /walls EURUSD
 /edge /terminal /help — and in the owner's own chat (`OWNER_CHAT_ID`) also /open /health /audit. The old USD/JPY
 forward-test commands now read the signal tracker (/summary /profit /wins → /results, /history /last5 → /recent).
 The bot's /calendar and the EdgeFinder news check read the stored calendar (no extra Forex Factory calls → fewer 429s).
+
+## Feeding the system through the bot (owner chat)
+
+- **CME bulletin**: send the section PDFs (or one .zip of them) to your bot chat. Sections are recognised by name or
+  page header, kept 3 days so pairs can arrive separately, and parsed as soon as a group is complete (gold 62+64,
+  FX 27–36, AUD 38, EUR 39, Nasdaq 40, S&P 47+48, Dow 60). The bot replies with what was updated.
+- **Calendar**: paste the Forex Factory week as text into the bot chat. High impact is decided by release name
+  (the paste loses FF's colours); times are converted from `CAL_PASTE_UTC_OFFSET` (+3) to UTC.
+- The data audit now separates expected blocks (CBOE, CME downloads, Polygon options, FF next-week) from real failing
+  feeds and shows each failure's reason.

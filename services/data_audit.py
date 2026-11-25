@@ -113,9 +113,11 @@ async def audit_cme(today: dt.date, live: Dict[str, float]) -> List[Dict]:
             problems.append(f"too thin ({oi} contracts < {CME_MIN_OI}) — walls not drawn, vol screens used instead")
         px = live.get(sym)
         if px and c.get("spot") and abs(c["spot"] / px - 1) > 0.03:
-            problems.append(f"front future {c['spot']:.5g} is > 3 % from live {px} — wrong contract or stale")
+            move = 100 * (px / c["spot"] - 1)
+            problems.append(f"price moved {move:+.1f} % since the bulletin — send fresh sections to the bot"
+                            if age >= 1 else f"front future {c['spot']:.5g} is > 3 % from live {px} — wrong contract?")
         out.append({"source": "CME bulletin", "symbol": sym, "age_days": age,
-                    "status": "❌" if any("3 %" in p for p in problems) else "⚠️" if problems else "✅",
+                    "status": "❌" if any("wrong contract" in p for p in problems) else "⚠️" if problems else "✅",
                     "problems": problems})
     return out
 
@@ -158,9 +160,16 @@ async def run(live: Optional[Dict[str, float]] = None) -> Dict:
         pass
     try:
         await df.ensure_loaded()
-        bad = [s for s, h in df.status()["sources"].items() if h.get("score", 1) < 0.5]
-        items.append({"source": "data feeds", "status": "⚠️" if bad else "✅",
-                      "problems": [f"failing: {', '.join(sorted(bad))}"] if bad else []})
+        known = {"cboe_options": "CBOE blocks Render", "cme_bulletin": "CME blocks Render — send PDFs to the bot",
+                 "polygon_options": "Polygon plan has no options", "forexfactory_nextweek": "published late in the week",
+                 "tradier": "not available in your country"}
+        srcs = df.status()["sources"]
+        bad = {s: h for s, h in srcs.items() if h.get("score", 1) < 0.5}
+        real = {s: h for s, h in bad.items() if s not in known}
+        expected = sorted(s for s in bad if s in known)
+        probs = [f"{s}: {str(h.get('last_err') or 'failing')[:70]}" for s, h in sorted(real.items())]
+        items.append({"source": "data feeds", "status": "⚠️" if real else "✅", "problems": probs,
+                      "notes": [f"expected (blocked): {', '.join(expected)}"] if expected else []})
     except Exception:
         pass
     n = {k: sum(1 for i in items if i["status"] == k) for k in ("✅", "⚠️", "❌")}

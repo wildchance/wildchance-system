@@ -49,11 +49,8 @@ if BOT_TOKEN:
     application.add_handler(CommandHandler("bias", handle_bias))
     application.add_handler(CommandHandler("setup", handle_setup))
 
-    async def nudge(update, context: ContextTypes.DEFAULT_TYPE):
-        if update.message and update.message.text:
-            await update.message.reply_text("Type /help for the menu.")
-
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, nudge))
+    application.add_handler(MessageHandler(filters.Document.ALL, hub.document_msg))     # CME PDFs / zip
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, hub.text_msg))   # FF calendar paste
 else:
     print("[telegram] TELEGRAM_BOT_TOKEN/BOT_TOKEN not set — bot disabled")
 
