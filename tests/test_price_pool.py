@@ -55,7 +55,7 @@ def test_alt_values_uses_cache_and_corrects_gold(monkeypatch, enabled):
     now = int(time.time())
     pp._cache.clear()
     pp._cache["binance:PAXGUSDT:1h"] = (time.time(), [{"t": now - 3600, "open": 3640, "high": 3660,
-                                                        "low": 3630, "close": 3650}])
+                                                        "low": 3630, "close": 3650}], 5)
     pp.note_reference("XAU/USD", 3624.0)
     d = asyncio.new_event_loop().run_until_complete(pp.alt_values("XAU/USD", "1h", 5))
     assert d["source"] == "pool:binance" and round(d["values"][0]["close"], 2) == 3624.0
@@ -113,3 +113,27 @@ def test_proxy_reference_survives_restart(monkeypatch):
         assert store["proxy_refs"]["XAUUSD"][1] == 3580.0             # newer one saved
     finally:
         loop.close()
+
+
+
+def test_short_cached_history_does_not_answer_a_longer_request(monkeypatch):
+    import asyncio
+    monkeypatch.setattr(pp, "POOL_ENABLED", True)
+    now = int(time.time())
+    pp._cache.clear()
+    short = [{"t": now - 86400 * i, "open": 1, "high": 2, "low": 0.5, "close": 1.1} for i in range(80)]
+    pp._cache["yahoo_intraday:EURUSD=X:1day"] = (time.time(), short, 80)
+    calls = []
+
+    async def yahoo(tick, interval, n):
+        calls.append(n)
+        return [{"t": now - 86400 * i, "open": 1, "high": 2, "low": 0.5, "close": 1.2} for i in range(300)]
+    monkeypatch.setattr(pp, "_yahoo", yahoo)
+    loop = asyncio.new_event_loop()
+    try:
+        d80 = loop.run_until_complete(pp.alt_values("EUR/USD", "1day", 80))
+        d300 = loop.run_until_complete(pp.alt_values("EUR/USD", "1day", 300))
+    finally:
+        loop.close()
+    assert not calls[:0] and len(d80["values"]) == 80                     # cache answers the same size
+    assert calls == [300] and len(d300["values"]) == 300                   # a longer ask refetches

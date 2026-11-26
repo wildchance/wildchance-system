@@ -176,7 +176,7 @@ async def _build() -> Dict:
         r = row(sym, tech, sentiment_for(sym, comp, feed), macro_for(sym, state), carry(sym, rates))
         r["close"] = d1[-1] if d1 else None
         rows.append(r)
-    rows.sort(key=lambda r: -abs(r["score"]))
+    rows.sort(key=lambda r: (-abs(r["score"]), -abs(r["raw"])))    # ±10 ties ranked by the uncapped total
     out = {"rows": rows, "updated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
            "macro_updated": state.get("_updated"),
            "surprise_index": {c: ms.surprise_index(state, c) for c in ms.CCYS},

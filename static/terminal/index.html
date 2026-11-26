@@ -108,7 +108,7 @@ function edgeCell(v) {
 }
 function edgefinder(d) {
   const e = d.edge || {}, rows = (e.rows || []).map(r => `<tr><td>${esc(r.symbol)}</td>
-    <td class="${r.score > 0 ? "up" : r.score < 0 ? "down" : "muted"}">${esc(r.bias)}</td><td class="num"><b>${r.score}</b></td>
+    <td class="${r.score > 0 ? "up" : r.score < 0 ? "down" : "muted"}">${esc(r.bias)}</td><td class="num" title="uncapped total ${r.raw ?? r.score}"><b>${r.score}</b>${r.raw != null && Math.abs(r.raw) > 10 ? `<span class="muted"> (${r.raw > 0 ? "+" : ""}${r.raw})</span>` : ""}</td>
     ${EDGE_COLS.map(([g, k]) => edgeCell(((r[g] || {})[k]))).join("")}
     <td class="muted">${r.carry ? (r.carry.diff > 0 ? "+" : "") + r.carry.diff + "%" : ""}</td></tr>`).join("");
   const head = EDGE_COLS.map(([g, k, l]) => `<th title="${g}: ${k}">${l}</th>`).join("");
