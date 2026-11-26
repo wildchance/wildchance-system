@@ -121,6 +121,24 @@ async def gold_longs_lock() -> dict:
     return gdxy.dxy_flip_status(dxy, rb)
 
 
+async def gold_longs_locked(symbol: str = "XAU/USD") -> bool:
+    """True while DXY locks gold longs. Only gold has this lock; an unknown state counts as
+    locked so a buy level is never advertised by mistake."""
+    s = symbol.upper().replace("/", "")
+    if not s.startswith(("XAU", "GOLD")):
+        return False
+    try:
+        return (await gold_longs_lock()).get("gold_longs") != "unlocked"
+    except Exception:
+        return True
+
+
+def drop_longs(orders: list) -> tuple:
+    """(orders without the long side, how many were removed)."""
+    keep = [o for o in orders or [] if str(o.get("side", "")).lower() not in ("long", "buy")]
+    return keep, len(orders or []) - len(keep)
+
+
 async def gate_optimus(armed: list, sweep: dict) -> tuple:
     """Optimus zones are trades only when (1) the recon's own DXY lock allows the side and
     (2) the council passes it. One line per zone (the same side twice = one trade)."""

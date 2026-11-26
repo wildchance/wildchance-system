@@ -740,6 +740,10 @@ async def prelondon(balance: float = Query(5000, gt=0),
         raise HTTPException(status_code=502, detail="could not fetch the pre-London box")
     box = build_cbdr(win["high"], win["low"])
     plan = prelondon_limits(box)
+    from services.recon_service import drop_longs, gold_longs_locked
+    plan["longs_locked"] = await gold_longs_locked("XAU/USD")
+    if plan["longs_locked"]:                            # never arm a gold buy while DXY locks longs
+        plan["orders"], plan["hidden_buys"] = drop_longs(plan["orders"])
     if track:
         plan["tracked"] = await _arm_limits(db, plan["orders"], "gold_prelondon",
                                             balance, risk_usd, _ny_close(), execute=execute)

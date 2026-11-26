@@ -116,8 +116,13 @@ async def cbdr_limits(symbol: str, window: str = Query("prelondon"),
     out = await _build(symbol, window, None)
     box = build_cbdr(out["box"]["high"], out["box"]["low"])
     plan = prelondon_limits(box)
+    from services.recon_service import drop_longs, gold_longs_locked
+    locked = await gold_longs_locked(symbol)
+    hidden = 0
+    if locked:                                          # gold while DXY locks longs: sell levels only
+        plan["orders"], hidden = drop_longs(plan["orders"])
     result = {"symbol": symbol, "window": out["window_label"],
-              "session": out["session"], **plan}
+              "session": out["session"], "longs_locked": locked, "hidden_buys": hidden, **plan}
     if notify:
         lines = [f"🎯 *Pre-London limits — {symbol}*  ({out['session']})", ""]
         for o in plan["orders"]:
@@ -127,8 +132,11 @@ async def cbdr_limits(symbol: str, window: str = Query("prelondon"),
             lines.append(f"{arrow} {kind} `{px(symbol, o['entry'])}`  ({level}) — {o['reason']}")
         g = plan["grey_zone"]
         zone = lambda pair: "–".join(px(symbol, v) for v in pair if v is not None)   # noqa: E731
-        lines += ["", f"⚪ Grey {g['sd_band'][0]:g}–{g['sd_band'][1]:g}SD "
-                  f"buy {zone(g['buy_grey'])}  ·  sell {zone(g['sell_grey'])}", f"_{g['note']}_"]
+        grey = (f"sell {zone(g['sell_grey'])}" if locked
+                else f"buy {zone(g['buy_grey'])}  ·  sell {zone(g['sell_grey'])}")
+        lines += ["", f"⚪ Grey {g['sd_band'][0]:g}–{g['sd_band'][1]:g}SD {grey}", f"_{g['note']}_"]
+        if hidden:
+            lines.append(f"🔒 {hidden} buy level{'s' if hidden > 1 else ''} hidden — DXY locks gold longs (sells only)")
         result["sent"] = await _send("\n".join(lines))
     return result
 
