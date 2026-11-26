@@ -36,6 +36,16 @@ WEBHOOK_PATH = "/telegram/webhook"
 # On Render, RENDER_EXTERNAL_URL is injected automatically (e.g. https://app.onrender.com).
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL")
 WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
+# Pin the bot to ONE service: with two Render services on the same bot token, each boot used to
+# re-point Telegram at itself (the bot then answered from whichever booted last, with that
+# service's settings and database). Set this to the main service's URL on every service.
+PINNED_WEBHOOK = (os.getenv("TELEGRAM_WEBHOOK_URL") or "").rstrip("/")
+
+
+def webhook_target() -> str | None:
+    if PINNED_WEBHOOK:
+        return PINNED_WEBHOOK if PINNED_WEBHOOK.endswith(WEBHOOK_PATH) else PINNED_WEBHOOK + WEBHOOK_PATH
+    return (WEBHOOK_BASE_URL.rstrip("/") + WEBHOOK_PATH) if WEBHOOK_BASE_URL else None
 
 application = None
 if BOT_TOKEN:
@@ -65,8 +75,8 @@ async def _start_and_register_webhook():
     try:
         await application.initialize()
         await application.start()
-        if WEBHOOK_BASE_URL:
-            url = WEBHOOK_BASE_URL.rstrip("/") + WEBHOOK_PATH
+        if webhook_target():
+            url = webhook_target()
             # keep pending updates: the message that woke a sleeping Render instance (or arrived
             # during a redeploy) is still queued at Telegram — dropping it = "the bot never answered"
             kwargs = {"url": url, "drop_pending_updates": False,

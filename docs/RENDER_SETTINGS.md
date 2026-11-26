@@ -425,3 +425,9 @@ EA: `mt5_bridge/WildChance_Copier.mq5` — one file, two roles. Same `BRIDGE_TOK
   (daily snapshot at 06:00 UTC for the score-vs-price chart). Council gets a `fundamentals` agent (|score| ≥ 3).
 - Trial: bot `/trial you@email.com` → `TRIAL_DAYS` (7) of `TRIAL_TIER` (trader), once per Telegram account and
   per email, never over a paid plan.
+
+### One bot, one service
+Two Render services with the same `TELEGRAM_BOT_TOKEN` fight over the webhook (each boot re-points the bot at
+itself; the bot then answers with that service's settings and database). Keep ONE service with the bot token,
+or set `TELEGRAM_WEBHOOK_URL=https://wildchance-system.onrender.com` on every service. `/ops/telegram` names the
+service the webhook points to; the checklist's "database" row fails when a service has no `DATABASE_URL`.

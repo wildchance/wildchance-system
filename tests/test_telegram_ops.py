@@ -31,7 +31,7 @@ def test_telegram_status_names_the_problem(monkeypatch):
     monkeypatch.setattr(tr, "WEBHOOK_BASE_URL", "https://wildchance-system.onrender.com")
     r = run(ops_check.telegram_status())
     assert r["ok"] is False and r["bot"] == "@wcbot" and r["pending_updates"] == 9
-    assert any("points elsewhere" in p for p in r["problems"]) and any("timed out" in p for p in r["problems"])
+    assert any("ANOTHER service" in p for p in r["problems"]) and any("timed out" in p for p in r["problems"])
     monkeypatch.setattr(tr, "application", None)
     assert "bot disabled" in run(ops_check.telegram_status())["reason"]
 
@@ -43,3 +43,19 @@ def test_glued_command_arguments_recovered():
     assert hub.split_glued("/walletadd tron T1", hub.HANDLERS) is None          # a real command, not glued
     assert hub.split_glued("/xyz", hub.HANDLERS) is None
     assert "carry" in hub.HANDLERS and hub.LEGACY_COMMANDS >= {"admin", "setup"}
+
+
+def test_webhook_can_be_pinned_to_one_service(monkeypatch):
+    from routes import telegram_routes as tr
+    monkeypatch.setattr(tr, "WEBHOOK_BASE_URL", "https://wildchance-system-tjfy.onrender.com")
+    monkeypatch.setattr(tr, "PINNED_WEBHOOK", "")
+    assert tr.webhook_target() == "https://wildchance-system-tjfy.onrender.com/telegram/webhook"
+    monkeypatch.setattr(tr, "PINNED_WEBHOOK", "https://wildchance-system.onrender.com")
+    assert tr.webhook_target() == "https://wildchance-system.onrender.com/telegram/webhook"
+
+
+def test_checklist_flags_sqlite():
+    from routes import ops_check
+    judge = next(f for name, path, f in ops_check.CHECKS if name == "database")
+    assert judge({"db_backend": "sqlite", "db_reachable": True})[0] == "❌"
+    assert judge({"db_backend": "postgresql", "db_reachable": True})[0] == "✅"
