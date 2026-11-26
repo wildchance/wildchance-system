@@ -34,3 +34,12 @@ def test_telegram_status_names_the_problem(monkeypatch):
     assert any("points elsewhere" in p for p in r["problems"]) and any("timed out" in p for p in r["problems"])
     monkeypatch.setattr(tr, "application", None)
     assert "bot disabled" in run(ops_check.telegram_status())["reason"]
+
+
+def test_glued_command_arguments_recovered():
+    from handlers import hub_handler as hub
+    assert hub.split_glued("/trialme@mail.com", hub.HANDLERS) == ("trial", ["me@mail.com"])
+    assert hub.split_glued("/wallsEURUSD", hub.HANDLERS) == ("walls", ["EURUSD"])
+    assert hub.split_glued("/walletadd tron T1", hub.HANDLERS) is None          # a real command, not glued
+    assert hub.split_glued("/xyz", hub.HANDLERS) is None
+    assert "carry" in hub.HANDLERS and hub.LEGACY_COMMANDS >= {"admin", "setup"}

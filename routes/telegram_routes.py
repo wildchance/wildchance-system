@@ -54,6 +54,7 @@ if BOT_TOKEN:
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, hub.paid_msg))    # Stars: activate
     application.add_handler(MessageHandler(filters.Document.ALL, hub.document_msg))     # CME PDFs / zip
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, hub.text_msg))   # FF calendar paste
+    application.add_handler(MessageHandler(filters.COMMAND, hub.unknown_cmd), group=1)    # glued args / unknown
 else:
     print("[telegram] TELEGRAM_BOT_TOKEN/BOT_TOKEN not set — bot disabled")
 
