@@ -66,7 +66,9 @@ async def _start_and_register_webhook():
         await application.start()
         if WEBHOOK_BASE_URL:
             url = WEBHOOK_BASE_URL.rstrip("/") + WEBHOOK_PATH
-            kwargs = {"url": url, "drop_pending_updates": True,
+            # keep pending updates: the message that woke a sleeping Render instance (or arrived
+            # during a redeploy) is still queued at Telegram — dropping it = "the bot never answered"
+            kwargs = {"url": url, "drop_pending_updates": False,
                       "allowed_updates": Update.ALL_TYPES}
             if WEBHOOK_SECRET:
                 kwargs["secret_token"] = WEBHOOK_SECRET
