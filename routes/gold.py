@@ -961,7 +961,9 @@ async def radar(interval: str = Query("1day", description="HTF: 1day / 4h"),
         try:
             price = await get_forex_price("XAU/USD")
         except Exception:
-            price = ohlc[-1][4]
+            price = None
+    if price is None:                            # no live quote (TwelveData out of credits) → last close
+        price = ohlc[-1][4]
     return gr.radar_scan(ohlc, float(price))
 
 
