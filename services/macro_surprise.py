@@ -43,7 +43,7 @@ _RULES: List[Tuple[str, re.Pattern]] = [
     ("pce", re.compile(r"\bPCE\b", re.I)),
     ("ppi", re.compile(r"\bPPI\b|producer price", re.I)),
     ("cpi", re.compile(r"\bCPI\b|consumer price|\bHICP\b|inflation rate", re.I)),
-    ("mpmi", re.compile(r"manufacturing PMI|ISM manufacturing|manufacturing index", re.I)),
+    ("mpmi", re.compile(r"manufacturing PMI|ISM manufacturing|manufacturing index|Ivey PMI", re.I)),
     ("spmi", re.compile(r"services PMI|ISM services|non-manufacturing|services index", re.I)),
     ("retail", re.compile(r"retail sales", re.I)),
     ("conf", re.compile(r"consumer confidence|consumer sentiment|UoM|GfK", re.I)),
@@ -59,13 +59,43 @@ _SKIP = re.compile(r"speaks|speech|minutes|testifies|press conference|\bf?omc\b 
                    re.I)
 
 
+# a title that matches an indicator but is NOT that indicator (FF lists these side by side)
+_NOT = {"gdp": re.compile(r"price index|deflator", re.I), "mpmi": re.compile(r"prices|employment", re.I),
+        "spmi": re.compile(r"prices|employment", re.I), "conf": re.compile(r"inflation expectations", re.I),
+        "nfp": re.compile(r"revision|cost index", re.I), "rate": re.compile(r"votes|statement|expectations", re.I)}
+
+
 def classify(title: str) -> Optional[str]:
     if not title or _SKIP.search(title):
         return None
     for key, rx in _RULES:
         if rx.search(title):
-            return key
+            return None if key in _NOT and _NOT[key].search(title) else key
     return None
+
+
+SEED_CSV = "data/ff_history_2026.csv"
+SEED_OFFSET_H = 3                                    # the owner's FF timezone (UTC+3)
+
+
+def seed_events(path: str = SEED_CSV) -> List[Dict]:
+    """The owner's pasted FF history (local UTC+3 times → UTC)."""
+    import csv
+    import os
+    if not os.path.exists(path):
+        return []
+    out = []
+    with open(path) as f:
+        for r in csv.reader(line for line in f if line.strip() and not line.startswith("#")):
+            if len(r) < 7:
+                continue
+            try:
+                t = dt.datetime.fromisoformat(f"{r[0]}T{r[1]}") - dt.timedelta(hours=SEED_OFFSET_H)
+            except ValueError:
+                continue
+            out.append({"ccy": r[2], "title": r[3], "when": t.strftime("%Y-%m-%dT%H:%M"),
+                        "actual": r[4], "forecast": r[5], "previous": r[6]})
+    return out
 
 
 def num(v) -> Optional[float]:
@@ -102,8 +132,9 @@ def surprise(ind: str, actual: float, forecast: Optional[float], previous: Optio
 
 
 def _events() -> List[Dict]:
-    """Released events from both calendars, normalised: ccy, title, when, actual, forecast, previous."""
-    out = []
+    """Released events from both calendars (+ the owner's seed history), normalised:
+    ccy, title, when, actual, forecast, previous."""
+    out = seed_events()
     try:
         from services import econ_calendar
         for e in econ_calendar._events:
@@ -132,7 +163,7 @@ def apply(state: Dict, events: List[Dict]) -> Tuple[Dict, int]:
         act = num(e.get("actual"))
         if not ind or act is None:
             continue
-        when = str(e.get("when") or "")
+        when = str(e.get("when") or "")[:16]
         cur = state.setdefault(ccy, {}).get(ind)
         if cur and cur.get("when", "") >= when:
             continue
@@ -153,14 +184,19 @@ async def load() -> Dict:
     return dict(v or {})
 
 
-async def ingest() -> Dict:
+async def ingest(extra: Optional[List[Dict]] = None) -> Dict:
+    """``extra``: calendar-shaped rows (title, ccy, time_utc, actual, forecast, previous) — e.g. a long
+    owner paste whose older rows the calendar store itself would prune."""
     try:
         from services import econ_calendar
         await econ_calendar.ensure_loaded()
     except Exception:
         pass
     state = await load()
-    state, n = apply(state, _events())
+    rows = _events() + [{"ccy": e.get("ccy"), "title": e.get("title"), "when": str(e.get("time_utc") or "")[:16],
+                         "actual": e.get("actual"), "forecast": e.get("forecast"), "previous": e.get("previous")}
+                        for e in extra or []]
+    state, n = apply(state, sorted(rows, key=lambda e: str(e.get("when") or "")))
     if n:
         from services import data_store
         state["_updated"] = time.time()

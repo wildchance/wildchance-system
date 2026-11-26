@@ -158,8 +158,9 @@ async def geopolitical_risk() -> Optional[float]:
 
 # Current G10 policy rates (%, approx — operator-updatable via set_policy_rates()).
 # Live BIS SDMX wiring is a future upgrade; this encoded map gives the divergence now.
-POLICY_RATES = {"FED": 4.50, "ECB": 2.15, "BOE": 4.00, "BOJ": 0.50,
-                "BOC": 2.75, "RBA": 3.60, "SNB": 0.00, "RBNZ": 3.00}
+# Forex Factory "Central Bank Rates", owner paste Nov 26 2026 (BIS live values override when reachable)
+POLICY_RATES = {"FED": 4.00, "ECB": 2.65, "BOE": 4.00, "BOJ": 1.25,
+                "BOC": 2.50, "RBA": 4.85, "SNB": 0.00, "RBNZ": 2.75}
 
 
 def set_policy_rates(**rates) -> dict:
