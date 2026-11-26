@@ -861,11 +861,18 @@ async def zones_digest(balance: float = Query(5000, gt=0),
     if price is None:
         return _no_price("gold zones digest")
     plan = gz.zone_plan(price, balance=balance, risk_usd=risk_usd)
-    if touch_only and not plan["armed"]:
-        return {"sent": False, "armed": False, "price": plan["price"],
-                "reason": "no zone armed — price not at a level yet", "plan": plan}
-    sent = await gold_scan._tg(gz.format_zone_digest(plan)) if notify else False
-    return {"sent": sent, "armed": plan["armed"], "plan": plan}
+    from services.recon_service import gold_longs_lock
+    try:
+        locked = (await gold_longs_lock()).get("gold_longs") != "unlocked"
+    except Exception:
+        locked = True                                   # unknown lock state: never advertise longs
+    legs, hidden = gz.visible_legs(plan, locked)
+    armed = any(l.get("armed") for l in legs)           # a touched buy zone while locked is no alert
+    if touch_only and not armed:
+        return {"sent": False, "armed": False, "price": plan["price"], "longs_locked": locked,
+                "reason": "no visible zone touched — price not at a level yet", "plan": plan}
+    sent = await gold_scan._tg(gz.format_zone_digest(plan, longs_locked=locked)) if notify else False
+    return {"sent": sent, "armed": armed, "longs_locked": locked, "hidden_long_zones": hidden, "plan": plan}
 
 
 @router.get("/b2b")

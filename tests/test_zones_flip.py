@@ -204,6 +204,23 @@ def test_zone_plan_arms_only_on_touch():
 
 def test_format_zone_digest_has_levels():
     txt = gz.format_zone_digest(gz.zone_plan(4050.0, balance=5000))
-    assert "GOLD Zone Plan" in txt
+    assert "GOLD zone map" in txt and "not a trade" in txt and "council GO" in txt
     assert "SL" in txt and "TP" in txt
-    assert "⚡ARMED" in txt                         # 4050 is inside the sell shelf
+    assert "⚡touched" in txt                       # 4050 is inside the sell shelf
+
+
+
+def test_zone_map_hides_buy_zones_while_longs_locked():
+    plan = {"price": 3565.07, "htf_region": "discount", "htf_bias": "long", "budget": {}, "armed": True,
+            "legs": [{"signal": "LONG", "zone": "weeklyob3250", "armed": True, "pips_away": 651, "htf": "aligns",
+                      "band": [3250, 3500], "entries": [3500.0], "stop": 3242, "target": 4045, "rr_to_target": 99.38,
+                      "within_cap": False},
+                     {"signal": "SHORT", "zone": "ob3840", "armed": False, "pips_away": 2949, "htf": "opposes",
+                      "band": [3820, 3860], "entries": [3820.0], "stop": 3868, "target": 3500, "rr_to_target": 6.1,
+                      "within_cap": True}]}
+    locked = gz.format_zone_digest(plan, longs_locked=True)
+    assert "buy zone weeklyob3250" not in locked and "sell zone ob3840" in locked
+    assert "1 buy zone hidden — DXY locks gold longs" in locked and "✅" not in locked
+    open_ = gz.format_zone_digest(plan, longs_locked=False)
+    assert "buy zone weeklyob3250" in open_ and "hidden" not in open_
+    assert gz.visible_legs(plan, True)[1] == 1 and len(gz.visible_legs(plan, False)[0]) == 2
