@@ -37,10 +37,16 @@ def _base() -> str:
 
 
 @router.post("/checkout")
-async def checkout(provider: str = Query(..., pattern="^(paystack|stripe)$"),
+async def checkout(provider: str = Query(..., pattern="^(paystack|stripe|cryptopay)$"),
                    tier: str = Query(...), months: int = Query(1, ge=1, le=12),
                    user=Depends(current_user)):
     T = tier.upper()
+    if provider == "cryptopay":                       # USDT / TON / BTC via @CryptoBot
+        from services import payments
+        inv = await payments.cryptopay_invoice(tier, months, user.email)
+        if not inv.get("ok"):
+            raise HTTPException(503 if "configured" in inv["reason"] else 400, inv["reason"])
+        return {"provider": "cryptopay", "url": inv["url"]}
     if provider == "paystack":
         key = _env("PAYSTACK_SECRET_KEY")
         if not key:
@@ -116,6 +122,19 @@ async def stripe_webhook(request: Request, stripe_signature: str = Header(None),
     if not bl.verify_stripe(body, stripe_signature, _env("STRIPE_WEBHOOK_SECRET")):
         raise HTTPException(401, "bad signature")
     return await _apply(bl.stripe_event(json.loads(body)), "stripe", db)
+
+
+@router.post("/cryptopay/webhook")
+async def cryptopay_webhook(request: Request, crypto_pay_api_signature: str = Header(None)):
+    """@CryptoBot invoice_paid → activation (signature verified; each invoice applied once)."""
+    from services import payments
+    body = await request.body()
+    if not payments.cryptopay_verify(body, crypto_pay_api_signature):
+        raise HTTPException(401, "bad signature")
+    ev = payments.cryptopay_event(json.loads(body or b"{}"))
+    if not ev:
+        return {"ok": True, "ignored": True}
+    return await payments.apply_once(ev["ref"], ev["tier"], ev["months"], ev["email"], "cryptopay")
 
 
 @router.get("/expire")

@@ -189,6 +189,17 @@ async def freshness_view():
     return rep
 
 
+@router.post("/treasury/check")
+async def treasury_check():
+    """Hourly: watch-only treasury balances; owner alert on any incoming / outgoing move."""
+    from services import treasury
+    v = await treasury.load()
+    if not v["addresses"]:
+        return {"skipped": "no addresses"}
+    rep = await treasury.snapshot(alert=True)
+    return {"total_usd": rep["total_usd"], "alerts": rep["alerts"], "alert_sent": rep["alert_sent"]}
+
+
 @router.get("/shfe")
 async def shfe_view():
     """Shanghai Futures Exchange: gold premium vs spot, copper pulse (experimental)."""

@@ -47,7 +47,8 @@ def jobs() -> List[Job]:
               (P, "/gold/zones/digest?touch_only=true"), (P, "/gold/recon?armed_only=true"),
               (P, "/gold/retracement"), (P, "/gold/confirm?deploy=true"),
               (P, "/gold/levels/refresh?interval=4h"), (P, "/gold/alerter/scan?notify=true"),
-              (P, "/sniper/scan?notify=true"), (G, "/fx/rotation?notify=true")]
+              (P, "/sniper/scan?notify=true"), (G, "/fx/rotation?notify=true"),
+              (P, "/ops/treasury/check")]
     exec_token = config("EXECUTION_TOKEN", default=None)
     if exec_token:
         hourly.insert(1, (G, f"/execution/reconcile?token={exec_token}"))   # GET route

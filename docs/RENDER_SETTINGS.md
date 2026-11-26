@@ -401,3 +401,15 @@ EA: `mt5_bridge/WildChance_Copier.mq5` — one file, two roles. Same `BRIDGE_TOK
 - Master offline > `COPY_STALE_S` (30) → followers HOLD: nothing opened, nothing closed.
 - Owner: `/copy?token=…` page (pause / resume / multiplier per account), bot `/accounts`, `/copypause <login|all>`,
   `/copyresume <login|all>`, `/copymult <login> 0.5`.
+
+### Treasury (watch-only) + subscription payments
+- Bot (owner): `/wallet`, `/walletadd <btc|eth|tron|ton> <PUBLIC address> [label]`, `/walletdel <n>`.
+  Public addresses only — seed phrases / private keys are refused and the bot tells you to delete them.
+  Hourly `/ops/treasury/check` alerts the owner on any incoming (💰) or outgoing (📤) move ≥ `TREASURY_MIN_ALERT_USD` (1).
+  Optional `TREASURY_ETH_RPC` (default publicnode). Totals in KES use `KES_PER_USD` (129).
+- Telegram Stars: `/subscribe trader you@email.com [months]` → Stars invoice → activation on payment.
+  `STARS_PER_USD` (77) or `STARS_PRICE_<TIER>`. Owner refunds: `/refund <user_id> <charge_id>`. `/paysupport` answers members.
+- Crypto Pay (@CryptoBot → Crypto Pay → Create App): `CRYPTOPAY_TOKEN`; webhook URL in the app settings:
+  `https://wildchance-system.onrender.com/billing/cryptopay/webhook`. Website checkout: `provider=cryptopay`.
+  `CRYPTOPAY_ASSETS` (USDT,TON,BTC), `CRYPTOPAY_TESTNET` (false), `CRYPTOPAY_IN_BOT` (false).
+- Every payment reference is applied once (`payments_seen`), so retried webhooks never add a second month.

@@ -49,6 +49,9 @@ if BOT_TOKEN:
     application.add_handler(CommandHandler("bias", handle_bias))
     application.add_handler(CommandHandler("setup", handle_setup))
 
+    from telegram.ext import PreCheckoutQueryHandler
+    application.add_handler(PreCheckoutQueryHandler(hub.precheckout))                    # Stars: confirm order
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, hub.paid_msg))    # Stars: activate
     application.add_handler(MessageHandler(filters.Document.ALL, hub.document_msg))     # CME PDFs / zip
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, hub.text_msg))   # FF calendar paste
 else:
