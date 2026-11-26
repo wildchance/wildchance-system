@@ -121,7 +121,31 @@ def aggregate(bars: List[Dict], minutes: int, tz: str = "UTC") -> List[Dict]:
     return out
 
 
-def basis_correct(bars: List[Dict], ref: Optional[Tuple[float, float]], max_age_s: float = 6 * 3600,
+# PAXG / GC=F track spot with a slow-moving basis, so a reference up to 3 days old is
+# still accurate to a few dollars; it is persisted so a Render restart does not lose it.
+REF_MAX_S = float(config("PROXY_REF_MAX_H", default="72")) * 3600
+_ref_saved = {"t": 0.0, "loaded": False}
+
+
+async def _ref_sync() -> None:
+    """Load the saved references once after boot; save when a newer one arrived."""
+    try:
+        from services import data_store
+        if not _ref_saved["loaded"]:
+            saved, _ = await data_store.get("proxy_refs")
+            for k, v in (saved or {}).items():
+                if k not in _ref or v[0] > _ref[k][0]:
+                    _ref[k] = (float(v[0]), float(v[1]))
+            _ref_saved["loaded"] = True
+        newest = max((v[0] for v in _ref.values()), default=0.0)
+        if newest > _ref_saved["t"] + 600:
+            await data_store.put("proxy_refs", {k: list(v) for k, v in _ref.items() if k in PROXIES})
+            _ref_saved["t"] = newest
+    except Exception:
+        pass
+
+
+def basis_correct(bars: List[Dict], ref: Optional[Tuple[float, float]], max_age_s: float = REF_MAX_S,
                   now: Optional[float] = None) -> Optional[List[Dict]]:
     """Scale proxy bars so their price matches the last real spot. None if no fresh ref."""
     now = now or time.time()
@@ -264,7 +288,23 @@ async def alt_values(symbol: str, interval: str, outputsize: int, timezone: str 
         if not bars:
             continue
         if kind(symbol) == "proxy":
-            bars = basis_correct(bars, _ref.get(_s(symbol)))
+            await _ref_sync()
+            ref = _ref.get(_s(symbol))
+            if ref and not any(abs(b["t"] - ref[0]) < 6 * 3600 for b in bars):
+                # the reference is older than these bars: re-anchor on a daily close near it
+                try:
+                    old = (await _binance(tick, "1h", 100)) if src == "binance" else \
+                        (await _kraken(tick, "1h", 100)) if src == "kraken" else \
+                        (await _yahoo(tick, "1h", 100))
+                    near = min(old, key=lambda b: abs(b["t"] - ref[0])) if old else None
+                    if near and abs(near["t"] - ref[0]) < 3 * 3600 and near["close"]:
+                        f = ref[1] / near["close"]
+                        bars = [{**b, "open": b["open"] * f, "high": b["high"] * f, "low": b["low"] * f,
+                                 "close": b["close"] * f} for b in bars]
+                        return to_td(bars, interval, tz, outputsize, f"pool:{src}")
+                except Exception:
+                    pass
+            bars = basis_correct(bars, ref)
             if not bars:
                 continue
         return to_td(bars, interval, tz, outputsize, f"pool:{src}")

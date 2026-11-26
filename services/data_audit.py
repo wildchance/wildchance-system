@@ -160,9 +160,7 @@ async def run(live: Optional[Dict[str, float]] = None) -> Dict:
         pass
     try:
         await df.ensure_loaded()
-        known = {"cboe_options": "CBOE blocks Render", "cme_bulletin": "CME blocks Render — send PDFs to the bot",
-                 "polygon_options": "Polygon plan has no options", "forexfactory_nextweek": "published late in the week",
-                 "tradier": "not available in your country"}
+        from services.errors import EXPECTED_SOURCES as known
         srcs = df.status()["sources"]
         bad = {s: h for s, h in srcs.items() if h.get("score", 1) < 0.5}
         real = {s: h for s, h in bad.items() if s not in known}
