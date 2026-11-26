@@ -65,8 +65,12 @@ def parse(text: str, today: Optional[dt.date] = None, offset_h: float = OFFSET_H
             out.append({"title": title, "ccy": ccy if ccy != "ALL" else "USD",
                         "time_utc": when.isoformat(timespec="minutes"),
                         "impact": "High" if HIGH.search(title) and "Holiday" not in title and "Speaks" not in title
-                        else "Medium", "forecast": nums[0] if nums else "", "previous": nums[1] if len(nums) > 1 else "",
-                        "actual": "", "source": "owner paste"})
+                        else "Medium",
+                        # FF columns: actual · forecast · previous — three numbers means it has printed
+                        "actual": nums[0] if len(nums) >= 3 else "",
+                        "forecast": (nums[1] if len(nums) >= 3 else nums[0]) if nums else "",
+                        "previous": (nums[2] if len(nums) >= 3 else nums[1]) if len(nums) > 1 else "",
+                        "source": "owner paste"})
     return out
 
 

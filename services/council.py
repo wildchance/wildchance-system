@@ -176,6 +176,17 @@ def vote_seasonal(symbol: str, side: str, today: Optional[dt.date] = None) -> Di
     return _v("seasonal", 0, "midterm window — no view for this market/side")
 
 
+def vote_fundamentals(edge: Optional[Dict], side: str) -> Dict:
+    """EdgeFinder v2 macro + sentiment + trend score: |score| ≥ 3 votes with its sign."""
+    if not edge:
+        return _v("fundamentals", 0, "no EdgeFinder score yet")
+    s = int(edge.get("score") or 0)
+    if abs(s) < 3:
+        return _v("fundamentals", 0, f"EdgeFinder {s:+d} — neutral")
+    agree = (s > 0) == (side == "BUY")
+    return _v("fundamentals", 1 if agree else -1, f"EdgeFinder {s:+d} {edge.get('bias', '')}")
+
+
 def vote_plan(plans: Optional[List[Dict]], side: str, price: Optional[float], tol: float = 0.0) -> Dict:
     """The owner's own plan (data/owner_plans.csv): +1 when this trade matches an active
     plan zone price is in, −1 when it fights one (e.g. a BUY inside a SELL plan zone)."""
@@ -334,12 +345,18 @@ async def convene(symbol: str, side: str, yearly: Optional[Dict] = None,
             yearly = await run(symbol)
         except Exception:
             yearly = None
+    edge = None
+    try:
+        from services import edge_v2
+        edge = await edge_v2.score_for(symbol)
+    except Exception:
+        pass
     votes = [vote_cot(cot_row, side), vote_sentiment(sent, side), vote_weekly(wk, side),
              vote_structure(yearly, side), vote_history(role_stats), vote_macro(lock, side),
              vote_news(news, side), vote_base_rates((yearly or {}).get("history"), side, trade_type),
              vote_vix(vix, symbol, side), vote_seasonal(symbol, side),
              vote_plan(plans, side, price, tol),
-             vote_mirofish(mf, side)]
+             vote_mirofish(mf, side), vote_fundamentals(edge, side)]
     votes = apply_scores(votes, scores)
     d = decide(votes)
     pr = probability(votes, scores)

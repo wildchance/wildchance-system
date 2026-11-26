@@ -413,3 +413,15 @@ EA: `mt5_bridge/WildChance_Copier.mq5` — one file, two roles. Same `BRIDGE_TOK
   `https://wildchance-system.onrender.com/billing/cryptopay/webhook`. Website checkout: `provider=cryptopay`.
   `CRYPTOPAY_ASSETS` (USDT,TON,BTC), `CRYPTOPAY_TESTNET` (false), `CRYPTOPAY_IN_BOT` (false).
 - Every payment reference is applied once (`payments_seen`), so retried webhooks never add a second month.
+
+### EdgeFinder v2 + free trial
+- Macro layer (`services/macro_surprise.py`): every released number (EA MT5 calendar, Forex Factory, owner
+  paste — pastes now keep the actual) → ±1 / ±2 surprise per currency per indicator, remembered until the
+  next print. Growth (GDP, PMIs, retail sales, confidence) · inflation (CPI, PPI, PCE) · jobs (NFP, unemployment,
+  claims, ADP, JOLTS) · rates (decision direction / surprise). Hourly `POST /edge2/ingest` also rebuilds the board.
+- Board (`services/edge_v2.py`): −10…+10 per market = trend D1 + 4H + seasonality (monthly cache) + COT + crowd
+  + macro (pair = base − quote; gold/silver = −USD; US indices = +growth/jobs, −inflation/rates) · carry shown.
+  Terminal top panel, bot `/edge`, `/carry`, `GET /edge2`, `/edge2/carry`, `/edge2/history/{sym}`
+  (daily snapshot at 06:00 UTC for the score-vs-price chart). Council gets a `fundamentals` agent (|score| ≥ 3).
+- Trial: bot `/trial you@email.com` → `TRIAL_DAYS` (7) of `TRIAL_TIER` (trader), once per Telegram account and
+  per email, never over a paid plan.

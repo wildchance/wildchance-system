@@ -26,7 +26,7 @@ BASE = (config("WEBHOOK_BASE_URL", default=None) or config("RENDER_EXTERNAL_URL"
 PUBLIC_COMMANDS = [("strength", "Currency strength + best pairings"), ("rotation", "Event rotation right now"),
                    ("walls", "Dealer walls: /walls EURUSD"), ("calendar", "High-impact events (7 days)"),
                    ("results", "Track record: wins / losses / BE"), ("recent", "Last 10 closed signals"),
-                   ("edge", "COT + retail bias board"), ("terminal", "Open the terminal"), ("help", "Show menu")]
+                   ("edge", "EdgeFinder: top setups −10…+10"), ("terminal", "Open the terminal"), ("help", "Show menu")]
 OWNER_COMMANDS = [("open", "Open signals + exposure (owner)"), ("health", "Errors today (owner)"),
                   ("audit", "Data audit (owner)")]
 
@@ -81,12 +81,13 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["👋 *WildChance hub*", "",
              "💪 /strength — currency strength + best pairings",
              "⏸ /rotation — which currencies step aside for news, what to trade instead",
-             "💳 /subscribe — plans, pay with Telegram Stars",
+             "💳 /subscribe — plans, pay with Telegram Stars · 🎁 /trial — free 7-day trial",
+             "💱 /carry — carry scanner (who earns swap)",
              "🧱 /walls EURUSD — dealer walls (CME or vol screens)",
              "🗓 /calendar [USD,EUR] — high-impact events, next 7 days",
              "📈 /results — track record (wins · losses · breakevens · pips)",
              "🗒 /recent — last 10 closed signals",
-             "🧭 /edge — COT + retail bias board",
+             "🧭 /edge — EdgeFinder top setups (macro + sentiment + trend, −10…+10)",
              "🖥 /terminal — open the terminal"]
     if is_owner(update):
         lines += ["", "*Owner*", "📂 /open — open signals + exposure", "🩺 /health — errors today",
@@ -184,6 +185,11 @@ async def recent_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def edge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async def go():
+        from services import edge_v2
+        b = await edge_v2.cached()
+        if b and b.get("rows"):
+            await _reply(update, edge_v2.text(b))
+            return
         from services.wildchance_service import get_latest_feed
         feed = await get_latest_feed() or {}
         sig = sorted(feed.get("signals") or [], key=lambda s: -(s.get("confidence") or 0))
@@ -775,3 +781,60 @@ OWNER_COMMANDS += [("wallet", "Treasury balances (watch-only, owner)"),
                    ("walletadd", "Watch a public address: /walletadd tron T… (owner)"),
                    ("walletdel", "Stop watching: /walletdel 2 (owner)"),
                    ("refund", "Refund a Stars payment (owner)")]
+
+
+
+# ── EdgeFinder v2 extras + free trial ───────────────────────────────────────────
+async def carry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def go():
+        from services import edge_v2
+        b = await edge_v2.cached()
+        await _reply(update, edge_v2.carry_text(b) if b else "💱 The carry board is building — try again within the hour.")
+    await _guard(update, go)
+
+
+TRIAL_DAYS = int(config("TRIAL_DAYS", default="7"))
+TRIAL_TIER = str(config("TRIAL_TIER", default="trader"))
+
+
+async def trial_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/trial you@email.com → TRIAL_DAYS of TRIAL_TIER, once per Telegram account and per email."""
+    from services import payments
+    args = context.args or []
+    if not args or not payments.EMAIL.match(args[0]):
+        await _reply(update, f"🎁 Free {TRIAL_DAYS}-day {TRIAL_TIER.title()} trial: /trial you@email.com\n"
+                             "One trial per person. No payment details needed.")
+        return
+    email = args[0].lower()
+    eu = getattr(update, "effective_user", None)
+    uid = str(eu.id) if eu else str(update.effective_chat.id)
+
+    async def go():
+        from services import data_store, billing_service as bs
+        from database.db import AsyncSessionLocal
+        used, _ = await data_store.get("trials")
+        used = dict(used or {})
+        users, emails = set(used.get("users", [])), set(used.get("emails", []))
+        if uid in users or email in emails:
+            await _reply(update, "🎁 A trial was already used for this Telegram account or email. "
+                                 "/subscribe to continue — thank you for trying WildChance!")
+            return
+        async with AsyncSessionLocal() as db:
+            r = await bs.start_trial(db, email, TRIAL_TIER, TRIAL_DAYS, f"tg:{uid}")
+        if not r.get("ok"):
+            await _reply(update, f"⚠️ {r.get('reason')}")
+            return
+        used["users"], used["emails"] = sorted(users | {uid}), sorted(emails | {email})
+        await data_store.put("trials", used)
+        await _reply(update, f"🎁 Trial on: {TRIAL_TIER.title()} for {email} until {r['paid_until'][:10]}. "
+                             "Sign in on the members page with that email. /edge and /terminal are yours to explore.")
+        try:
+            from services.owner_notify import send
+            await send(f"🎁 New trial: {email} (tg {uid}) → {TRIAL_TIER} {TRIAL_DAYS} d")
+        except Exception:
+            pass
+    await _guard(update, go)
+
+
+HANDLERS.update({"carry": carry_cmd, "trial": trial_cmd})
+PUBLIC_COMMANDS += [("carry", "Carry scanner: who earns swap"), ("trial", f"Free {TRIAL_DAYS}-day trial")]
