@@ -85,7 +85,9 @@ async def live_read(gold_price: Optional[float] = None, interval: str = "4h",
             from utils.price_fetcher import get_forex_price
             gold_price = await get_forex_price("XAU/USD")
         except Exception:
-            gold_price = obars[-1][3]
+            gold_price = None
+    if gold_price is None:                       # no live quote (e.g. TwelveData out of credits) →
+        gold_price = obars[-1][3]                # the last HTF close we already hold, never float(None)
     if htf_bias is None:
         htf_bias = await _htf_bias()
     if dxy_unlocked is None:
