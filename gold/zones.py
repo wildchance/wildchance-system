@@ -270,21 +270,32 @@ def zone_plan(price: float, balance: float = 5000.0, risk_usd: float = 20.0,
             "armed": any(l["armed"] for l in legs)}
 
 
-def format_zone_digest(plan: dict) -> str:
-    """Telegram card for a zone plan — buy-limit / sell-limit levels with entry
-    ladder, SL, TP and HTF alignment; ⚡ marks an armed (touched) level."""
+def visible_legs(plan: dict, longs_locked: bool) -> tuple:
+    """(legs to show, number of LONG zones hidden by the DXY lock)."""
+    legs = plan.get("legs") or []
+    if not longs_locked:
+        return legs, 0
+    keep = [l for l in legs if l.get("signal") != "LONG"]
+    return keep, len(legs) - len(keep)
+
+
+def format_zone_digest(plan: dict, longs_locked: bool = False) -> str:
+    """Telegram card for the zone MAP — buy / sell zones with entry ladder, SL, TP and HTF
+    alignment; ⚡ marks a touched level. A map of levels, never a trade call: entries still
+    need a trigger + council GO, and LONG zones are hidden while DXY locks gold longs."""
     p = plan["price"]
-    icon = {"aligns": "✅", "opposes": "⛔", "neutral": "➖"}
-    lines = [f"🎯 *GOLD Zone Plan* — {p}",
+    icon = {"aligns": "🧭", "opposes": "⛔", "neutral": "➖"}
+    legs, hidden = visible_legs(plan, longs_locked)
+    lines = [f"📍 *GOLD zone map* — {p}  _(levels to watch, not a trade)_",
              f"HTF: _{plan['htf_region']}_ (bias {plan['htf_bias']})"]
     b = plan.get("budget") or {}
     if b.get("round_trip_bag_pips"):
         lines.append(f"Budget: {b['note']}")
     lines.append("")
-    for leg in plan["legs"]:
-        flag = "⚡ARMED" if leg["armed"] else f"{leg['pips_away']:.0f} pips away"
+    for leg in legs:
+        flag = "⚡touched" if leg["armed"] else f"{leg['pips_away']:.0f} pips away"
         tag = icon.get(leg["htf"], "➖")
-        lines.append(f"{tag} *{leg['signal']}* {leg['zone']}  ({flag})")
+        lines.append(f"{tag} {'buy' if leg['signal'] == 'LONG' else 'sell'} zone {leg['zone']}  ({flag})")
         lines.append(f"   band {leg['band'][0]}–{leg['band'][1]}")
         lines.append(f"   entries {', '.join(f'{e:.2f}' for e in leg['entries'])}")
         lines.append(f"   SL {leg['stop']}   TP {leg['target']}"
@@ -292,6 +303,9 @@ def format_zone_digest(plan: dict) -> str:
         if not leg["within_cap"]:
             lines.append("   ⚠️ stack exceeds risk cap — drop layers / bigger account")
         lines.append("")
+    if hidden:
+        lines.append(f"🔒 {hidden} buy zone{'s' if hidden > 1 else ''} hidden — DXY locks gold longs")
     if not plan["legs"]:
         lines.append("_at a range extreme — no flanking OB zone_")
+    lines.append("_A zone is a place to look, not an entry — trades need a trigger + council GO._")
     return "\n".join(l for l in lines if l is not None).rstrip()

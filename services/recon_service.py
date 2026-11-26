@@ -104,6 +104,23 @@ async def _radar(gold_price: float) -> Optional[dict]:
     return None
 
 
+async def gold_longs_lock() -> dict:
+    """The same DXY lock the recon card shows (live DXY level + RBUSBIS turn / override)."""
+    from gold import dxy as gdxy
+    dxy = None
+    try:
+        from services.dxy_service import latest_dxy
+        d = await latest_dxy()
+        dxy = d["price"] if d and d.get("is_level") else None
+    except Exception:
+        pass
+    try:
+        rb = await _rbusbis_dir()
+    except Exception:
+        rb = None
+    return gdxy.dxy_flip_status(dxy, rb)
+
+
 async def gate_optimus(armed: list, sweep: dict) -> tuple:
     """Optimus zones are trades only when (1) the recon's own DXY lock allows the side and
     (2) the council passes it. One line per zone (the same side twice = one trade)."""
