@@ -23,7 +23,7 @@ def test_denied_text_shows_ids(monkeypatch):
     assert "not set" in hub.denied_text(upd(1, 777)) and "777" in hub.denied_text(upd(1, 777))
     monkeypatch.setattr(hub, "OWNER_CHAT_ID", "123")
     t = hub.denied_text(upd(-100, 777))
-    assert "chat id: -100" in t and "user id: 777" in t
+    assert "chat id: `-100`" in t and "user id: `777`" in t and "`OWNER_CHAT_ID`" in t
 
 
 def test_notify_first_id():
