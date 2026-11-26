@@ -95,3 +95,8 @@ def test_copy_page_public_data_private():
     assert is_public("/copy") and not is_public("/copy/status") and not is_public("/copy/control")
     src = open("mt5_bridge/WildChance_Copier.mq5").read()
     assert "/bridge/copy/master" in src and "X-Bridge-Token" in src and "GvDone" in src
+
+
+def test_copier_ignores_disconnected_zero():
+    src = open("mt5_bridge/WildChance_Copier.mq5").read()
+    assert "bool AccountReady()" in src and "if(!AccountReady())" in src and "GlobalVariableGet(k) <= 0" in src
