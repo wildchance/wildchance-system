@@ -12,7 +12,13 @@ from typing import Dict
 import httpx
 from decouple import config
 
-OWNER_CHAT_ID = config("OWNER_CHAT_ID", default=None)
+def _first_id(raw) -> "str | None":
+    """First id in OWNER_CHAT_ID (quotes / spaces / a comma list pasted into Render are tolerated)."""
+    ids = str(raw or "").replace('"', "").replace("'", "").replace(",", " ").split()
+    return ids[0] if ids else None
+
+
+OWNER_CHAT_ID = _first_id(config("OWNER_CHAT_ID", default=None))
 BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default=None) or config("BOT_TOKEN", default=None)
 STALE_DAYS = int(config("CME_STALE_DAYS", default="3"))
 
