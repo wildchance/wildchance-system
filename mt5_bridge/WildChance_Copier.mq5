@@ -22,7 +22,7 @@
 //|  run on DEMO accounts first.                                       |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "1.00"
+#property version   "1.01"
 
 #include <Trade\Trade.mqh>
 
@@ -71,9 +71,17 @@ int OnInit()
 
 void OnDeinit(const int reason) { EventKillTimer(); Comment(""); }
 
+// MT5 reports balance / equity 0 for a moment after a restart or reconnect — never act on it
+bool AccountReady()
+  {
+   return TerminalInfoInteger(TERMINAL_CONNECTED) != 0
+          && AccountInfoDouble(ACCOUNT_BALANCE) > 0 && AccountInfoDouble(ACCOUNT_EQUITY) > 0;
+  }
+
 void OnTimer()
   {
    if(MQLInfoInteger(MQL_TESTER)) return;
+   if(!AccountReady()) { Comment("WildChance Copier - waiting for the account to connect"); return; }
    if(InpRole == ROLE_MASTER) MasterPush(); else FollowerSync();
    g_cycle++;
   }
@@ -313,7 +321,7 @@ double DayStartEquity()
   {
    MqlDateTime d; TimeToStruct(TimeCurrent(), d);
    string k = StringFormat("WCC_DAY_%I64d_%04d%02d%02d", InpCopyMagic, d.year, d.mon, d.day);
-   if(!GlobalVariableCheck(k)) GlobalVariableSet(k, AccountInfoDouble(ACCOUNT_EQUITY));
+   if(!GlobalVariableCheck(k) || GlobalVariableGet(k) <= 0) GlobalVariableSet(k, AccountInfoDouble(ACCOUNT_EQUITY));
    return GlobalVariableGet(k);
   }
 
