@@ -32,11 +32,43 @@ TOKEN = config("BRIDGE_TOKEN", default=None) or config("EXECUTION_TOKEN", defaul
 _accounts: Dict[str, Dict] = {}
 
 
-def _auth(token: Optional[str]):
+_owner_keys: Dict[str, object] = {"loaded": False, "keys": set()}
+
+
+async def owner_license() -> str:
+    """The owner's EA license (bot /license) — created once, kept in the data store, so the owner
+    never has to set BRIDGE_TOKEN in Render. BRIDGE_TOKEN, when set, keeps working too."""
+    import secrets
+    from services import data_store
+    v, _ = await data_store.get("owner_license")
+    if not v:
+        v = "wco_" + secrets.token_urlsafe(24)
+        await data_store.put("owner_license", v)
+    _owner_keys["keys"].add(v)
+    _owner_keys["loaded"] = True
+    return v
+
+
+async def is_owner_key(token: Optional[str]) -> bool:
+    if not token:
+        return False
+    if TOKEN and token == TOKEN:
+        return True
+    if not _owner_keys["loaded"]:
+        try:
+            from services import data_store
+            v, _ = await data_store.get("owner_license")
+            if v:
+                _owner_keys["keys"].add(v)
+            _owner_keys["loaded"] = True
+        except Exception:
+            return False
+    return token in _owner_keys["keys"]
+
+
+async def _auth(token: Optional[str]):
     """Owner-only routes (bars, account, deals, calendar, copy, export)."""
-    if not TOKEN:
-        raise HTTPException(503, "bridge disabled — set BRIDGE_TOKEN (or EXECUTION_TOKEN)")
-    if token != TOKEN:
+    if not await is_owner_key(token):
         raise HTTPException(403, "bad bridge token")
 
 
@@ -48,7 +80,7 @@ async def principal(token: Optional[str]) -> Dict:
     a live paid / trial plan at or above EA_LICENSE_MIN_TIER → member (gate only: their
     trades never reach the owner's journal, flash cards or channel)."""
     import datetime as _dt
-    if TOKEN and token == TOKEN:
+    if await is_owner_key(token):
         return {"role": "owner"}
     if not token:
         raise HTTPException(401, "license key missing")
@@ -78,7 +110,7 @@ class BarsIn(BaseModel):
 async def bars(body: BarsIn, background: BackgroundTasks,
                x_bridge_token: Optional[str] = Header(None),
                db: AsyncSession = Depends(get_db)):
-    _auth(x_bridge_token)
+    await _auth(x_bridge_token)
     res = await broker_feed.ingest(db, body.symbol, body.timeframe, body.bars)
     if res.get("ok"):
         from services.realtime import on_bars
@@ -89,7 +121,7 @@ async def bars(body: BarsIn, background: BackgroundTasks,
 @router.post("/account")
 async def account(snapshot: Dict,
                   x_bridge_token: Optional[str] = Header(None)):
-    _auth(x_bridge_token)
+    await _auth(x_bridge_token)
     key = str(snapshot.get("login") or "default")
     _accounts[key] = {**snapshot, "received_utc": dt.datetime.now(dt.timezone.utc).isoformat()}
     return {"ok": True}
@@ -105,7 +137,7 @@ async def deals(body: DealsIn, background: BackgroundTasks,
     """Closed trades from MT5 history → profit flash cards (winners only, once each).
     deal: {ticket, symbol, side (BUY/SELL of the POSITION), volume, open_price,
            close_price, open_time, close_time (unix), net (profit+commission+swap)}"""
-    _auth(x_bridge_token)
+    await _auth(x_bridge_token)
     from services.flash_card import post_from_deals
     from services.trade_journal import record
     background.add_task(record, body.deals)               # journal: every close, W / L / BE
@@ -162,7 +194,7 @@ async def whoami(x_bridge_token: Optional[str] = Header(None)):
 @router.post("/copy/master")
 async def copy_master(snapshot: Dict, x_bridge_token: Optional[str] = Header(None)):
     """MASTER account: every open position (any source) every ~2 s."""
-    _auth(x_bridge_token)
+    await _auth(x_bridge_token)
     from services import copy_trade
     return await copy_trade.set_master(snapshot)
 
@@ -171,7 +203,7 @@ async def copy_master(snapshot: Dict, x_bridge_token: Optional[str] = Header(Non
 async def copy_targets(login: str = Query(...), equity: float = Query(..., ge=0), ccy: str = Query("USD"),
                        x_bridge_token: Optional[str] = Header(None)):
     """FOLLOWER account: the positions it should hold now (equity-scaled volumes)."""
-    _auth(x_bridge_token)
+    await _auth(x_bridge_token)
     from services import copy_trade
     return await copy_trade.targets(login, equity, ccy)
 
@@ -179,7 +211,7 @@ async def copy_targets(login: str = Query(...), equity: float = Query(..., ge=0)
 @router.post("/copy/report")
 async def copy_report(rep: Dict, x_bridge_token: Optional[str] = Header(None)):
     """FOLLOWER account: what it holds, lag, guard state, last errors → /copy/status + bot /accounts."""
-    _auth(x_bridge_token)
+    await _auth(x_bridge_token)
     from services import copy_trade
     return await copy_trade.report(rep)
 
@@ -199,7 +231,7 @@ async def export(symbol: str = Query(...), timeframe: str = Query("D1"),
                  x_bridge_token: Optional[str] = Header(None),
                  db: AsyncSession = Depends(get_db)):
     """Broker bars oldest-first for offline research (backtest/bb_sweep.py on a compute box)."""
-    _auth(x_bridge_token)
+    await _auth(x_bridge_token)
     rows = await broker_feed.recent(db, symbol, timeframe.upper(), n)
     bars = [{"t": int(r.ts.replace(tzinfo=r.ts.tzinfo or dt.timezone.utc).timestamp()),
              "o": r.open, "h": r.high, "l": r.low, "c": r.close, "v": r.volume}
@@ -217,7 +249,7 @@ async def calendar(body: CalendarIn,
                    x_bridge_token: Optional[str] = Header(None)):
     """The EA's MT5 economic calendar (broker-grade, free) — backs up the ForexFactory feed.
     events: [{t: unix UTC, ccy, event, impact: high|medium|low, actual, forecast, previous}]"""
-    _auth(x_bridge_token)
+    await _auth(x_bridge_token)
     from wildchance import wildchance_scraper as wc
     n = wc.set_ea_calendar(body.events)
     return {"ok": True, "events": n}

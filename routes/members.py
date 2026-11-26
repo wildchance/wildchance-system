@@ -11,6 +11,12 @@ from database.db import get_db
 from saas.auth import current_user
 from saas import tiers as st
 
+import os as _os
+
+from fastapi.responses import FileResponse as _FileResponse, JSONResponse as _JSONResponse
+
+EA_FILE = "static/ea/WildChance_EA.ex5"
+
 router = APIRouter(prefix="/members", tags=["members"])
 
 
@@ -77,3 +83,12 @@ async def login(body: LoginIn, request: Request, db: AsyncSession = Depends(get_
         raise HTTPException(status_code=401, detail="email or password not recognised")
     pw.clear(*keys)
     return {"api_key": u.api_key, "email": u.email, "tier": u.tier}
+
+
+@router.get("/ea/download")
+async def ea_download():
+    """The compiled EA (.ex5) for members — one file to copy into MQL5/Experts."""
+    if not _os.path.exists(EA_FILE):
+        return _JSONResponse({"ok": False, "reason": "the EA download is being prepared — ask in the bot"},
+                             status_code=404)
+    return _FileResponse(EA_FILE, filename="WildChance_EA.ex5", media_type="application/octet-stream")

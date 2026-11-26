@@ -153,3 +153,48 @@ def test_ea_is_plug_and_play():
 def test_ea_needs_license_for_entries():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
     assert 'BLOCKED: LICENSE' in src and 'g_role == "owner"' in src
+
+
+def test_owner_license_from_bot_works_without_bridge_token(monkeypatch):
+    import asyncio
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes import bridge
+    from services import data_store
+    store = {}
+
+    async def get(k):
+        return store.get(k), None
+
+    async def put(k, v):
+        store[k] = v
+        return True
+    monkeypatch.setattr(data_store, "get", get)
+    monkeypatch.setattr(data_store, "put", put)
+    monkeypatch.setattr(bridge, "TOKEN", None)                     # BRIDGE_TOKEN never set in Render
+    monkeypatch.setattr(bridge, "_owner_keys", {"loaded": False, "keys": set()})
+    loop = asyncio.new_event_loop()
+    try:
+        key = loop.run_until_complete(bridge.owner_license())
+        again = loop.run_until_complete(bridge.owner_license())
+    finally:
+        loop.close()
+    assert key.startswith("wco_") and key == again                 # stable key
+    app = FastAPI()
+    app.include_router(bridge.router)
+    c = TestClient(app)
+    assert c.get("/bridge/whoami", headers={"X-Bridge-Token": key}).json() == {"role": "owner"}
+    assert c.post("/bridge/deals", json={"deals": []}, headers={"X-Bridge-Token": key}).status_code == 200
+    assert c.post("/bridge/deals", json={"deals": []}, headers={"X-Bridge-Token": "wrong"}).status_code == 403
+
+
+def test_members_page_has_install_card_and_download_route():
+    html = open("static/site/members.html").read()
+    assert "Install the EA" in html and "/members/ea/download" in html and "liccopy" in html and "urlcopy" in html
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes import members
+    app = FastAPI()
+    app.include_router(members.router)
+    r = TestClient(app).get("/members/ea/download")
+    assert r.status_code in (200, 404)
