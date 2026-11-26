@@ -103,6 +103,11 @@ CHECKS: List[Tuple[str, str, Callable]] = [
     ("AI (NVIDIA)", "/ops/ai?test=true", lambda d: (
         ("✅", f"{(d.get('last') or {}).get('model')} answering") if (d.get("last") or {}).get("ok")
         else ("❌", (d.get("hint") or str((d.get("last") or {}).get("error") or "no reply"))[:200]))),
+    ("database", "/health", lambda d: (
+        ("✅", f"{d.get('db_backend') or d.get('database') or 'postgresql'} connected")
+        if (d.get("db_backend") or "postgresql") != "sqlite" and d.get("db_reachable", True) is not False
+        else ("❌", "no DATABASE_URL on this service — local SQLite, wiped on every deploy (accounts, journal, "
+                    "settings lost). Set DATABASE_URL to Neon."))),
     ("telegram bot", "/ops/telegram", lambda d: (
         ("✅", f"{d.get('bot')} webhook OK") if d.get("ok")
         else ("❌", "; ".join(d.get("problems") or [d.get("reason") or "not reachable"])[:200]))),
@@ -226,14 +231,16 @@ async def telegram_status():
         me = await tr.application.bot.get_me()
     except Exception as e:
         return {"ok": False, "reason": f"Telegram API unreachable or token rejected: {type(e).__name__}: {e}"[:200]}
-    want = (tr.WEBHOOK_BASE_URL or "").rstrip("/") + tr.WEBHOOK_PATH if tr.WEBHOOK_BASE_URL else None
+    want = tr.webhook_target()
+    me_url = (tr.WEBHOOK_BASE_URL or "").rstrip("/")
     import datetime as _dt
     last = info.last_error_date
     problems = []
     if not info.url:
         problems.append("no webhook registered — POST /ops/telegram/reset")
     elif want and info.url != want:
-        problems.append(f"webhook points elsewhere ({info.url}) — POST /ops/telegram/reset")
+        problems.append(f"webhook points to ANOTHER service ({info.url}) — two Render services share this bot "
+                        "token; suspend one, or set TELEGRAM_WEBHOOK_URL to the main URL on both")
     if info.last_error_message:
         problems.append(f"Telegram's last delivery error: {info.last_error_message}")
     if (info.pending_update_count or 0) > 5:
@@ -242,6 +249,7 @@ async def telegram_status():
             "pending_updates": info.pending_update_count,
             "last_error": info.last_error_message,
             "last_error_at": last.astimezone(_dt.timezone.utc).isoformat() if last else None,
+            "this_service": me_url or None, "pinned": bool(tr.PINNED_WEBHOOK),
             "secret_set": bool(tr.WEBHOOK_SECRET), "problems": problems}
 
 
@@ -249,10 +257,10 @@ async def telegram_status():
 async def telegram_reset():
     """Re-register the webhook (keeps pending messages so nothing you sent is lost)."""
     from routes import telegram_routes as tr
-    if tr.application is None or not tr.WEBHOOK_BASE_URL:
+    if tr.application is None or not tr.webhook_target():
         return {"ok": False, "reason": "bot token or WEBHOOK_BASE_URL / RENDER_EXTERNAL_URL missing"}
     from telegram import Update
-    kw = {"url": tr.WEBHOOK_BASE_URL.rstrip("/") + tr.WEBHOOK_PATH, "allowed_updates": Update.ALL_TYPES}
+    kw = {"url": tr.webhook_target(), "allowed_updates": Update.ALL_TYPES}
     if tr.WEBHOOK_SECRET:
         kw["secret_token"] = tr.WEBHOOK_SECRET
     ok = await tr.application.bot.set_webhook(**kw)
