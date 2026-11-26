@@ -153,7 +153,9 @@ def to_ohlc(raw: Sequence) -> List[OHLC]:
     for b in raw:
         if isinstance(b, dict):
             out.append((float(b["open"]), float(b["high"]), float(b["low"]), float(b["close"])))
-        else:
+        elif len(b) == 4:                     # already (o, h, l, c) — e.g. from retracement.to_ohlc
+            out.append((float(b[0]), float(b[1]), float(b[2]), float(b[3])))
+        else:                                 # [ts, o, h, l, c, …]
             out.append((float(b[1]), float(b[2]), float(b[3]), float(b[4])))
     return out
 
