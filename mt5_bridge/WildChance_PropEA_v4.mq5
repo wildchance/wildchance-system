@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.58"
+#property version   "4.59"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -228,6 +228,8 @@ string   g_emaAlign="-", g_tdiState="N/A", g_trendDay="N/A", g_adrTag="NORMAL";
 double   g_adrPips=0, g_adrUsedPct=0, g_adxVal=0, g_adrAvg=0, g_todayOpen=0;
 int      g_quality=0, g_id50Watch=0, g_adrDayKey=0, g_huntDayKey=0, g_trendDayAge=0;
 bool     g_newsBlocked=false, g_isChop=false, g_inAsia=false, g_inLondon=false, g_inNY=false;
+string   g_newsWhat = "";          // the release behind a news pause, shown on the panel
+datetime g_lastNewsCheck = 0;
 bool     g_hAsiaH=false, g_hAsiaL=false, g_hPDH=false, g_hPDL=false;
 datetime g_lastHighHuntT=0, g_lastLowHuntT=0, g_id50FiredT=0, g_lastEvalBar=0;
 double   g_patExtreme=0, g_tdiPrice=50, g_tdiSignal=50, g_tdiBase=50;
@@ -401,6 +403,8 @@ void OnDeinit(const int reason)
 void OnTimer()
   {
    CheckPropGuard();
+   if(InpUseNewsFilter && !MQLInfoInteger(MQL_TESTER) && TimeCurrent() - g_lastNewsCheck >= 60)
+     { g_newsBlocked = IsHighImpactNewsWindow(); g_lastNewsCheck = TimeCurrent(); }
    if(!MQLInfoInteger(MQL_TESTER) && (g_lastWho == 0 || TimeCurrent() - g_lastWho >= (g_role == "" ? 60 : 3600)))
       CheckLicense();
    bool owner = (g_role == "owner");                 // a member's EA never writes into the owner's feed
@@ -487,6 +491,7 @@ void OnTick()
       g_lastEvalBar = barTime;
       UpdateLunarState(TimeGMT());
       g_newsBlocked = (InpUseNewsFilter && !MQLInfoInteger(MQL_TESTER)) ? IsHighImpactNewsWindow() : false;
+      g_lastNewsCheck = TimeCurrent();
       EvaluatePipeline(first, canTrade);
      }
    UpdateHUD();
@@ -706,8 +711,11 @@ void UpdateLunarState(datetime utcNow)
 //+------------------------------------------------------------------+
 //| 3. NEWS GUARD (MQL5 economic calendar, live only)                |
 //+------------------------------------------------------------------+
+// High-impact TIMED releases for this pair's currencies (and USD) within the window. Holidays and
+// all-day / tentative entries are not releases and never pause trading.
 bool IsHighImpactNewsWindow()
   {
+   g_newsWhat = "";
    string base  = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_BASE);
    string quote = SymbolInfoString(_Symbol, SYMBOL_CURRENCY_PROFIT);
    datetime now = TimeTradeServer();
@@ -717,9 +725,14 @@ bool IsHighImpactNewsWindow()
      {
       MqlCalendarEvent ev;
       if(!CalendarEventById(values[i].event_id, ev) || ev.importance != CALENDAR_IMPORTANCE_HIGH) continue;
+      if(ev.type == CALENDAR_TYPE_HOLIDAY || ev.time_mode != CALENDAR_TIMEMODE_DATETIME) continue;
       MqlCalendarCountry c;
       if(!CalendarCountryById(ev.country_id, c)) continue;
-      if(c.currency == base || c.currency == quote || c.currency == "USD") return true;
+      if(c.currency == base || c.currency == quote || c.currency == "USD")
+        {
+         g_newsWhat = c.currency + " " + ev.name + " " + TimeToString(values[i].time, TIME_MINUTES);
+         return true;
+        }
      }
    return false;
   }
@@ -1537,7 +1550,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.58 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.59 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
@@ -1556,7 +1569,7 @@ void UpdateHUD()
           (eq-g_dailyFloor) < g_initialBalance*0.01 ? clrOrange : clrLime);
    SetVal("lunar",InpUseLunarEngine ? g_lunarPhaseName+" D"+DoubleToString(g_lunarAgeDays,1) : "OFF",
           g_inLunarObsWindow?clrOrange:clrSilver);
-   SetVal("news",g_newsBlocked?"PAUSED (HIGH IMPACT)":"CLEAR",g_newsBlocked?clrRed:clrLime);
+   SetVal("news",g_newsBlocked?("PAUSED: "+(g_newsWhat!=""?g_newsWhat:"high impact")):"CLEAR",g_newsBlocked?clrRed:clrLime);
    SetVal("session",g_sessionStr,clrWhite);
    SetVal("bias",g_sessionBias,StringFind(g_sessionBias,"BULLISH")>=0?clrLime:(StringFind(g_sessionBias,"BEARISH")>=0?clrRed:clrSilver));
    SetVal("state",g_marketState,g_isChop?clrOrange:clrLime);
