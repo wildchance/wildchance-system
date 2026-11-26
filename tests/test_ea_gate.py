@@ -80,15 +80,76 @@ def test_gate_requires_bridge_token(monkeypatch):
     app = FastAPI()
     app.include_router(bridge.router)
     c = TestClient(app)
-    assert c.get("/bridge/gate?symbol=EURUSD&side=BUY").status_code == 403
-    assert c.get("/bridge/gate?symbol=EURUSD&side=BUY&token=t0k").status_code == 403   # header only
+    assert c.get("/bridge/gate?symbol=EURUSD&side=BUY").status_code == 401
+    assert c.get("/bridge/gate?symbol=EURUSD&side=BUY&token=t0k").status_code == 401   # header only
 
 
 def test_ea_has_gate_and_parses_compact_json():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
-    assert '#property version   "4.56"' in src
+    assert '#property version   "4.57"' in src
     assert "/bridge/gate?symbol=" in src and "X-Bridge-Token" in src
     assert 'riskPct = MathMin(riskPct, appRisk)' in src
     from fastapi.responses import JSONResponse
     body = JSONResponse({"allow": True, "risk_pct": 0.35}).body.decode()
     assert '"allow":true' in body and '"risk_pct":0.35' in body          # what the EA string-matches
+
+
+
+def _members(monkeypatch, users):
+    import datetime as dt
+    from services import saas_service as svc
+    import database.db as dbm
+
+    class S:
+        async def __aenter__(self):
+            return None
+
+        async def __aexit__(self, *a):
+            return False
+
+    async def by_key(db, key):
+        return users.get(key)
+    monkeypatch.setattr(svc, "by_api_key", by_key)
+    monkeypatch.setattr(dbm, "AsyncSessionLocal", lambda: S())
+    return dt
+
+
+def test_member_license_gate_only(monkeypatch):
+    import datetime as dt
+    from types import SimpleNamespace as NS
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes import bridge
+    now = dt.datetime.now(dt.timezone.utc)
+    _members(monkeypatch, {
+        "live": NS(email="a@b.co", tier="trader", paid_until=now + dt.timedelta(days=5)),
+        "expired": NS(email="c@d.co", tier="trader", paid_until=now - dt.timedelta(days=1)),
+        "free": NS(email="e@f.co", tier="scout", paid_until=now + dt.timedelta(days=5))})
+    monkeypatch.setattr(bridge, "TOKEN", "own3r")
+
+    async def verdict(symbol, side):
+        return {"allow": True, "reason": "GO"}
+    monkeypatch.setattr(bridge, "gate_verdict", verdict)
+    app = FastAPI()
+    app.include_router(bridge.router)
+    c = TestClient(app)
+    who = lambda k: c.get("/bridge/whoami", headers={"X-Bridge-Token": k})   # noqa: E731
+    assert who("own3r").json() == {"role": "owner"}
+    assert who("live").json()["role"] == "member" and who("live").json()["tier"] == "trader"
+    assert who("expired").status_code == 402 and who("free").status_code == 402
+    assert who("nope").status_code == 403
+    assert c.get("/bridge/gate?symbol=EURUSD&side=BUY", headers={"X-Bridge-Token": "live"}).json()["allow"]
+    # a member can never push into the owner's feed / journal / flash cards
+    assert c.post("/bridge/deals", json={"deals": []}, headers={"X-Bridge-Token": "live"}).status_code == 403
+
+
+def test_ea_is_plug_and_play():
+    src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
+    assert "InpPreset      = PLAN_CUSTOM" in src and "InpPhase             = 0" in src
+    assert "InpSizingMode = SIZING_RISK" in src and "/bridge/whoami" in src
+    assert "SH(InpSessionLondonStart)" in src and "SETUP:" in src
+
+
+def test_ea_needs_license_for_entries():
+    src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
+    assert 'BLOCKED: LICENSE' in src and 'g_role == "owner"' in src

@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.56"
+#property version   "4.57"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -69,19 +69,22 @@ enum ENUM_LUNAR_SHIFT_MODE
   };
 
 //----------------------------------------------------------------- inputs
-input group "=== 1. PROP CHALLENGE GUARD (FundingPips) ==="
-input ENUM_FP_PRESET InpPreset      = PLAN_2STEP_STD_5; // Account plan (sets daily/max/target/max type)
-input int      InpPhase             = 1;      // 1 / 2 = evaluation phase, 0 = funded (no target lock)
+input group "=== 0. LICENSE (the only thing to fill in) ==="
+input string   InpBridgeToken       = "";     // License key — from your WildChance member page (or MQL5\\Files\\wildchance_token.txt)
+
+input group "=== 1. ACCOUNT GUARD (defaults suit a normal account; pick a preset for a prop challenge) ==="
+input ENUM_FP_PRESET InpPreset      = PLAN_CUSTOM; // Account plan — CUSTOM = normal account (3% day / 8% max, no target)
+input int      InpPhase             = 0;      // Prop presets only: 1 / 2 = evaluation phase, 0 = funded
 input double   InpDailyBufferPct    = 70;     // Stop at this % of the firm's daily limit (5% -> 3.5%)
 input double   InpMaxBufferPct      = 80;     // Stop at this % of the firm's max loss (10% -> 8%)
 input double   InpInitialBalance    = 0;      // Account starting balance (0 = capture once & persist)
-input double   InpDailyLossLimitPct = 3.5;    // CUSTOM only: our daily stop, % of initial
+input double   InpDailyLossLimitPct = 3.0;    // CUSTOM only: our daily stop, % of initial
 input double   InpMaxLossLimitPct   = 8.0;    // CUSTOM only: our max-loss stop, % of initial
-input double   InpProfitTargetPct   = 8.0;    // CUSTOM only: target % (0 = off)
+input double   InpProfitTargetPct   = 0.0;    // CUSTOM only: target % (0 = off)
 input int      InpMinTradingDays    = 0;      // CUSTOM only: min trading days before the target counts
 input bool     InpFlattenAllOnBreach= true;   // On a guard hit close ALL account positions (not only this EA's)
 input double   InpRiskPct           = 0.50;   // Risk % of equity per trade (0.4-0.5 for challenges)
-input ENUM_SIZING_MODE InpSizingMode = SIZING_TARGET; // Lot sizing method
+input ENUM_SIZING_MODE InpSizingMode = SIZING_RISK; // Lot sizing method (RISK = InpRiskPct of equity at the stop)
 input double   InpTargetPct         = 0.52;   // SIZING_TARGET: target per trade, % of initial balance ($13 on 2.5k)
 input double   InpTargetUSD         = 0;      // SIZING_TARGET: fixed $ target instead (0 = use %)
 input int      InpTargetTP          = 3;      // SIZING_TARGET: which TP must pay the target (1, 2 or 3)
@@ -107,7 +110,7 @@ input bool     InpUseNewsFilter     = true;   // Pause around HIGH-impact events
 input int      InpNewsMinsBefore    = 30;
 input int      InpNewsMinsAfter     = 30;
 input bool     InpCloseBeforeWknd   = false;  // Flatten this EA's trades Friday from InpFridayCloseHour
-input int      InpFridayCloseHour   = 21;     // Server hour
+input int      InpFridayCloseHour   = 21;     // GMT hour (any broker — converted automatically)
 
 input group "=== 4. BTMM EMA STRUCTURE, M/W, ID50 (v2.2) ==="
 input int      InpEmaFast           = 13;
@@ -124,7 +127,7 @@ input int      InpConfirmLookback   = 3;
 input double   InpLocTolXATR        = 0.35;
 input double   InpID50ToleranceXATR = 0.25;
 
-input group "=== 5. ADR, SESSIONS, SIGNAL FILTERS (server hours) ==="
+input group "=== 5. ADR, SESSIONS (GMT hours — any broker), SIGNAL FILTERS ==="
 input int      InpADRDays           = 20;
 input int      InpSessionAsiaStart  = 0;
 input int      InpSessionAsiaEnd    = 8;
@@ -163,7 +166,6 @@ input ENUM_TIMEFRAMES InpBBTF2      = PERIOD_D1;
 input group "=== 8. SEND DATA TO THE APP (EA -> /bridge) ==="
 input bool     InpSendData          = true;   // Push closed bars + account snapshot to the app
 input string   InpAppUrl            = "https://wildchance-system.onrender.com"; // Add it in Tools > Options > Expert Advisors > WebRequest
-input string   InpBridgeToken       = "";     // = BRIDGE_TOKEN in the app env (blank = read MQL5\\Files\\wildchance_token.txt)
 input bool     InpPushDeals         = true;   // send closed trades → trade journal (W/L/BE) + flash cards (winners)
 input int      InpDealPushSec       = 10;     // how often to check for new closes (seconds, min 5)
 input int      InpDealBackfillDays  = 90;     // first run: send this many days of history to the journal
@@ -250,6 +252,57 @@ LivePlan g_tr;
 //| init / deinit                                                    |
 //+------------------------------------------------------------------+
 string g_token = "";
+string g_role = "";            // "owner" (full feed) · "member" (gate only) · "" (unknown yet)
+string g_license = "";         // last license answer, shown by the SETUP line
+datetime g_lastWho = 0;
+
+// GET helper (license check) — returns the HTTP code, -1 when WebRequest is blocked
+int AppGet(string path, string &reply)
+  {
+   string url = InpAppUrl; if(StringSubstr(url, StringLen(url)-1)=="/") url = StringSubstr(url,0,StringLen(url)-1);
+   char data[], result[]; string resHeaders;
+   string headers = "X-Bridge-Token: " + g_token + "\r\n";
+   ResetLastError();
+   int code = WebRequest("GET", url + path, headers, 8000, data, result, resHeaders);
+   reply = (code > 0) ? CharArrayToString(result, 0, WHOLE_ARRAY, CP_UTF8) : IntegerToString(GetLastError());
+   return code;
+  }
+
+// Who am I to the app? owner → push the full feed; member → council gate only.
+void CheckLicense()
+  {
+   if(MQLInfoInteger(MQL_TESTER)) return;
+   g_lastWho = TimeCurrent();
+   if(g_token == "") { g_role = ""; g_license = "SETUP: paste your License key (EA properties > Inputs)"; return; }
+   string r;
+   int code = AppGet("/bridge/whoami", r);
+   if(code == -1)
+     {
+      g_license = (r == "4014") ? "SETUP: Tools > Options > Expert Advisors > allow " + InpAppUrl
+                                : "SETUP: app not reachable (error " + r + ") - check internet";
+      return;
+     }
+   if(code == 200)
+     {
+      g_role = (StringFind(r, "\"role\":\"owner\"") >= 0) ? "owner" : "member";
+      g_license = "";
+      return;
+     }
+   g_role = "";
+   g_license = (code == 402) ? "SETUP: license expired - renew on the members page"
+             : (code == 401 || code == 403) ? "SETUP: license key not recognised - copy it again"
+             : "SETUP: app answered HTTP " + IntegerToString(code) + " - try again shortly";
+  }
+
+// The one line a new user reads: the next thing to do, or READY.
+string SetupState()
+  {
+   if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)) return "SETUP: click Algo Trading in the toolbar (turn it green)";
+   if(!MQLInfoInteger(MQL_TRADE_ALLOWED))          return "SETUP: EA properties > Common > tick Allow Algo Trading";
+   if(g_license != "")                             return g_license;
+   if(g_role == "member")                          return "READY - licensed (council gate on)";
+   return "";
+  }
 
 // The token from the input, else from MQL5\Files\wildchance_token.txt (one line). A MetaEditor
 // DEBUG run never shows the Inputs window — the file makes the feed work there too, and keeps
@@ -321,8 +374,11 @@ void OnDeinit(const int reason)
 void OnTimer()
   {
    CheckPropGuard();
-   if(InpSendData && !MQLInfoInteger(MQL_TESTER)) PushData();
-   if(InpSendData && InpPushDeals && !MQLInfoInteger(MQL_TESTER) && TimeCurrent() - g_lastDealPush >= MathMax(5, InpDealPushSec))
+   if(!MQLInfoInteger(MQL_TESTER) && (g_lastWho == 0 || TimeCurrent() - g_lastWho >= (g_role == "" ? 60 : 3600)))
+      CheckLicense();
+   bool owner = (g_role == "owner");                 // a member's EA never writes into the owner's feed
+   if(InpSendData && owner && !MQLInfoInteger(MQL_TESTER)) PushData();
+   if(InpSendData && owner && InpPushDeals && !MQLInfoInteger(MQL_TESTER) && TimeCurrent() - g_lastDealPush >= MathMax(5, InpDealPushSec))
      {
       g_lastDealPush = TimeCurrent();
       PushClosedDeals();
@@ -738,9 +794,9 @@ void EvaluateBar(int n, int total, const datetime &time[], const double &open[],
      }
 
    MqlDateTime dt; TimeToStruct(time[n], dt);
-   g_inAsia   = InRange(dt.hour, InpSessionAsiaStart,   InpSessionAsiaEnd);
-   g_inLondon = InRange(dt.hour, InpSessionLondonStart, InpSessionLondonEnd);
-   g_inNY     = InRange(dt.hour, InpSessionNYStart,     InpSessionNYEnd);
+   g_inAsia   = InRange(dt.hour, SH(InpSessionAsiaStart),   SH(InpSessionAsiaEnd));
+   g_inLondon = InRange(dt.hour, SH(InpSessionLondonStart), SH(InpSessionLondonEnd));
+   g_inNY     = InRange(dt.hour, SH(InpSessionNYStart),     SH(InpSessionNYEnd));
    g_sessionStr = (g_inAsia?"Asia ":"")+(g_inLondon?"London ":"")+(g_inNY?"NY ":"");
    if(g_sessionStr=="") g_sessionStr="Off-session";
    double psH=0, psL=0;
@@ -817,6 +873,12 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
    if(why != "") { g_newSignalTxt = "BLOCKED: "+why; Print("WildChance blocked ",_Symbol,": ",why); return; }
 
    double appRisk = 0;
+   // no valid license → no new entries (a network outage is not a license problem: fail-open still applies)
+   if(!MQLInfoInteger(MQL_TESTER) && (g_token == "" || StringFind(g_license, "license") >= 0))
+     {
+      g_newSignalTxt = "BLOCKED: LICENSE - " + (g_token == "" ? "add your License key" : g_license);
+      return;
+     }
    if(InpUseAppGate && !MQLInfoInteger(MQL_TESTER))
      {
       string gwhy = "";
@@ -887,7 +949,7 @@ void ManageLivePosition()
      { trade.PositionClose(g_tr.ticket); g_tr.active=false; g_lastResult="TIME EXIT"; ClearPlan(); return; }
    if(InpCloseBeforeWknd)
      {
-      MqlDateTime dt; TimeToStruct(TimeTradeServer(), dt);
+      MqlDateTime dt; TimeToStruct(TimeGMT(), dt);
       if(dt.day_of_week==5 && dt.hour>=InpFridayCloseHour)
         { trade.PositionClose(g_tr.ticket); g_tr.active=false; g_lastResult="WEEKEND EXIT"; ClearPlan(); return; }
      }
@@ -993,14 +1055,17 @@ bool IsPivotLow(const double &low[], int idx, int lb, int total)
    for(int i=1;i<=lb;i++) if(low[idx-i]<=low[idx] || low[idx+i]<=low[idx]) return false;
    return true;
   }
+// session inputs are GMT; bars are in broker server time → shift by the measured server offset
+int SH(int gmtHour) { return (int)(((gmtHour + ServerToUtcOffset() / 3600) % 24 + 24) % 24); }
+
 bool InRange(int hour,int s,int e) { return (s<=e) ? (hour>=s && hour<e) : (hour>=s || hour<e); }
 
 void GetPriorSessionRange(int total,const datetime &time[],const double &high[],const double &low[],
                           MqlDateTime &dt,bool inLondon,bool inNY,int n,double &oH,double &oL)
   {
    oH=0; oL=0; double hh=-1, ll=1e15; bool found=false;
-   int rs = inNY ? InpSessionLondonStart : (inLondon ? InpSessionAsiaStart : InpSessionNYStart);
-   int re = inNY ? InpSessionLondonEnd   : (inLondon ? InpSessionAsiaEnd   : InpSessionNYEnd);
+   int rs = inNY ? SH(InpSessionLondonStart) : (inLondon ? SH(InpSessionAsiaStart) : SH(InpSessionNYStart));
+   int re = inNY ? SH(InpSessionLondonEnd)   : (inLondon ? SH(InpSessionAsiaEnd)   : SH(InpSessionNYEnd));
    for(int i=n-1; i>=MathMax(0,n-300); i--)
      {
       MqlDateTime d; TimeToStruct(time[i], d);
@@ -1036,7 +1101,7 @@ bool AsiaRange(const datetime &time[],const double &high[],const double &low[],i
    for(int i=n; i>=MathMax(0,n-2500); i--)
      {
       MqlDateTime d; TimeToStruct(time[i], d);
-      bool inA = InRange(d.hour, InpSessionAsiaStart, InpSessionAsiaEnd);
+      bool inA = InRange(d.hour, SH(InpSessionAsiaStart), SH(InpSessionAsiaEnd));
       if(!found) { if(!inA) continue; found=true; endT=time[i]; }
       if(!inA) break;
       hh=MathMax(hh,high[i]); ll=MathMin(ll,low[i]);
@@ -1445,7 +1510,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.56 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.57 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
@@ -1454,7 +1519,11 @@ void UpdateHUD()
    else
       SetVal("days", IntegerToString(g_tradeDays)+" traded (no minimum)", clrSilver);
    SetVal("bb",g_bbStr,(MathAbs(g_bbZ1)>=2||MathAbs(g_bbZ2)>=2)?clrOrange:((MathAbs(g_bbZ1)>=1||MathAbs(g_bbZ2)>=1)?clrYellow:clrSilver));
-   SetVal("feed",g_sendStatus,StringFind(g_sendStatus,"OK")==0?clrLime:(g_sendStatus=="OFF"?clrSilver:clrOrange));
+   string setup = SetupState();
+   if(setup != "")
+      SetVal("feed", setup, StringFind(setup, "READY") == 0 ? clrLime : clrOrange);
+   else
+      SetVal("feed",g_sendStatus,StringFind(g_sendStatus,"OK")==0?clrLime:(g_sendStatus=="OFF"?clrSilver:clrOrange));
    SetVal("prop",g_propStatus,g_propStatus=="ACTIVE"?clrLime:(g_propStatus=="TARGET PASSED"?clrAqua:clrRed));
    SetVal("room",DoubleToString(eq-g_dailyFloor,0)+" / "+DoubleToString(eq-g_maxFloor,0),
           (eq-g_dailyFloor) < g_initialBalance*0.01 ? clrOrange : clrLime);
