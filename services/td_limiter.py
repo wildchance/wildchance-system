@@ -43,6 +43,10 @@ _lock = threading.Lock()
 _slots: collections.deque = collections.deque(maxlen=200)    # reserved start times
 _cache: "collections.OrderedDict[str, Tuple[float, bytes]]" = collections.OrderedDict()
 _stats = {"day": "", "requests": 0, "cache_hits": 0, "rejected": 0}
+# TwelveData's DAILY credits are counted on their side across our restarts; ours used to reset to 0
+# on every deploy (several deploys a day → 815/800 used). The count is now saved, and a "run out of
+# API credits for the day" reply stops every call until the next UTC midnight.
+_persist = {"loaded": False, "saved_n": 0, "exhausted_until": 0.0}
 _installed = {"done": False}
 
 
@@ -85,6 +89,9 @@ def reserve(max_wait: float = MAX_WAIT_S, now: Optional[float] = None,
         now = time.time() if now is None else now
         if _stats["day"] != _day():
             _stats.update(day=_day(), requests=0, rejected=0, cache_hits=0)
+        if now < _persist["exhausted_until"]:
+            _stats["rejected"] += 1
+            return None
         if _stats["requests"] + credits > DAILY_LIMIT:
             _stats["rejected"] += 1
             return None
@@ -102,6 +109,43 @@ def reserve(max_wait: float = MAX_WAIT_S, now: Optional[float] = None,
             return None
         _stats["requests"] += credits
         return start - now
+
+
+def next_utc_midnight(now: Optional[float] = None) -> float:
+    now = time.time() if now is None else now
+    return (int(now // 86400) + 1) * 86400.0
+
+
+def out_of_daily_credits(body: bytes) -> bool:
+    try:
+        d = json.loads(body)
+    except ValueError:
+        return False
+    return isinstance(d, dict) and str(d.get("code")) == "429" and "for the day" in str(d.get("message", ""))
+
+
+async def _sync_daily() -> None:
+    """Load today's count once after boot (never lower than what we have) and save it every
+    10 requests, so a redeploy does not hand us a fresh 790."""
+    try:
+        from services import data_store
+        if not _persist["loaded"]:
+            v, _ = await data_store.get("td_daily")
+            v = dict(v or {})
+            with _lock:
+                if v.get("day") == _day():
+                    _stats["day"] = _day()
+                    _stats["requests"] = max(_stats["requests"], int(v.get("requests") or 0))
+                    _persist["exhausted_until"] = max(_persist["exhausted_until"],
+                                                      float(v.get("exhausted_until") or 0))
+                _persist["saved_n"] = _stats["requests"]
+            _persist["loaded"] = True
+        if _stats["requests"] - _persist["saved_n"] >= 10 or _persist.get("dirty"):
+            await data_store.put("td_daily", {"day": _stats["day"] or _day(), "requests": _stats["requests"],
+                                              "exhausted_until": _persist["exhausted_until"]})
+            _persist["saved_n"], _persist["dirty"] = _stats["requests"], False
+    except Exception:
+        pass
 
 
 def credits_for(url: str) -> int:
@@ -169,12 +213,18 @@ def install() -> None:
             return httpx.Response(200, content=body, request=request,
                                   headers={"content-type": "application/json", "x-td-cache": "hit"})
         w = WAIT.get()
+        await _sync_daily()
         if not await acquire(max_wait=MAX_WAIT_S if w is None else w, credits=credits_for(str(request.url))):
             msg = {"status": "error", "code": 429,
                    "message": "local TwelveData limiter: queue/budget full — try later"}
             return httpx.Response(200, json=msg, request=request)
         resp = await orig(self, request, *args, **kwargs)
         raw = await resp.aread()
+        if out_of_daily_credits(raw):                 # their day is spent: stop until 00:00 UTC
+            with _lock:
+                _persist["exhausted_until"] = next_utc_midnight()
+                _persist["dirty"] = True
+            await _sync_daily()
         if resp.status_code == 200 and _ok_payload(raw):
             cache_put(key, raw)
             record_fresh(str(request.url), raw)
@@ -189,6 +239,8 @@ def status() -> Dict:
         now = time.time()
         recent = sum(1 for t in _slots if now - 60 <= t <= now)
         return {"installed": _installed["done"], "rate_per_min": RATE, "daily_limit": DAILY_LIMIT,
+                "exhausted_until_utc": (time.strftime("%Y-%m-%d %H:%M", time.gmtime(_persist["exhausted_until"]))
+                                        if _persist["exhausted_until"] > now else None),
                 "used_today": _stats["requests"], "cache_hits_today": _stats["cache_hits"],
                 "rejected_today": _stats["rejected"], "in_last_minute": recent,
                 "cached_series": len(_cache)}
