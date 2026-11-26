@@ -79,7 +79,7 @@ async def build() -> dict:
     audit, _ = await _safe(data_store.get("data_audit_last"), (None, None)) or (None, None)
     from services import edge_v2
     eb = await _safe(edge_v2.cached(), None) or {}
-    edge = {"rows": [{k: r.get(k) for k in ("symbol", "score", "bias", "technical", "sentiment", "macro", "carry")}
+    edge = {"rows": [{k: r.get(k) for k in ("symbol", "score", "raw", "bias", "technical", "sentiment", "macro", "carry")}
                      for r in eb.get("rows", [])],
             "surprise_index": eb.get("surprise_index"), "updated": eb.get("updated")}
     m = macro_cached()

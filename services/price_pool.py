@@ -253,6 +253,23 @@ def plan(symbol: str) -> List[Tuple[str, str]]:
     return [("yahoo_intraday", s)]
 
 
+async def raw_proxy_daily(symbol: str, n: int = 300) -> List[tuple]:
+    """Unadjusted proxy daily bars (PAXG / GC=F for gold) as DatedOHLC — for RATIO metrics only
+    (efficiency ratio, ATR percentile), which a constant basis does not change."""
+    if kind(symbol) != "proxy":
+        return []
+    for src, tick in plan(symbol):
+        try:
+            bars = (await _binance(tick, "1day", n)) if src == "binance" else \
+                (await _kraken(tick, "1day", n)) if src == "kraken" else (await _yahoo(tick, "1day", n))
+        except Exception:
+            bars = []
+        if len(bars) >= 30:
+            return [(dt.datetime.fromtimestamp(b["t"], dt.timezone.utc).date(), b["open"], b["high"], b["low"],
+                     b["close"]) for b in sorted(bars, key=lambda x: x["t"])][-n:]
+    return []
+
+
 async def alt_values(symbol: str, interval: str, outputsize: int, timezone: str = "UTC") -> Optional[Dict]:
     """Bars from the free pool (TwelveData-shaped) or None."""
     if not POOL_ENABLED or interval not in MIN_PER:
@@ -265,7 +282,9 @@ async def alt_values(symbol: str, interval: str, outputsize: int, timezone: str 
     for src, tick in cands:
         key = f"{src}:{tick}:{interval}"
         hit = _cache.get(key)
-        if hit and time.time() - hit[0] < TTL.get(interval, 300):
+        # a cached SHORT history must not answer a longer request (an 80-bar daily fetch was
+        # served for 12 h to callers asking for 300 → too little history for ATR percentiles)
+        if hit and time.time() - hit[0] < TTL.get(interval, 300) and (hit[2] if len(hit) > 2 else 0) >= outputsize:
             bars = hit[1]
         else:
             try:
@@ -284,7 +303,7 @@ async def alt_values(symbol: str, interval: str, outputsize: int, timezone: str 
             if interval in ("4h", "2h") and src == "yahoo_intraday":
                 bars = aggregate(bars, MIN_PER[interval], tz)
             if bars:
-                _cache[key] = (time.time(), bars)
+                _cache[key] = (time.time(), bars, outputsize)
         if not bars:
             continue
         if kind(symbol) == "proxy":

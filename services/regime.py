@@ -102,6 +102,9 @@ async def compute(symbol: str, max_age_s: int = 3600) -> Dict:
     try:
         from services.ohlc_service import fetch_ohlc
         d = await fetch_ohlc(symbol, "1day", 300)
+        if len(d or []) < 64:                     # gold with no recent spot reference: ratios only need the proxy
+            from services.price_pool import raw_proxy_daily
+            d = await raw_proxy_daily(symbol, 300) or d
         closes = [b[4] for b in d or []]
         er = efficiency(closes)
         atrs = atr_series(d or [])
