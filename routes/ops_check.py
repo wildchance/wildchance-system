@@ -226,10 +226,12 @@ async def errors_digest(notify: bool = False):
     counts = await errors.load_day(day)
     try:
         await df.ensure_loaded()
-        failing = sorted(s for s, h in df.status()["sources"].items() if h.get("score", 1) < 0.5)
+        srcs = df.status()["sources"]
+        failing = sorted(s for s, h in srcs.items() if h.get("score", 1) < 0.5)
+        reasons = {s: str(srcs[s].get("last_err") or "") for s in failing}
     except Exception:
-        failing = []
-    text = errors.digest_text(day, counts, failing)
+        failing, reasons = [], {}
+    text = errors.digest_text(day, counts, failing, await errors.load_details(day), reasons)
     out = {"day": day, "total": sum(counts.values()), "failing_sources": failing, "text": text}
     if notify:
         from services.owner_notify import send

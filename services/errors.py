@@ -28,6 +28,11 @@ SLOW_CRON_S = float(config("SLOW_CRON_S", default="120"))
 _recent: "collections.deque[Dict]" = collections.deque(maxlen=300)
 _counts: Dict[str, Dict[str, int]] = {}            # day → "kind|where" → n
 _dirty = {"n": 0}
+_details: Dict[str, Dict[str, str]] = {}          # day → key → last detail (the "why")
+EXPECTED_SOURCES = {"cboe_options": "CBOE blocks Render", "cme_bulletin": "CME blocks Render — send PDFs to the bot",
+                    "polygon_options": "Polygon plan has no options",
+                    "forexfactory_nextweek": "published late in the week",
+                    "tradier": "not available in your country"}
 
 
 def _day(ts: Optional[float] = None) -> str:
@@ -42,6 +47,8 @@ def record(kind: str, where: str, detail: str = "", ms: Optional[float] = None) 
         day = _counts.setdefault(_day(now), {})
         k = f"{kind}|{where[:120]}"
         day[k] = day.get(k, 0) + 1
+        if detail and kind in ("http_500", "cron_fail", "swallowed", "send_fail", "upstream_data"):
+            _details.setdefault(_day(now), {})[k] = detail[:160]
         _dirty["n"] += 1
         for d in list(_counts)[:-3]:                   # keep 3 days in memory
             _counts.pop(d, None)
@@ -80,6 +87,8 @@ async def persist(force: bool = False) -> None:
         from services import data_store
         for day, c in _counts.items():
             await data_store.put(f"errors:{day}", c)
+            if _details.get(day):
+                await data_store.put(f"errors_detail:{day}", _details[day])
         _dirty["n"] = 0
     except Exception:
         pass
@@ -96,7 +105,19 @@ async def load_day(day: str) -> Dict[str, int]:
         return {}
 
 
-def digest_text(day: str, counts: Dict[str, int], failing_sources) -> str:
+async def load_details(day: str) -> Dict[str, str]:
+    if day in _details:
+        return _details[day]
+    try:
+        from services import data_store
+        v, _ = await data_store.get(f"errors_detail:{day}")
+        return dict(v or {})
+    except Exception:
+        return {}
+
+
+def digest_text(day: str, counts: Dict[str, int], failing_sources,
+                details: Optional[Dict[str, str]] = None, reasons: Optional[Dict[str, str]] = None) -> str:
     total = sum(counts.values())
     lines = [f"🩺 Daily health — {day}: {total} problem events"]
     if not total and not failing_sources:
@@ -104,8 +125,16 @@ def digest_text(day: str, counts: Dict[str, int], failing_sources) -> str:
         return "\n".join(lines)
     for k, n in sorted(counts.items(), key=lambda kv: -kv[1])[:10]:
         kind, where = k.split("|", 1)
-        lines.append(f"• {kind} × {n} — {where}")
-    if failing_sources:
-        lines.append("Failing data sources: " + ", ".join(failing_sources))
+        why = (details or {}).get(k)
+        lines.append(f"• {kind} × {n} — {where}" + (f"\n   ↳ {why}" if why else ""))
+    real = [s for s in failing_sources if s not in EXPECTED_SOURCES]
+    expected = [s for s in failing_sources if s in EXPECTED_SOURCES]
+    if real:
+        lines.append("Failing data sources:")
+        for s in real:
+            r = (reasons or {}).get(s)
+            lines.append(f"• {s}" + (f" — {r[:90]}" if r else ""))
+    if expected:
+        lines.append("Blocked as expected: " + ", ".join(expected))
     lines.append("Details: /ops/errors")
     return "\n".join(lines)

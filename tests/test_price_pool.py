@@ -36,7 +36,8 @@ def test_aggregate_4h():
 def test_basis_correct_needs_fresh_reference():
     bars = [{"t": 1000, "open": 3650, "high": 3660, "low": 3640, "close": 3650}]
     assert pp.basis_correct(bars, None) is None
-    assert pp.basis_correct(bars, (1000, 3624.0), now=1000 + 7 * 3600) is None
+    assert pp.basis_correct(bars, (1000, 3624.0), now=1000 + 73 * 3600) is None      # older than 72 h
+    assert pp.basis_correct(bars, (1000, 3624.0), now=1000 + 7 * 3600) is not None  # 7 h is fine now
     out = pp.basis_correct(bars, (1000, 3624.0), now=1100)
     assert round(out[0]["close"], 2) == 3624.0 and out[0]["high"] > out[0]["close"]
 
@@ -86,3 +87,29 @@ def test_kraken_parser():
                                  "last": 1700000000}}
     assert pp.parse_kraken(d) == [{"t": 1700000000, "open": 1.085, "high": 1.086, "low": 1.084, "close": 1.0855}]
     assert pp.parse_kraken({"error": ["EQuery:Unknown asset pair"]}) == []
+
+
+def test_proxy_reference_survives_restart(monkeypatch):
+    import asyncio
+    from services import data_store
+    store = {"proxy_refs": {"XAUUSD": [1795600000.0, 3571.5]}}
+
+    async def get(k):
+        return store.get(k), None
+
+    async def put(k, v):
+        store[k] = v
+        return True
+    monkeypatch.setattr(data_store, "get", get)
+    monkeypatch.setattr(data_store, "put", put)
+    monkeypatch.setattr(pp, "_ref", {})
+    monkeypatch.setattr(pp, "_ref_saved", {"t": 0.0, "loaded": False})
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(pp._ref_sync())
+        assert pp._ref["XAUUSD"] == (1795600000.0, 3571.5)          # restored after a restart
+        pp.note_reference("XAU/USD", 3580.0)
+        loop.run_until_complete(pp._ref_sync())
+        assert store["proxy_refs"]["XAUUSD"][1] == 3580.0             # newer one saved
+    finally:
+        loop.close()
