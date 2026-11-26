@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.55"
+#property version   "4.56"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -163,7 +163,7 @@ input ENUM_TIMEFRAMES InpBBTF2      = PERIOD_D1;
 input group "=== 8. SEND DATA TO THE APP (EA -> /bridge) ==="
 input bool     InpSendData          = true;   // Push closed bars + account snapshot to the app
 input string   InpAppUrl            = "https://wildchance-system.onrender.com"; // Add it in Tools > Options > Expert Advisors > WebRequest
-input string   InpBridgeToken       = "";     // = BRIDGE_TOKEN (or EXECUTION_TOKEN) in the app env
+input string   InpBridgeToken       = "";     // = BRIDGE_TOKEN in the app env (blank = read MQL5\\Files\\wildchance_token.txt)
 input bool     InpPushDeals         = true;   // send closed trades → trade journal (W/L/BE) + flash cards (winners)
 input int      InpDealPushSec       = 10;     // how often to check for new closes (seconds, min 5)
 input int      InpDealBackfillDays  = 90;     // first run: send this many days of history to the journal
@@ -249,8 +249,30 @@ LivePlan g_tr;
 //+------------------------------------------------------------------+
 //| init / deinit                                                    |
 //+------------------------------------------------------------------+
+string g_token = "";
+
+// The token from the input, else from MQL5\Files\wildchance_token.txt (one line). A MetaEditor
+// DEBUG run never shows the Inputs window — the file makes the feed work there too, and keeps
+// the token out of every chart's settings.
+string LoadToken()
+  {
+   string t = InpBridgeToken;
+   StringTrimLeft(t); StringTrimRight(t);
+   if(t != "") return t;
+   int h = FileOpen("wildchance_token.txt", FILE_READ|FILE_TXT|FILE_ANSI);
+   if(h == INVALID_HANDLE) return "";
+   string line = FileReadString(h);
+   FileClose(h);
+   StringTrimLeft(line); StringTrimRight(line);
+   return line;
+  }
+
 int OnInit()
   {
+   g_token = LoadToken();
+   if(MQLInfoInteger(MQL_DEBUG))
+      Print("WildChance: running under the MetaEditor DEBUGGER - inputs are the defaults. "
+            "Close the debug run and drag the EA from Navigator onto the chart instead.");
    trade.SetExpertMagicNumber(InpMagicNumber);
    trade.SetDeviationInPoints(20);
    trade.SetTypeFillingBySymbol(_Symbol);          // FOK/IOC/RETURN per broker
@@ -314,7 +336,7 @@ void OnTimer()
 //+------------------------------------------------------------------+
 void PushClosedDeals()
   {
-   if(InpBridgeToken == "") return;
+   if(g_token == "") return;
    datetime from = (g_lastDealCheck > 0) ? g_lastDealCheck : TimeCurrent() - MathMax(1, InpDealBackfillDays) * 86400;
    datetime to   = TimeCurrent() + 60;
    if(!HistorySelect(from - 30 * 86400, to)) return;      // wide window so opening deals are found
@@ -1213,7 +1235,7 @@ bool PostJson(string path, string body)
    url += path;                                   // token goes in a header, never in the URL/logs
    char data[], result[]; string resHeaders;
    StringToCharArray(body, data, 0, StringLen(body), CP_UTF8);
-   string headers = "Content-Type: application/json\r\nX-Bridge-Token: " + InpBridgeToken + "\r\n";
+   string headers = "Content-Type: application/json\r\nX-Bridge-Token: " + g_token + "\r\n";
    ResetLastError();
    int code = WebRequest("POST", url, headers, 5000, data, result, resHeaders);
    if(code == -1)
@@ -1232,12 +1254,12 @@ bool PostJson(string path, string body)
 int AppGate(bool isBuy, double &appRisk, string &reason)
   {
    appRisk = 0; reason = "";
-   if(InpBridgeToken == "") { reason = "NO TOKEN"; return -1; }
+   if(g_token == "") { reason = "NO TOKEN"; return -1; }
    string url = InpAppUrl; if(StringSubstr(url, StringLen(url)-1)=="/") url = StringSubstr(url,0,StringLen(url)-1);
    string sym = (InpAppSymbol!="") ? InpAppSymbol : _Symbol;
    url += "/bridge/gate?symbol=" + sym + "&side=" + (isBuy ? "BUY" : "SELL");
    char data[], result[]; string resHeaders;
-   string headers = "X-Bridge-Token: " + InpBridgeToken + "\r\n";
+   string headers = "X-Bridge-Token: " + g_token + "\r\n";
    ResetLastError();
    int code = WebRequest("GET", url, headers, MathMax(2000, InpGateTimeoutMs), data, result, resHeaders);
    if(code == -1) { reason = "ERR "+IntegerToString(GetLastError()); return -1; }
@@ -1309,7 +1331,7 @@ void PushCalendar()
 
 void PushData()
   {
-   if(InpBridgeToken == "") { g_sendStatus = "NO TOKEN: set InpBridgeToken"; return; }
+   if(g_token == "") { g_sendStatus = "NO TOKEN: set InpBridgeToken or wildchance_token.txt"; return; }
    if(TimeCurrent() - g_lastCalPush >= 6*3600)      // calendar every 6h (and at start)
      { g_lastCalPush = TimeCurrent(); PushCalendar(); }
    string sym = (InpAppSymbol!="") ? InpAppSymbol : _Symbol;
@@ -1423,7 +1445,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title","v4.55 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.56 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
