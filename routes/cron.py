@@ -118,6 +118,13 @@ async def _run_jobs(items, now: dt.datetime, forced: bool = False) -> Dict:
 async def _freshness_alert() -> Dict:
     from services.freshness import gold_status
     st = await gold_status()
+    if st["status"] == "STALE":                  # probe once before shouting: a fresh fetch records itself
+        try:
+            from utils.price_fetcher import get_forex_price
+            await get_forex_price("XAU/USD")
+        except Exception:
+            pass
+        st = await gold_status()
     if st["status"] == "STALE":
         from services.realtime import alert_once
         await alert_once("data-stale",

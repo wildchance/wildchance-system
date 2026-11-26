@@ -73,6 +73,7 @@ async def crt(symbols: str = Query(None),
             alerts.append(text)
         if track and sym.upper().replace("-", "/") == "XAU/USD" and conf.get("confirmed"):
             card = size_limit(conf["order"], balance, risk_usd)   # confirmed = fills now
+            card["council_pass"] = True                              # gated just above
             pos = await gp.open_from_signal(db, card, source="gold_crt")
             if pos:
                 rec = {"tracked": pos}

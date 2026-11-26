@@ -46,12 +46,29 @@ async def instrument_closes(td_symbol: str, interval: str = "1h",
     return await _series(td_symbol, interval, outputsize)
 
 
+DXY_BAND = (70.0, 135.0)          # the index has lived here since 1985; anything else is another ticker
+
+
+def is_index_level(closes: Optional[List[float]]) -> bool:
+    return bool(closes) and DXY_BAND[0] <= closes[-1] <= DXY_BAND[1]
+
+
 async def fetch_dxy(interval: str = "1h", outputsize: int = 60) -> Tuple[Optional[List[float]], str]:
-    """Return (closes, source). source is the symbol used, or 'proxy:1/EURUSD'."""
+    """Return (closes, source). source is the symbol used, or 'proxy:1/EURUSD'.
+    A ticker that resolves to something that is not the index (e.g. a $25 ETF / stock)
+    is rejected; Yahoo DX-Y.NYB from the price pool is tried before the EUR proxy."""
     for sym in DXY_SYMBOLS:
         closes = await _series(sym, interval, outputsize)
-        if closes:
+        if is_index_level(closes):
             return closes, sym
+    try:
+        from services.price_pool import alt_values
+        d = await alt_values("DXY", interval, outputsize)
+        closes = [float(v["close"]) for v in reversed((d or {}).get("values") or [])]
+        if is_index_level(closes):
+            return closes, d.get("source") or "pool"
+    except Exception:
+        pass
     eur = await _series("EUR/USD", interval, outputsize)
     if eur:
         return [1.0 / p for p in eur if p], "proxy:1/EURUSD"

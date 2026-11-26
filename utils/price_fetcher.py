@@ -66,12 +66,19 @@ async def get_fallback_price(symbol: str) -> Optional[float]:
         try:
             from services.price_pool import note_reference
             note_reference(symbol, price)            # keeps the gold proxy basis fresh
+            from services.freshness import record
+            record(symbol, "twelvedata")
         except Exception:
             pass
         return price
 
     price = await _pool_price(symbol)                # free pool: Binance / Yahoo / Tiingo (basis-corrected gold)
     if price is not None:
+        try:
+            from services.freshness import record
+            record(symbol, "pool")
+        except Exception:
+            pass
         return price
 
     if re.fullmatch(r"[A-Z]{6}", pair_clean):
