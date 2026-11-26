@@ -86,7 +86,7 @@ def test_gate_requires_bridge_token(monkeypatch):
 
 def test_ea_has_gate_and_parses_compact_json():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
-    assert '#property version   "4.60"' in src
+    assert '#property version   "4.61"' in src
     assert "/bridge/gate?symbol=" in src and "X-Bridge-Token" in src
     assert 'riskPct = MathMin(riskPct, appRisk)' in src
     from fastapi.responses import JSONResponse
@@ -204,3 +204,10 @@ def test_ea_multi_chart_ready():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
     assert "bool IsLeader()" in src and "leader && TimeCurrent() - g_lastCalPush" in src
     assert "UpdateHUD(); g_lastHud" in src and 'LOADING HISTORY' in src and "g_lastEvalBar = 0; return;" in src
+
+
+def test_guard_never_decides_from_a_disconnected_zero():
+    src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
+    assert "bool AccountReady()" in src and 'g_propStatus = "WAITING FOR ACCOUNT"' in src
+    assert "if(saved <= 0)" in src and 'GlobalVariableDel(g_gvp + "maxlock")' in src
+    assert "g_breachCount >= 3" in src and "(belowMax && confirmed)" in src
