@@ -4,7 +4,11 @@ from services import council_gate, dxy_service, gold_positions as gp, recon_serv
 
 
 def run(c):
-    return asyncio.run(c)
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(c)
+    finally:
+        loop.close()
 
 
 def test_dxy_rejects_non_index_tickers(monkeypatch):
