@@ -1,3 +1,5 @@
 symbol,side,zone_low,zone_high,invalidation,targets,valid_from,valid_until,label
 NAS100,SELL,28083.4,30143.9,31410.3,26178.6;24545.4;22711.1,2026-11-24,2027-03-31,Oct-26 monthly OB (failed above 2025 box 4 + 2026 box 2.5)
 NAS100,BUY,22044.2,22711.1,21138.9,26178.6;29445.1;35977.8,2026-11-24,2027-12-31,2025 box 1 + 0.618 + 2026 box 0 → 2027 rally to 2026 box 4
+BTCUSD,SELL,77200,81316,89530,60760;50000;46307,2026-11-26,2027-06-30,Weekly relief-rally sell: 1.5 buy limit 77.2k + equilibrium 81.3k (Nov-26 1W map)
+BTCUSD,BUY,45000,46307,40535,60760;81316;100000,2026-11-26,2027-06-30,Weekly 2020 mean 45k + 12M RTO+OB 46.3k (Nov-25 1M map) → back to 60.7k / 81.3k / 100k
