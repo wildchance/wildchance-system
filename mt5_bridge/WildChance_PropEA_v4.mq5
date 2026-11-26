@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.54"
+#property version   "4.55"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -162,7 +162,7 @@ input ENUM_TIMEFRAMES InpBBTF2      = PERIOD_D1;
 
 input group "=== 8. SEND DATA TO THE APP (EA -> /bridge) ==="
 input bool     InpSendData          = true;   // Push closed bars + account snapshot to the app
-input string   InpAppUrl            = "https://your-app.onrender.com"; // Add it in Tools > Options > Expert Advisors > WebRequest
+input string   InpAppUrl            = "https://wildchance-system.onrender.com"; // Add it in Tools > Options > Expert Advisors > WebRequest
 input string   InpBridgeToken       = "";     // = BRIDGE_TOKEN (or EXECUTION_TOKEN) in the app env
 input bool     InpPushDeals         = true;   // send closed trades → trade journal (W/L/BE) + flash cards (winners)
 input int      InpDealPushSec       = 10;     // how often to check for new closes (seconds, min 5)
@@ -1218,7 +1218,8 @@ bool PostJson(string path, string body)
    int code = WebRequest("POST", url, headers, 5000, data, result, resHeaders);
    if(code == -1)
      {
-      g_sendStatus = "ERR "+IntegerToString(GetLastError())+" (allow URL in Options)";
+      int err = GetLastError();
+      g_sendStatus = (err == 4014) ? "BLOCKED: allow "+InpAppUrl+" in Options" : "ERR "+IntegerToString(err);
       return false;
      }
    g_sendStatus = (code==200) ? "OK "+TimeToString(TimeCurrent(),TIME_MINUTES) : "HTTP "+IntegerToString(code);
@@ -1308,6 +1309,7 @@ void PushCalendar()
 
 void PushData()
   {
+   if(InpBridgeToken == "") { g_sendStatus = "NO TOKEN: set InpBridgeToken"; return; }
    if(TimeCurrent() - g_lastCalPush >= 6*3600)      // calendar every 6h (and at start)
      { g_lastCalPush = TimeCurrent(); PushCalendar(); }
    string sym = (InpAppSymbol!="") ? InpAppSymbol : _Symbol;
@@ -1421,7 +1423,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title","v4.54 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title","v4.55 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :

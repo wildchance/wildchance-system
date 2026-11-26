@@ -31,7 +31,7 @@ enum ENUM_COPY_ROLE { ROLE_MASTER = 0, ROLE_FOLLOWER = 1 };
 input group "=== ROLE ==="
 input ENUM_COPY_ROLE InpRole        = ROLE_FOLLOWER; // MASTER on the main account, FOLLOWER everywhere else
 input string   InpAccountName       = "";     // Label in the bot / page, e.g. "Exness 1"
-input string   InpAppUrl            = "https://your-app.onrender.com";
+input string   InpAppUrl            = "https://wildchance-system.onrender.com";
 input string   InpBridgeToken       = "";     // = BRIDGE_TOKEN in the app (header only, never in URLs)
 input int      InpIntervalMs        = 2000;   // Sync every N ms (min 1000)
 
