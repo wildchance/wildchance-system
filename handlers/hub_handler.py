@@ -53,11 +53,13 @@ def denied_text(update: Update) -> str:
     chat = update.effective_chat.id if update.effective_chat else "?"
     eu = getattr(update, "effective_user", None)
     user = eu.id if eu else "?"
+    # setting names in `code` so Markdown does not turn OWNER_CHAT_ID's underscores into italics
     if not owner_ids():
-        return (f"🔒 Owner only — OWNER_CHAT_ID is not set in Render. Your user id is {user}: "
-                "put that number in OWNER_CHAT_ID and redeploy.")
-    return (f"🔒 Owner only. This chat id: {chat} · your user id: {user}. "
-            "If this is you, set OWNER_CHAT_ID in Render to your user id (no spaces or quotes) and redeploy.")
+        return (f"🔒 Owner only — `OWNER_CHAT_ID` is not set on this server. Your user id is `{user}`: "
+                "Render → wildchance-system → Environment → add `OWNER_CHAT_ID` = that number → Save "
+                "(it redeploys).")
+    return (f"🔒 Owner only. This chat id: `{chat}` · your user id: `{user}`. "
+            "If this is you, set `OWNER_CHAT_ID` in Render to your user id (no spaces or quotes) and redeploy.")
 
 
 async def _reply(update: Update, text: str) -> None:
