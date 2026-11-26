@@ -105,8 +105,8 @@ async def brief(force: bool = False) -> Dict:
                                                     "regime": dash["regime"]})}]
     txt = await ai.ask_model(msgs)
     out = {"as_of": dash["as_of"], "posture": dash["regime"]["posture"],
-           "brief": txt or "AI brief unavailable (set NVIDIA_API_KEY) — see /macro/dashboard",
-           "model": ai.NVIDIA_MODEL if txt else None}
+           "brief": txt or "AI brief is temporarily unavailable — the macro numbers below are live.",
+           "model": ai.LAST.get("model") if txt else None}
     if txt:
         _cache.update(brief=out, brief_t=time.time())
     return out
