@@ -896,3 +896,30 @@ async def unknown_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if _private(update):
         await update.message.reply_text(f"🤔 I don't know {text.split()[0][:40]} — type /help for the menu "
                                         "(put a space before any email or symbol, e.g. /trial you@email.com).")
+
+
+# ── EA license: one key, one paste ──────────────────────────────────────────────
+APP_URL = str(config("PUBLIC_BASE_URL", default="https://wildchance-system.onrender.com")).rstrip("/")
+
+
+async def license_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner: the EA owner key (full feed). Members: where their key lives (members page)."""
+    if not is_owner(update):
+        await _reply(update, "🔑 Your EA license key is on your members page — log in and tap *Copy* in "
+                             f"the 'Install the EA' card: {APP_URL}/members\n"
+                             "No account yet? /trial you@email.com (7 days free).")
+        return
+
+    async def go():
+        from routes.bridge import owner_license
+        key = await owner_license()
+        await _reply(update, "🔑 *Your EA license key* (owner — full feed). Tap to copy:\n"
+                             f"`{key}`\n\n"
+                             "MT5 → right-click the chart → Expert Advisors → Properties → Inputs → "
+                             "*License key* → paste → OK. The panel shows *APP FEED OK* within a minute.\n"
+                             f"One-time MT5 step: Tools → Options → Expert Advisors → allow `{APP_URL}`")
+    await _guard(update, go)
+
+
+HANDLERS["license"] = license_cmd
+PUBLIC_COMMANDS += [("license", "Your EA license key")]

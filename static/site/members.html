@@ -12,8 +12,17 @@
 <section class="hero" style="padding:34px 0 8px"><h1>Members <b>dashboard</b></h1><p id="status" class="muted"></p><p id="tg"></p></section>
 <div class="card"><h3>Password</h3><p class="muted">Set a password to log in with your email next time (10+ characters).</p>
 <input id="npw" type="password" placeholder="new password" autocomplete="new-password"> <button class="btn ghost" onclick="setPw()">Save</button> <span id="pmsg"></span></div>
-<div class="card" style="margin-top:16px"><h3>EA license key</h3><p class="muted">Paste this into the WildChance EA (MT5 → drag the EA onto a chart → Inputs → <b>License key</b>). It unlocks the council gate while your plan is active. Keep it private.</p>
-<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><code id="lic" style="word-break:break-all">••••••••</code><button id="licshow" type="button">Show</button><button id="liccopy" type="button">Copy</button><span id="licmsg" class="muted"></span></div></div>
+<div class="card" style="margin-top:16px"><h3>Install the EA (3 minutes)</h3>
+<ol style="margin:8px 0 12px 18px;line-height:1.7">
+<li><a href="/members/ea/download"><b>Download the EA</b></a>. In MT5: File → Open Data Folder → <b>MQL5 → Experts</b> → paste the file. In Navigator, right-click <b>Expert Advisors → Refresh</b>.</li>
+<li>MT5 → Tools → Options → Expert Advisors → tick <b>Allow WebRequest</b> → add this address
+ <code id="appurl">https://wildchance-system.onrender.com</code> <button id="urlcopy" type="button">Copy</button>. Click <b>Algo Trading</b> in the toolbar (green).</li>
+<li>Drag <b>WildChance</b> from Navigator onto a chart (EURUSD H1). Common tab → tick <b>Allow Algo Trading</b>.</li>
+<li>Inputs tab → <b>License key</b> → paste your key → OK:
+ <span style="display:inline-flex;gap:8px;flex-wrap:wrap;align-items:center"><code id="lic" style="word-break:break-all">••••••••</code><button id="licshow" type="button">Show</button><button id="liccopy" type="button">Copy key</button></span></li>
+</ol>
+<p class="muted">Done when the EA panel says <b>APP FEED OK</b> (or READY). If it shows a <b>SETUP:</b> line, it names the one thing to fix. Keep your key private — it stops working when your plan ends.</p>
+<span id="licmsg" class="muted"></span></div>
 <div class="card" style="margin-top:16px"><h3>Macro brief</h3><p id="brief" class="muted" style="white-space:pre-wrap">Loading…</p></div>
 <div class="card feed" style="margin-top:16px"><h3>Latest signals</h3><div id="feed" class="muted">Loading…</div></div></div>
 <div class="risk"><b>Risk warning.</b> Signals are educational information, not personalised financial advice. Size every trade so a stop-out is affordable; past results do not guarantee future results.</div>
@@ -23,6 +32,7 @@ async function j(u){const r=await fetch(u,{headers:KEY?{'X-API-Key':KEY}:{}});le
 function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
 function licWire(){const l=$('lic');if(!l||l.dataset.wired)return;l.dataset.wired=1;
 $('licshow').onclick=()=>{l.textContent=l.textContent.startsWith('•')?KEY:'••••••••'};
+$('urlcopy').onclick=async()=>{try{await navigator.clipboard.writeText($('appurl').textContent);$('licmsg').textContent='Address copied.'}catch(e){$('licmsg').textContent='Select and copy the address.'}};
 $('liccopy').onclick=async()=>{try{await navigator.clipboard.writeText(KEY);$('licmsg').textContent='Copied.'}catch(e){l.textContent=KEY;$('licmsg').textContent='Select and copy it.'}}}
 async function show(){licWire();try{const m=await j('/members/me');$('login').style.display='none';$('app').style.display='block';
 $('status').innerHTML=`${esc(m.email)} · plan <b>${esc(m.tier)}</b>`+(m.paid_until?` · active until ${m.paid_until.slice(0,10)}`:'')+(location.search.includes('paid=1')?' · <span class="ok">payment received — thank you!</span>':'');
