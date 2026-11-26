@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.60"
+#property version   "4.61"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -595,13 +595,40 @@ void CountTradingDays()
    for(int k=0;k<ArraySize(pnl);k++) if(pnl[k] > 0) g_profitDays++;
   }
 
+bool g_guardLoaded = false;
+int  g_breachCount = 0;
+
+// MT5 reports balance / equity as 0 for a moment after a restart or reconnect. Nothing in the
+// guard may be decided (or remembered) from those zeros.
+bool AccountReady()
+  {
+   return TerminalInfoInteger(TERMINAL_CONNECTED) != 0
+          && AccountInfoDouble(ACCOUNT_BALANCE) > 0 && AccountInfoDouble(ACCOUNT_EQUITY) > 0;
+  }
+
 void LoadGuardState()
   {
+   if(!AccountReady()) { g_guardLoaded = false; return; }          // retried from CheckPropGuard
+   // the per-account key prefix also needs the real login (0 before the account connects)
+   g_gvp = "WC4_" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + "_";
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
+   double saved = GVGet("init", 0);
+   if(saved <= 0)
+     {
+      // a 0 start balance (captured while disconnected) poisons every floor → it and any lock
+      // recorded with it are void; start clean from the real balance
+      GlobalVariableDel(g_gvp + "maxlock"); GlobalVariableDel(g_gvp + "dailylock");
+      GlobalVariableDel(g_gvp + "targetlock"); GlobalVariableDel(g_gvp + "dayref");
+      GlobalVariableDel(g_gvp + "peakeq"); GlobalVariableDel(g_gvp + "peakeod");
+      if(saved < 0 || GlobalVariableCheck(g_gvp + "init"))
+         Print("WildChance: start balance was 0 (captured while disconnected) - guard locks cleared, re-captured ", bal);
+     }
    if(InpInitialBalance > 0)        g_initialBalance = InpInitialBalance;
-   else                             g_initialBalance = GVGet("init", bal);   // first run captures
+   else                             g_initialBalance = (saved > 0) ? saved : bal;     // first run captures
    GVSet("init", g_initialBalance);
-   g_dayRef = GVGet("dayref", MathMax(bal, AccountInfoDouble(ACCOUNT_EQUITY)));
+   double dr = GVGet("dayref", 0);
+   g_dayRef = (dr > 0) ? dr : MathMax(bal, AccountInfoDouble(ACCOUNT_EQUITY));
+   g_guardLoaded = true;
   }
 
 int ServerDayKey()
@@ -613,6 +640,13 @@ int ServerDayKey()
 // Returns true when NEW entries are allowed.
 bool CheckPropGuard()
   {
+   if(!AccountReady())                              // disconnected / starting: decide nothing
+     {
+      g_propStatus = "WAITING FOR ACCOUNT";
+      g_breachCount = 0;
+      return false;
+     }
+   if(!g_guardLoaded) LoadGuardState();
    double eq  = AccountInfoDouble(ACCOUNT_EQUITY);
    double bal = AccountInfoDouble(ACCOUNT_BALANCE);
    int dayKey = ServerDayKey();
@@ -633,7 +667,11 @@ bool CheckPropGuard()
    g_maxFloor   = maxBase  - g_initialBalance * g_maxPct / 100.0;
    g_targetEq   = (g_targetPct > 0) ? g_initialBalance * (1.0 + g_targetPct / 100.0) : 0;
 
-   if(GVGet("maxlock", 0) > 0 || eq <= g_maxFloor)
+   // a breach must persist for 3 consecutive checks (~3 s) — a one-tick glitch never locks
+   bool belowMax = (eq <= g_maxFloor), belowDay = (eq <= g_dailyFloor);
+   g_breachCount = (belowMax || belowDay) ? g_breachCount + 1 : 0;
+   bool confirmed = (g_breachCount >= 3);
+   if(GVGet("maxlock", 0) > 0 || (belowMax && confirmed))
      {
       if(GVGet("maxlock", 0) == 0) { GVSet("maxlock", 1); Flatten("MAX_DD_GUARD"); Alert("WildChance: MAX-LOSS guard hit - trading stopped"); }
       g_propStatus = "LOCKED: MAX DD";
@@ -653,7 +691,7 @@ bool CheckPropGuard()
       g_propStatus = (need > 0) ? "TARGET - NEED "+IntegerToString(need)+" DAY(S)" : "TARGET PASSED";
       return false;
      }
-   if((int)GVGet("dailylock", 0) == dayKey || eq <= g_dailyFloor)
+   if((int)GVGet("dailylock", 0) == dayKey || (belowDay && confirmed))
      {
       if((int)GVGet("dailylock", 0) != dayKey) { GVSet("dailylock", dayKey); Flatten("DAILY_DD_GUARD"); Alert("WildChance: DAILY guard hit - paused until server midnight"); }
       g_propStatus = "DAILY LOCK";
@@ -1573,7 +1611,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.60 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.61 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
