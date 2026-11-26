@@ -81,6 +81,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = ["👋 *WildChance hub*", "",
              "💪 /strength — currency strength + best pairings",
              "⏸ /rotation — which currencies step aside for news, what to trade instead",
+             "💳 /subscribe — plans, pay with Telegram Stars",
              "🧱 /walls EURUSD — dealer walls (CME or vol screens)",
              "🗓 /calendar [USD,EUR] — high-impact events, next 7 days",
              "📈 /results — track record (wins · losses · breakevens · pips)",
@@ -316,6 +317,13 @@ async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _private(update):
         return                                           # never chat back to every group message
     text = update.message.text or ""
+    from services import treasury
+    if treasury.looks_secret(text):                       # a seed phrase / private key pasted by mistake
+        await update.message.reply_text(
+            "⚠️ That looks like a SEED PHRASE or PRIVATE KEY. Delete your message now. It was not stored. "
+            "The bot only ever needs PUBLIC addresses. If this was a real wallet secret, move the funds "
+            "to a new wallet.")
+        return
     from services import calendar_paste as cp
     if is_owner(update) and cp.looks_like_ff(text):
         async def go():
@@ -621,3 +629,149 @@ async def flashtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 HANDLERS["flashtest"] = flashtest_cmd
 OWNER_COMMANDS += [("flashtest", "Test flash card to this chat: /flashtest EURUSD (owner)")]
+
+
+
+# ── watch-only treasury (owner) ─────────────────────────────────────────────────
+async def wallet_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await _reply(update, denied_text(update))
+        return
+
+    async def go():
+        from services import treasury
+        await _reply(update, treasury.text(await treasury.snapshot()))
+    await _guard(update, go)
+
+
+async def walletadd_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await _reply(update, denied_text(update))
+        return
+    from services import treasury
+    args = context.args or []
+    if treasury.looks_secret(" ".join(args)) or any(treasury.looks_secret(a) for a in args):
+        await _reply(update, "⚠️ That is a secret, not a public address. Delete the message; nothing was stored.")
+        return
+    if len(args) < 2:
+        await _reply(update, "Usage: /walletadd <btc|eth|tron|ton> <PUBLIC address> [label]\n"
+                             "e.g. /walletadd tron TXyz… Tangem USDT")
+        return
+
+    async def go():
+        r = await treasury.add(args[0], args[1], " ".join(args[2:]))
+        await _reply(update, f"✅ Watching #{r['n']} — /wallet to see balances" if r["ok"] else f"⚠️ {r['reason']}")
+    await _guard(update, go)
+
+
+async def walletdel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        await _reply(update, denied_text(update))
+        return
+    try:
+        n = int((context.args or ["0"])[0])
+    except ValueError:
+        n = 0
+
+    async def go():
+        from services import treasury
+        r = await treasury.remove(n)
+        await _reply(update, f"🗑 Stopped watching {r['removed']['label']}" if r["ok"] else f"⚠️ {r['reason']}")
+    await _guard(update, go)
+
+
+# ── subscriptions: Telegram Stars (+ optional Crypto Pay link) ──────────────────
+async def subscribe_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from services import payments
+    args = context.args or []
+    if len(args) < 2:
+        await _reply(update, payments.plans_text())
+        return
+    tier, email = args[0].lower(), args[1].lower()
+    try:
+        months = max(1, min(12, int(args[2]))) if len(args) > 2 else 1
+    except ValueError:
+        months = 1
+    stars = payments.stars_for(tier, months)
+    if not stars or not payments.EMAIL.match(email):
+        await _reply(update, "⚠️ Unknown plan or email.\n" + payments.plans_text())
+        return
+
+    async def go():
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup, LabeledPrice
+        await context.bot.send_invoice(
+            chat_id=update.effective_chat.id, title=f"WildChance {tier.title()}",
+            description=f"{months} month(s) of {tier.title()} for {email}. Access opens as soon as it is paid.",
+            payload=payments.payload(tier, months, email), provider_token="", currency="XTR",
+            prices=[LabeledPrice(f"{tier.title()} × {months} mo", stars)])
+        if payments.CRYPTOPAY_IN_BOT and payments.CRYPTOPAY_TOKEN:
+            inv = await payments.cryptopay_invoice(tier, months, email)
+            if inv.get("ok"):
+                await update.message.reply_text(
+                    "Or pay with crypto (USDT / TON / BTC):",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Pay with crypto", url=inv["url"])]]))
+    await _guard(update, go)
+
+
+async def precheckout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Telegram asks before charging: confirm the order is still valid."""
+    from services import payments
+    q = update.pre_checkout_query
+    ok = q.currency == "XTR" and payments.parse_payload(q.invoice_payload) is not None
+    await q.answer(ok=ok, error_message=None if ok else "This order is no longer valid — send /subscribe again.")
+
+
+async def paid_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from services import payments
+    sp = update.message.successful_payment
+    p = payments.parse_payload(sp.invoice_payload)
+    if not p:
+        await update.message.reply_text("⚠️ Payment received but the order was unreadable — /paysupport and we fix it.")
+        return
+    r = await payments.apply_once(sp.telegram_payment_charge_id, p["tier"], p["months"], p["email"], "stars")
+    if r.get("ok"):
+        await update.message.reply_text(
+            f"✅ Paid — {p['tier'].title()} is active for {p['email']} until {str(r.get('paid_until', ''))[:10]}. "
+            "Sign in on the members page with that email. Thank you!")
+    else:
+        await update.message.reply_text(f"⚠️ Payment received but activation failed ({r.get('reason')}). "
+                                        "The owner has been told — /paysupport.")
+
+
+async def paysupport_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Telegram requires bots that take payments to answer /paysupport."""
+    await _reply(update, "💬 Payment help: reply here with your email and what happened. Refunds for Stars "
+                         "payments are handled by the owner within 48 h.")
+    try:
+        from services.owner_notify import send
+        u = update.effective_user
+        await send(f"💬 /paysupport from {getattr(u, 'username', None) or getattr(u, 'id', '?')} "
+                   f"(user id {getattr(u, 'id', '?')})")
+    except Exception:
+        pass
+
+
+async def refund_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/refund <user_id> <telegram_payment_charge_id> — refund a Stars payment (owner)."""
+    if not is_owner(update):
+        await _reply(update, denied_text(update))
+        return
+    args = context.args or []
+    if len(args) < 2:
+        await _reply(update, "Usage: /refund <user_id> <charge_id> (both are in the payment notice)")
+        return
+
+    async def go():
+        ok = await context.bot.refund_star_payment(user_id=int(args[0]), telegram_payment_charge_id=args[1])
+        await _reply(update, "↩️ Refunded." if ok else "⚠️ Refund failed.")
+    await _guard(update, go)
+
+
+HANDLERS.update({"wallet": wallet_cmd, "walletadd": walletadd_cmd, "walletdel": walletdel_cmd,
+                 "subscribe": subscribe_cmd, "plans": subscribe_cmd, "paysupport": paysupport_cmd,
+                 "refund": refund_cmd})
+PUBLIC_COMMANDS += [("subscribe", "Plans + pay with Telegram Stars"), ("paysupport", "Payment help")]
+OWNER_COMMANDS += [("wallet", "Treasury balances (watch-only, owner)"),
+                   ("walletadd", "Watch a public address: /walletadd tron T… (owner)"),
+                   ("walletdel", "Stop watching: /walletdel 2 (owner)"),
+                   ("refund", "Refund a Stars payment (owner)")]
