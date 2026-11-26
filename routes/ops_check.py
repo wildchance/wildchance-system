@@ -100,6 +100,9 @@ CHECKS: List[Tuple[str, str, Callable]] = [
     ("Shanghai (SHFE)", "/ops/shfe", lambda d: (
         ("✅", " · ".join(d.get("lines", [])[1:]) or f"settlement {d.get('day')}") if d.get("ok")
         else ("⚠️", d.get("reason") or "not reachable"))),
+    ("telegram bot", "/ops/telegram", lambda d: (
+        ("✅", f"{d.get('bot')} webhook OK") if d.get("ok")
+        else ("❌", "; ".join(d.get("problems") or [d.get("reason") or "not reachable"])[:200]))),
     ("data blackout", "/ops/freshness", lambda d: (
         ("✅", "every watched market priced within the limit") if not d.get("dark")
         else ("⏳", "app just woke up — prices arrive with the next scans") if d.get("uptime_min", 99) < 30
@@ -187,6 +190,50 @@ async def freshness_view():
     rep = freshness.blackouts()
     rep["uptime_min"] = round(up, 1)
     return rep
+
+
+@router.get("/telegram")
+async def telegram_status():
+    """Why the bot is silent: Telegram's own view of our webhook (token never shown)."""
+    from routes import telegram_routes as tr
+    if tr.application is None:
+        return {"ok": False, "reason": "TELEGRAM_BOT_TOKEN / BOT_TOKEN not set on this server — bot disabled"}
+    try:
+        info = await tr.application.bot.get_webhook_info()
+        me = await tr.application.bot.get_me()
+    except Exception as e:
+        return {"ok": False, "reason": f"Telegram API unreachable or token rejected: {type(e).__name__}: {e}"[:200]}
+    want = (tr.WEBHOOK_BASE_URL or "").rstrip("/") + tr.WEBHOOK_PATH if tr.WEBHOOK_BASE_URL else None
+    import datetime as _dt
+    last = info.last_error_date
+    problems = []
+    if not info.url:
+        problems.append("no webhook registered — POST /ops/telegram/reset")
+    elif want and info.url != want:
+        problems.append(f"webhook points elsewhere ({info.url}) — POST /ops/telegram/reset")
+    if info.last_error_message:
+        problems.append(f"Telegram's last delivery error: {info.last_error_message}")
+    if (info.pending_update_count or 0) > 5:
+        problems.append(f"{info.pending_update_count} messages waiting — Telegram cannot deliver them")
+    return {"ok": not problems, "bot": f"@{me.username}", "webhook_url": info.url, "expected_url": want,
+            "pending_updates": info.pending_update_count,
+            "last_error": info.last_error_message,
+            "last_error_at": last.astimezone(_dt.timezone.utc).isoformat() if last else None,
+            "secret_set": bool(tr.WEBHOOK_SECRET), "problems": problems}
+
+
+@router.post("/telegram/reset")
+async def telegram_reset():
+    """Re-register the webhook (keeps pending messages so nothing you sent is lost)."""
+    from routes import telegram_routes as tr
+    if tr.application is None or not tr.WEBHOOK_BASE_URL:
+        return {"ok": False, "reason": "bot token or WEBHOOK_BASE_URL / RENDER_EXTERNAL_URL missing"}
+    from telegram import Update
+    kw = {"url": tr.WEBHOOK_BASE_URL.rstrip("/") + tr.WEBHOOK_PATH, "allowed_updates": Update.ALL_TYPES}
+    if tr.WEBHOOK_SECRET:
+        kw["secret_token"] = tr.WEBHOOK_SECRET
+    ok = await tr.application.bot.set_webhook(**kw)
+    return {"ok": bool(ok), "webhook_url": kw["url"]}
 
 
 @router.post("/treasury/check")
