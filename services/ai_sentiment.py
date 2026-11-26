@@ -106,19 +106,62 @@ async def headlines(symbol: str) -> List[str]:
         return []
 
 
+# tried in order when the configured model is retired / not on this account (HTTP 404 / 400)
+FALLBACK_MODELS = [m.strip() for m in str(config(
+    "NVIDIA_FALLBACK_MODELS", default="meta/llama-3.3-70b-instruct,meta/llama-3.1-70b-instruct,"
+                                      "mistralai/mixtral-8x7b-instruct-v0.1")).split(",") if m.strip()]
+LAST = {"ok": None, "status": None, "error": None, "model": None, "t": 0.0}
+_down_until = {"t": 0.0}
+
+
+def _note(ok: bool, status, error: Optional[str], model: Optional[str]) -> None:
+    import time as _t
+    LAST.update(ok=ok, status=status, error=(error or "")[:200] or None, model=model, t=_t.time())
+    if not ok:
+        try:
+            from services import errors
+            errors.record("upstream_data", "nvidia ai", f"{status}: {error}"[:160])
+        except Exception:
+            pass
+
+
 async def ask_model(messages: List[Dict]) -> Optional[str]:
+    """Chat completion on NVIDIA's API. Never raises; the reason for a failure is kept in LAST
+    (shown at /ops/ai) and a failing API is skipped for 15 min so pages don't hang on it."""
+    import time as _t
     if not NVIDIA_API_KEY:
+        _note(False, "no key", "NVIDIA_API_KEY is not set on this server", None)
         return None
-    try:
-        async with httpx.AsyncClient(timeout=40) as c:
-            r = await c.post(NVIDIA_URL, headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
-                             json={"model": NVIDIA_MODEL, "messages": messages,
-                                   "temperature": 0.1, "max_tokens": 300})
-        if r.status_code != 200:
+    if _t.time() < _down_until["t"]:
+        return None
+    for model in [NVIDIA_MODEL] + [m for m in FALLBACK_MODELS if m != NVIDIA_MODEL]:
+        try:
+            async with httpx.AsyncClient(timeout=25) as c:
+                r = await c.post(NVIDIA_URL, headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
+                                 json={"model": model, "messages": messages,
+                                       "temperature": 0.1, "max_tokens": 300})
+        except Exception as e:
+            _note(False, "network", f"{type(e).__name__}: {e}", model)
+            _down_until["t"] = _t.time() + 900
             return None
-        return r.json()["choices"][0]["message"]["content"]
-    except Exception:
+        if r.status_code == 200:
+            try:
+                txt = r.json()["choices"][0]["message"]["content"]
+            except Exception as e:
+                _note(False, 200, f"unexpected reply: {e}", model)
+                return None
+            _note(True, 200, None, model)
+            return txt
+        err = r.text[:200]
+        if r.status_code in (404, 400, 422) and "model" in err.lower():
+            continue                                  # retired / unavailable model → try the next one
+        _note(False, r.status_code, err, model)
+        if r.status_code in (401, 403, 429) or r.status_code >= 500:
+            _down_until["t"] = _t.time() + 900
         return None
+    _note(False, 404, "none of the configured models is available to this key", NVIDIA_MODEL)
+    _down_until["t"] = _t.time() + 900
+    return None
 
 
 async def score(symbol: str, force: bool = False) -> Dict:

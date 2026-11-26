@@ -100,6 +100,9 @@ CHECKS: List[Tuple[str, str, Callable]] = [
     ("Shanghai (SHFE)", "/ops/shfe", lambda d: (
         ("✅", " · ".join(d.get("lines", [])[1:]) or f"settlement {d.get('day')}") if d.get("ok")
         else ("⚠️", d.get("reason") or "not reachable"))),
+    ("AI (NVIDIA)", "/ops/ai?test=true", lambda d: (
+        ("✅", f"{(d.get('last') or {}).get('model')} answering") if (d.get("last") or {}).get("ok")
+        else ("❌", (d.get("hint") or str((d.get("last") or {}).get("error") or "no reply"))[:200]))),
     ("telegram bot", "/ops/telegram", lambda d: (
         ("✅", f"{d.get('bot')} webhook OK") if d.get("ok")
         else ("❌", "; ".join(d.get("problems") or [d.get("reason") or "not reachable"])[:200]))),
@@ -190,6 +193,26 @@ async def freshness_view():
     rep = freshness.blackouts()
     rep["uptime_min"] = round(up, 1)
     return rep
+
+
+@router.get("/ai")
+async def ai_status(test: bool = False):
+    """NVIDIA AI: is the key set, did the last call work, and why not (key never shown)."""
+    from services import ai_sentiment as ai
+    if test:
+        ai._down_until["t"] = 0.0                         # a manual test always really calls NVIDIA
+        await ai.ask_model([{"role": "user", "content": "Reply with the single word: ok"}])
+    hint = None
+    st, err = ai.LAST.get("status"), str(ai.LAST.get("error") or "")
+    if st == "no key":
+        hint = "add NVIDIA_API_KEY in Render → Environment, then redeploy (the key is read at start-up)"
+    elif st in (401, 403):
+        hint = "NVIDIA rejected the key — create a new one at build.nvidia.com and replace it in Render"
+    elif st == 404:
+        hint = "model not available — set NVIDIA_MODEL to a model your build.nvidia.com account lists"
+    elif st == 429:
+        hint = "NVIDIA rate / credit limit — check credits at build.nvidia.com"
+    return {"key_set": bool(ai.NVIDIA_API_KEY), "model": ai.NVIDIA_MODEL, "last": ai.LAST, "hint": hint}
 
 
 @router.get("/telegram")
