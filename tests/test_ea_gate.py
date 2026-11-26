@@ -86,7 +86,7 @@ def test_gate_requires_bridge_token(monkeypatch):
 
 def test_ea_has_gate_and_parses_compact_json():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
-    assert '#property version   "4.59"' in src
+    assert '#property version   "4.60"' in src
     assert "/bridge/gate?symbol=" in src and "X-Bridge-Token" in src
     assert 'riskPct = MathMin(riskPct, appRisk)' in src
     from fastapi.responses import JSONResponse
@@ -198,3 +198,9 @@ def test_members_page_has_install_card_and_download_route():
     app.include_router(members.router)
     r = TestClient(app).get("/members/ea/download")
     assert r.status_code in (200, 404)
+
+
+def test_ea_multi_chart_ready():
+    src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
+    assert "bool IsLeader()" in src and "leader && TimeCurrent() - g_lastCalPush" in src
+    assert "UpdateHUD(); g_lastHud" in src and 'LOADING HISTORY' in src and "g_lastEvalBar = 0; return;" in src

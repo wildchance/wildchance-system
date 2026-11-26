@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.59"
+#property version   "4.60"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -254,6 +254,25 @@ LivePlan g_tr;
 //| init / deinit                                                    |
 //+------------------------------------------------------------------+
 string g_token = "";
+datetime g_lastHud = 0;
+
+// Several charts on one account: ONE leader does the account-wide uploads (deal history, MT5
+// calendar, account snapshot); every chart still sends its own symbol's bars. The leader keeps a
+// heartbeat; if its chart closes, another chart takes over within 30 s.
+bool IsLeader()
+  {
+   string k = g_gvp + "leader", kt = g_gvp + "leader_t";
+   double me = (double)ChartID();
+   datetime now = TimeLocal();
+   bool stale = !GlobalVariableCheck(k) || !GlobalVariableCheck(kt) || now - (datetime)GlobalVariableGet(kt) > 30;
+   if(stale || GlobalVariableGet(k) == me)
+     {
+      GlobalVariableSet(k, me);
+      GlobalVariableSet(kt, (double)now);
+      return true;
+     }
+   return false;
+  }
 string g_role = "";            // "owner" (full feed) · "member" (gate only) · "" (unknown yet)
 string g_license = "";         // last license answer, shown by the SETUP line
 datetime g_lastWho = 0;
@@ -403,13 +422,15 @@ void OnDeinit(const int reason)
 void OnTimer()
   {
    CheckPropGuard();
+   if(TimeLocal() - g_lastHud >= 2) { UpdateHUD(); g_lastHud = TimeLocal(); }
    if(InpUseNewsFilter && !MQLInfoInteger(MQL_TESTER) && TimeCurrent() - g_lastNewsCheck >= 60)
      { g_newsBlocked = IsHighImpactNewsWindow(); g_lastNewsCheck = TimeCurrent(); }
    if(!MQLInfoInteger(MQL_TESTER) && (g_lastWho == 0 || TimeCurrent() - g_lastWho >= (g_role == "" ? 60 : 3600)))
       CheckLicense();
    bool owner = (g_role == "owner");                 // a member's EA never writes into the owner's feed
    if(InpSendData && owner && !MQLInfoInteger(MQL_TESTER)) PushData();
-   if(InpSendData && owner && InpPushDeals && !MQLInfoInteger(MQL_TESTER) && TimeCurrent() - g_lastDealPush >= MathMax(5, InpDealPushSec))
+   if(InpSendData && owner && InpPushDeals && !MQLInfoInteger(MQL_TESTER) && IsLeader()
+      && TimeCurrent() - g_lastDealPush >= MathMax(5, InpDealPushSec))
      {
       g_lastDealPush = TimeCurrent();
       PushClosedDeals();
@@ -774,7 +795,7 @@ void EvaluatePipeline(bool warmup, bool canTrade)
    MqlRates rates[];
    ArraySetAsSeries(rates, false);
    int copied = CopyRates(_Symbol, _Period, 1, bars, rates);         // closed bars, oldest first
-   if(copied < InpEmaLong + 20) { g_newSignalTxt = "WAITING FOR HISTORY"; return; }
+   if(copied < InpEmaLong + 20) { g_newSignalTxt = "LOADING HISTORY ("+IntegerToString(copied)+" bars)"; g_lastEvalBar = 0; return; }
 
    double fast[], slow[], mid[], lng[], atr[], adx[], rsi[];
    ArraySetAsSeries(fast,false); ArraySetAsSeries(slow,false); ArraySetAsSeries(mid,false);
@@ -782,7 +803,8 @@ void EvaluatePipeline(bool warmup, bool canTrade)
    ArraySetAsSeries(rsi,false);
    if(CopyBuffer(hFast,0,1,copied,fast)!=copied || CopyBuffer(hSlow,0,1,copied,slow)!=copied ||
       CopyBuffer(hMid ,0,1,copied,mid )!=copied || CopyBuffer(hLong,0,1,copied,lng )!=copied ||
-      CopyBuffer(hATR ,0,1,copied,atr )!=copied || CopyBuffer(hADX ,0,1,copied,adx )!=copied) return;
+      CopyBuffer(hATR ,0,1,copied,atr )!=copied || CopyBuffer(hADX ,0,1,copied,adx )!=copied)
+     { g_newSignalTxt = "LOADING INDICATORS"; g_lastEvalBar = 0; return; }
    bool haveRsi = (hRSI!=INVALID_HANDLE && CopyBuffer(hRSI,0,1,copied,rsi)==copied);
 
    datetime time[]; double open[], high[], low[], close[];
@@ -1437,7 +1459,8 @@ void PushCalendar()
 void PushData()
   {
    if(g_token == "") { g_sendStatus = "NO TOKEN: set InpBridgeToken or wildchance_token.txt"; return; }
-   if(TimeCurrent() - g_lastCalPush >= 6*3600)      // calendar every 6h (and at start)
+   bool leader = IsLeader();
+   if(leader && TimeCurrent() - g_lastCalPush >= 6*3600)      // calendar every 6h (and at start)
      { g_lastCalPush = TimeCurrent(); PushCalendar(); }
    string sym = (InpAppSymbol!="") ? InpAppSymbol : _Symbol;
    long off = ServerToUtcOffset();
@@ -1462,7 +1485,7 @@ void PushData()
       if(PostJson("/bridge/bars", js)) { g_sentBar[k]=last; g_sentInit[k]=true; }
       else break;                                               // retry next timer tick
      }
-   if(TimeCurrent() - g_lastAcctPush >= 60)
+   if(leader && TimeCurrent() - g_lastAcctPush >= 60)
      {
       g_lastAcctPush = TimeCurrent();
       string js = StringFormat("{\"login\":%I64d,\"symbol\":\"%s\",\"preset\":\"%s\",\"phase\":%d,"
@@ -1550,7 +1573,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.59 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.60 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
