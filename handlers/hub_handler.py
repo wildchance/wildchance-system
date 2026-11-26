@@ -190,6 +190,10 @@ async def edge_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if b and b.get("rows"):
             await _reply(update, edge_v2.text(b))
             return
+        import asyncio
+        asyncio.get_running_loop().create_task(edge_v2.board(force=True))     # build now, in the background
+        await _reply(update, "🧭 EdgeFinder board is being built now (2–5 min) — send /edge again shortly. "
+                             "Meanwhile, the COT + retail read:")
         from services.wildchance_service import get_latest_feed
         feed = await get_latest_feed() or {}
         sig = sorted(feed.get("signals") or [], key=lambda s: -(s.get("confidence") or 0))
@@ -804,7 +808,10 @@ async def carry_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async def go():
         from services import edge_v2
         b = await edge_v2.cached()
-        await _reply(update, edge_v2.carry_text(b) if b else "💱 The carry board is building — try again within the hour.")
+        if not b or not b.get("rows"):                     # carry needs no prices: answer from the rate table
+            from services.free_macro_feeds import POLICY_RATES
+            b = {"rows": [{"symbol": sym, "carry": edge_v2.carry(sym, dict(POLICY_RATES))} for sym in edge_v2.FX]}
+        await _reply(update, edge_v2.carry_text(b))
     await _guard(update, go)
 
 
@@ -853,3 +860,37 @@ async def trial_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 HANDLERS.update({"carry": carry_cmd, "trial": trial_cmd})
 PUBLIC_COMMANDS += [("carry", "Carry scanner: who earns swap"), ("trial", f"Free {TRIAL_DAYS}-day trial")]
+
+
+
+LEGACY_COMMANDS = {"admin", "create_signal", "bias", "setup"}     # registered in routes/telegram_routes.py
+
+
+def split_glued(text: str, known) -> Optional[tuple]:
+    """'/trialme@mail.com' → ('trial', ['me@mail.com']): Telegram makes a command out of everything
+    up to the first space, so a missing space hides the argument inside the command name."""
+    head, *rest = (text or "").split()
+    name = head[1:].split("@")[0].lower() if head.startswith("/") else ""
+    raw = head[1:]
+    if name in known:
+        return None
+    for k in sorted(known, key=len, reverse=True):
+        if name != k and raw.lower().startswith(k) and len(raw) > len(k):
+            return k, [raw[len(k):]] + rest
+    return None
+
+
+async def unknown_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Last-resort handler: recover glued arguments, else point to /help (never stay silent)."""
+    text = (update.message.text if update.message else "") or ""
+    name = text.split()[0][1:].split("@")[0].lower() if text.startswith("/") else ""
+    if name in HANDLERS or name in LEGACY_COMMANDS:
+        return                                            # a real command: its own handler answered
+    hit = split_glued(text, HANDLERS)
+    if hit:
+        context.args = hit[1]
+        await HANDLERS[hit[0]](update, context)
+        return
+    if _private(update):
+        await update.message.reply_text(f"🤔 I don't know {text.split()[0][:40]} — type /help for the menu "
+                                        "(put a space before any email or symbol, e.g. /trial you@email.com).")

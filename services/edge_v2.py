@@ -127,27 +127,51 @@ def row(sym: str, tech: Dict[str, int], sent: Dict[str, int], macro: Dict[str, i
             "sentiment": sent, "macro": macro, "categories": cats, "carry": cry}
 
 
+_build_lock = None
+SEASON_NEW_PER_BUILD = 2          # monthly bars cost TwelveData credits: fill the cache gradually
+
+
+async def _bounded(coro, secs: float, default):
+    """Never let one slow feed stall the whole board (the scheduler gives a call 15 min)."""
+    import asyncio
+    try:
+        return await asyncio.wait_for(coro, secs)
+    except Exception:
+        return default
+
+
 async def board(force: bool = False) -> Dict:
+    import asyncio
+    global _build_lock
     if not force and _cache["v"] and time.time() - _cache["t"] < CACHE_S:
         return _cache["v"]
-    await ms.ingest()
+    _build_lock = _build_lock or asyncio.Lock()
+    if _build_lock.locked():                      # a build is running: serve the last one
+        return _cache["v"] or (await cached()) or {"rows": [], "building": True}
+    async with _build_lock:
+        return await _build()
+
+
+async def _build() -> Dict:
+    await _bounded(ms.ingest(), 60, None)
     state = await ms.load()
-    try:
+
+    async def _comp():
         from services import fx_rotation
-        comp = fx_rotation.components(await fx_rotation._momentum(), await _feed(), await fx_rotation._pc_ratios())
-    except Exception:
-        comp = {}
-    feed = await _feed()
-    try:
-        from services.free_macro_feeds import POLICY_RATES, bis_policy_rates
-        rates = (await bis_policy_rates()).get("rates") or dict(POLICY_RATES)
-    except Exception:
-        rates = {}
-    rows = []
+        return fx_rotation.components(await fx_rotation._momentum(), await _feed(), await fx_rotation._pc_ratios())
+    comp = await _bounded(_comp(), 120, {})
+    feed = await _bounded(_feed(), 30, None)
+
+    async def _rates():
+        from services.free_macro_feeds import bis_policy_rates
+        return (await bis_policy_rates()).get("rates")
+    from services.free_macro_feeds import POLICY_RATES
+    rates = await _bounded(_rates(), 30, None) or dict(POLICY_RATES)
+    rows, new_season = [], [0]
     for sym in UNIVERSE:
-        d1 = await _closes(sym, "1day", 80)
-        h4 = await _closes(sym, "4h", 80)
-        season = await _season(sym)
+        d1 = await _bounded(_closes(sym, "1day", 80), 25, [])
+        h4 = await _bounded(_closes(sym, "4h", 80), 25, [])
+        season = await _season(sym, new_season)
         tech = {"trend_d1": trend_vote(d1), "trend_h4": trend_vote(h4), "seasonality": season}
         r = row(sym, tech, sentiment_for(sym, comp, feed), macro_for(sym, state), carry(sym, rates))
         r["close"] = d1[-1] if d1 else None
@@ -183,9 +207,10 @@ async def cached() -> Optional[Dict]:
 _season_mem: Dict[str, tuple] = {}
 
 
-async def _season(sym: str) -> int:
+async def _season(sym: str, budget: Optional[list] = None) -> int:
     """This month's seasonal direction (±1/0), computed once per month per market (monthly
-    bars cost TwelveData credits) and kept in the data store across restarts."""
+    bars cost TwelveData credits) and kept in the data store across restarts. ``budget``
+    caps new lookups per build; a market not looked up yet scores 0 until its turn."""
     month = dt.date.today().strftime("%Y-%m")
     hit = _season_mem.get(sym)
     if hit and hit[0] == month:
@@ -199,13 +224,15 @@ async def _season(sym: str) -> int:
     if (saved.get(sym) or [None])[0] == month:
         _season_mem[sym] = tuple(saved[sym])
         return int(saved[sym][1])
-    d = 0
-    try:
-        from services import seasonality_service
-        s = await seasonality_service.seasonal_for(sym)
-        d = int((s or {}).get("dir") or 0)
-    except Exception:
-        pass
+    if budget is not None:
+        if budget[0] >= SEASON_NEW_PER_BUILD:
+            return 0
+        budget[0] += 1
+    from services import seasonality_service
+    s = await _bounded(seasonality_service.seasonal_for(sym), 30, "timeout")
+    if s == "timeout":
+        return 0                                  # not cached: retried on a later build
+    d = int((s or {}).get("dir") or 0)
     _season_mem[sym] = (month, d)
     saved[sym] = [month, d]
     try:
