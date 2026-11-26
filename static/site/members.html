@@ -12,6 +12,8 @@
 <section class="hero" style="padding:34px 0 8px"><h1>Members <b>dashboard</b></h1><p id="status" class="muted"></p><p id="tg"></p></section>
 <div class="card"><h3>Password</h3><p class="muted">Set a password to log in with your email next time (10+ characters).</p>
 <input id="npw" type="password" placeholder="new password" autocomplete="new-password"> <button class="btn ghost" onclick="setPw()">Save</button> <span id="pmsg"></span></div>
+<div class="card" style="margin-top:16px"><h3>EA license key</h3><p class="muted">Paste this into the WildChance EA (MT5 → drag the EA onto a chart → Inputs → <b>License key</b>). It unlocks the council gate while your plan is active. Keep it private.</p>
+<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"><code id="lic" style="word-break:break-all">••••••••</code><button id="licshow" type="button">Show</button><button id="liccopy" type="button">Copy</button><span id="licmsg" class="muted"></span></div></div>
 <div class="card" style="margin-top:16px"><h3>Macro brief</h3><p id="brief" class="muted" style="white-space:pre-wrap">Loading…</p></div>
 <div class="card feed" style="margin-top:16px"><h3>Latest signals</h3><div id="feed" class="muted">Loading…</div></div></div>
 <div class="risk"><b>Risk warning.</b> Signals are educational information, not personalised financial advice. Size every trade so a stop-out is affordable; past results do not guarantee future results.</div>
@@ -19,7 +21,10 @@
 const $=id=>document.getElementById(id);let KEY=null;try{KEY=localStorage.getItem('wc_key')}catch(e){}
 async function j(u){const r=await fetch(u,{headers:KEY?{'X-API-Key':KEY}:{}});let d={};try{d=await r.json()}catch(e){}if(!r.ok)throw new Error(d.detail||r.status);return d}
 function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
-async function show(){try{const m=await j('/members/me');$('login').style.display='none';$('app').style.display='block';
+function licWire(){const l=$('lic');if(!l||l.dataset.wired)return;l.dataset.wired=1;
+$('licshow').onclick=()=>{l.textContent=l.textContent.startsWith('•')?KEY:'••••••••'};
+$('liccopy').onclick=async()=>{try{await navigator.clipboard.writeText(KEY);$('licmsg').textContent='Copied.'}catch(e){l.textContent=KEY;$('licmsg').textContent='Select and copy it.'}}}
+async function show(){licWire();try{const m=await j('/members/me');$('login').style.display='none';$('app').style.display='block';
 $('status').innerHTML=`${esc(m.email)} · plan <b>${esc(m.tier)}</b>`+(m.paid_until?` · active until ${m.paid_until.slice(0,10)}`:'')+(location.search.includes('paid=1')?' · <span class="ok">payment received — thank you!</span>':'');
 $('tg').innerHTML=m.telegram_invite?`<a class="btn" href="${m.telegram_invite}" target="_blank" rel="noopener">Join the private Telegram</a>`:(m.paid?'':'<a class="btn" href="/pricing">Upgrade for full signals</a>');
 j('/macro/brief').then(b=>$('brief').textContent=b.brief||'—').catch(()=>$('brief').textContent='Unavailable');

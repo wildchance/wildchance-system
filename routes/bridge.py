@@ -33,10 +33,39 @@ _accounts: Dict[str, Dict] = {}
 
 
 def _auth(token: Optional[str]):
+    """Owner-only routes (bars, account, deals, calendar, copy, export)."""
     if not TOKEN:
         raise HTTPException(503, "bridge disabled — set BRIDGE_TOKEN (or EXECUTION_TOKEN)")
     if token != TOKEN:
         raise HTTPException(403, "bad bridge token")
+
+
+GATE_MIN_TIER = config("EA_LICENSE_MIN_TIER", default="trader")
+
+
+async def principal(token: Optional[str]) -> Dict:
+    """Who is this EA? The owner's BRIDGE_TOKEN → owner (full feed). A member's API key with
+    a live paid / trial plan at or above EA_LICENSE_MIN_TIER → member (gate only: their
+    trades never reach the owner's journal, flash cards or channel)."""
+    import datetime as _dt
+    if TOKEN and token == TOKEN:
+        return {"role": "owner"}
+    if not token:
+        raise HTTPException(401, "license key missing")
+    from database.db import AsyncSessionLocal
+    from saas import tiers as st
+    from services import saas_service as svc
+    async with AsyncSessionLocal() as db:
+        u = await svc.by_api_key(db, token)
+    if not u:
+        raise HTTPException(403, "license key not recognised")
+    pu = u.paid_until
+    if pu is not None and pu.tzinfo is None:
+        pu = pu.replace(tzinfo=_dt.timezone.utc)
+    live = pu is not None and pu > _dt.datetime.now(_dt.timezone.utc)
+    if not live or st.rank_of(u.tier) < st.rank_of(GATE_MIN_TIER):
+        raise HTTPException(402, f"license inactive — plan {u.tier}, renew at /pricing")
+    return {"role": "member", "email": u.email, "tier": u.tier, "valid_until": pu.date().isoformat()}
 
 
 class BarsIn(BaseModel):
@@ -119,8 +148,14 @@ async def gate_verdict(symbol: str, side: str) -> Dict:
 @router.get("/gate")
 async def gate(symbol: str = Query(...), side: str = Query(...),
                x_bridge_token: Optional[str] = Header(None)):
-    _auth(x_bridge_token)
+    await principal(x_bridge_token)                      # owner or a licensed member
     return await gate_verdict(symbol, side)
+
+
+@router.get("/whoami")
+async def whoami(x_bridge_token: Optional[str] = Header(None)):
+    """The EA's start-up license check: role (owner / member), plan and expiry."""
+    return await principal(x_bridge_token)
 
 
 # ── copy trader (WildChance_Copier EA) ─────────────────────────────────────────
