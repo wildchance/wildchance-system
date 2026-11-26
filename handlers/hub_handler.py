@@ -313,9 +313,27 @@ async def document_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if cme_slate.slates_from(name, blob):                 # CME Product Slate export(s)
             await update.message.reply_text(cme_slate.reply_text(await cme_slate.ingest([(name, blob)])))
             return
+        if name.lower().endswith((".txt", ".csv")):           # a long Forex Factory paste saved as a file
+            from services import calendar_paste as cp
+            text = blob.decode("utf-8", "ignore")
+            if cp.looks_like_ff(text):
+                await update.message.reply_text(await _ff_paste_reply(text))
+                return
         rep = await cme_ingest.ingest([(name, blob)])
         await update.message.reply_text(cme_ingest.reply_text(rep))
     await _guard(update, go)
+
+
+async def _ff_paste_reply(text: str) -> str:
+    """Store a Forex Factory paste, fold its actuals into the macro layer, and say what changed."""
+    from services import calendar_paste as cp, macro_surprise as ms
+    ev = cp.parse(text)
+    r = await cp.store(ev)
+    m = await ms.ingest(extra=ev)
+    printed = sum(1 for e in ev if e.get("actual"))
+    return (f"🗓 Calendar paste: {r['added']} releases stored ({r['high']} high impact, {printed} with actuals) — "
+            f"blackouts and rotation use them now. Macro layer: {m['new_prints']} new prints → /edge. "
+            "Long history? Save it as a .txt file and send the file.")
 
 
 async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -333,10 +351,7 @@ async def text_msg(update: Update, context: ContextTypes.DEFAULT_TYPE):
     from services import calendar_paste as cp
     if is_owner(update) and cp.looks_like_ff(text):
         async def go():
-            ev = cp.parse(text)
-            r = await cp.store(ev)
-            await _reply(update, f"🗓 Calendar paste: {r['added']} releases stored ({r['high']} high impact) — "
-                                 "blackouts and rotation use them now. Check with /calendar.")
+            await _reply(update, await _ff_paste_reply(text))
         await _guard(update, go)
         return
     await update.message.reply_text("Type /help for the menu.")
