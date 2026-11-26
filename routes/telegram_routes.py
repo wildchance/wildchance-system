@@ -69,32 +69,55 @@ else:
     print("[telegram] TELEGRAM_BOT_TOKEN/BOT_TOKEN not set — bot disabled")
 
 
+async def register_webhook(bot, url: str, tries: int = 4) -> str:
+    """Point Telegram at ``url`` — skipped when it already does (each redeploy used to call
+    set_webhook and trip Telegram's flood control); RetryAfter is waited out and retried."""
+    import asyncio
+    from telegram.error import RetryAfter
+    try:
+        info = await bot.get_webhook_info()
+        if info.url == url and not info.last_error_message:     # same target, deliveries working
+            return "already set"
+    except Exception:
+        pass
+    kwargs = {"url": url, "drop_pending_updates": False,         # keep messages queued while we woke
+              "allowed_updates": Update.ALL_TYPES}
+    if WEBHOOK_SECRET:
+        kwargs["secret_token"] = WEBHOOK_SECRET
+    for i in range(tries):
+        try:
+            await bot.set_webhook(**kwargs)
+            return "registered"
+        except RetryAfter as e:
+            wait = float(getattr(e, "retry_after", 1) or 1)
+            wait = wait.total_seconds() if hasattr(wait, "total_seconds") else wait
+            await asyncio.sleep(min(60.0, wait + 1 + i))
+    return "failed (flood control)"
+
+
 async def _start_and_register_webhook():
     if application is None:
         return
     try:
         await application.initialize()
         await application.start()
-        if webhook_target():
-            url = webhook_target()
-            # keep pending updates: the message that woke a sleeping Render instance (or arrived
-            # during a redeploy) is still queued at Telegram — dropping it = "the bot never answered"
-            kwargs = {"url": url, "drop_pending_updates": False,
-                      "allowed_updates": Update.ALL_TYPES}
-            if WEBHOOK_SECRET:
-                kwargs["secret_token"] = WEBHOOK_SECRET
-            await application.bot.set_webhook(**kwargs)
-            print(f"🤖 Telegram webhook registered: {url}")
-        try:                                             # refresh the command menu (old list is cached)
-            from handlers.hub_handler import register_menu
-            await register_menu(application.bot)
-        except Exception as e:
-            print(f"[telegram] command menu not updated: {e}")
-        else:
-            print("[telegram] WEBHOOK_BASE_URL/RENDER_EXTERNAL_URL not set — "
-                  "webhook NOT registered (set it so Telegram can reach the bot)")
     except Exception as e:
-        print(f"❌ Telegram webhook setup failed: {e}")
+        print(f"❌ Telegram bot start failed: {e}")
+        return
+    url = webhook_target()
+    if url:
+        try:
+            print(f"🤖 Telegram webhook {await register_webhook(application.bot, url)}: {url}")
+        except Exception as e:
+            print(f"❌ Telegram webhook setup failed: {e}")
+    else:
+        print("[telegram] WEBHOOK_BASE_URL/RENDER_EXTERNAL_URL not set — "
+              "webhook NOT registered (set it so Telegram can reach the bot)")
+    try:                                                 # refresh the command menu (old list is cached)
+        from handlers.hub_handler import register_menu
+        await register_menu(application.bot)
+    except Exception as e:
+        print(f"[telegram] command menu not updated: {e}")
 
 
 async def bot_startup():

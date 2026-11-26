@@ -259,12 +259,8 @@ async def telegram_reset():
     from routes import telegram_routes as tr
     if tr.application is None or not tr.webhook_target():
         return {"ok": False, "reason": "bot token or WEBHOOK_BASE_URL / RENDER_EXTERNAL_URL missing"}
-    from telegram import Update
-    kw = {"url": tr.webhook_target(), "allowed_updates": Update.ALL_TYPES}
-    if tr.WEBHOOK_SECRET:
-        kw["secret_token"] = tr.WEBHOOK_SECRET
-    ok = await tr.application.bot.set_webhook(**kw)
-    return {"ok": bool(ok), "webhook_url": kw["url"]}
+    r = await tr.register_webhook(tr.application.bot, tr.webhook_target())
+    return {"ok": r != "failed (flood control)", "result": r, "webhook_url": tr.webhook_target()}
 
 
 @router.post("/treasury/check")

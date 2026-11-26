@@ -505,6 +505,13 @@ def fetch_prices():
     # API-level error returned as 200 with a status field
     if isinstance(data, dict) and data.get("status") == "error":
         print(f"[PRICE] Twelve Data error: {data.get('message')} — using the free pool")
+        if "for the day" in str(data.get("message", "")):
+            try:
+                from services import td_limiter as _tl
+                _tl._persist["exhausted_until"] = _tl.next_utc_midnight()
+                _tl._persist["dirty"] = True
+            except Exception:
+                pass
         return _fallback_prices(symbols)
 
     PRICE_STATUS["live"] = True
