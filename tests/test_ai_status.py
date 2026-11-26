@@ -69,3 +69,18 @@ def test_rejected_key_reason_kept_and_cooldown(monkeypatch):
 def test_no_key_reason(monkeypatch):
     monkeypatch.setattr(ai, "NVIDIA_API_KEY", None)
     assert run(ai.ask_model([])) is None and ai.LAST["status"] == "no key"
+
+
+def test_failure_logged_once_per_hour_and_config_errors_back_off(monkeypatch):
+    from services import errors
+    seen, logged = [], []
+    monkeypatch.setattr(errors, "record", lambda kind, where, detail="", ms=None: logged.append(detail))
+    monkeypatch.setattr(ai, "NVIDIA_API_KEY", "k")
+    monkeypatch.setattr(ai, "_logged", {"key": None, "t": 0.0})
+    for _ in range(3):
+        monkeypatch.setattr(ai, "_down_until", {"t": 0.0})
+        monkeypatch.setattr(httpx, "AsyncClient", _client([_Resp(401, {"detail": "Unauthorized"})], seen))
+        run(ai.ask_model([{"role": "user", "content": "hi"}]))
+    assert len(seen) == 3 and len(logged) == 1                     # 3 failures, 1 log line
+    import time
+    assert ai._down_until["t"] - time.time() > 5 * 3600            # bad key: back off for hours
