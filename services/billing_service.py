@@ -44,6 +44,27 @@ async def activate(db: AsyncSession, email: str, tier: str, months: int = 1,
     return {"ok": True, "email": u.email, "tier": u.tier, "paid_until": u.paid_until.isoformat()}
 
 
+async def start_trial(db: AsyncSession, email: str, tier: str, days: int, ref: str) -> Dict:
+    """Free trial: tier on for ``days`` — only for someone with no paid time left (never
+    shortens or replaces a paid subscription). One-per-person is enforced by the caller."""
+    if not st.get_tier(tier) or tier == "scout":
+        return {"ok": False, "reason": f"unknown or free tier {tier!r}"}
+    u = await _user(db, email)
+    now = _utcnow()
+    if u is not None and u.paid_until:
+        pu = u.paid_until if u.paid_until.tzinfo else u.paid_until.replace(tzinfo=dt.timezone.utc)
+        if pu > now:
+            return {"ok": False, "reason": "this email already has an active plan"}
+    if u is None:
+        from services.saas_service import _new_key
+        u = User(email=email.lower(), api_key=_new_key(), tier="scout", active=True, calls_this_period=0)
+        db.add(u)
+    u.tier, u.provider, u.provider_ref = tier, "trial", ref
+    u.paid_until = now + dt.timedelta(days=max(1, int(days)))
+    await db.commit()
+    return {"ok": True, "email": u.email, "tier": u.tier, "paid_until": u.paid_until.isoformat()}
+
+
 async def cancel_now(db: AsyncSession, email: Optional[str] = None,
                      customer: Optional[str] = None) -> Dict:
     q = select(User).where(User.email == email.lower()) if email else \

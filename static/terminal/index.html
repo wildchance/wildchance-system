@@ -95,6 +95,32 @@ function positioning(d) {
   const rows = (d.positioning || []).map(p => `<tr><td>${esc(p.pair)}</td><td class="${p.verdict === "LONG" ? "up" : p.verdict === "SHORT" ? "down" : "muted"}">${esc(p.verdict)}</td><td class="num">${p.confidence ?? "—"}</td><td class="num">${p.retail_long ?? "—"}%</td><td class="num">${p.cot_rank ?? "—"}</td></tr>`).join("");
   return tile("COT + retail positioning", `<table><tr><th>pair</th><th>verdict</th><th>conf</th><th>retail L</th><th>COT pct</th></tr>${rows}</table>`);
 }
+// EdgeFinder v2 — one −10…+10 score per market, every factor visible (hover a cell for its name)
+const EDGE_COLS = [["technical", "trend_d1", "D1"], ["technical", "trend_h4", "4H"], ["technical", "seasonality", "Seas"],
+  ["sentiment", "cot", "COT"], ["sentiment", "crowd", "Crowd"],
+  ["macro", "gdp", "GDP"], ["macro", "mpmi", "mPMI"], ["macro", "spmi", "sPMI"], ["macro", "retail", "Retail"],
+  ["macro", "conf", "Conf"], ["macro", "cpi", "CPI"], ["macro", "ppi", "PPI"], ["macro", "pce", "PCE"],
+  ["macro", "rate", "Rate"], ["macro", "nfp", "NFP"], ["macro", "unemp", "Unemp"], ["macro", "claims", "Claims"],
+  ["macro", "adp", "ADP"], ["macro", "jolts", "JOLTS"]];
+function edgeCell(v) {
+  const bg = v > 0 ? "rgba(76,195,255," + (0.18 * Math.abs(v)) + ")" : v < 0 ? "rgba(255,92,108," + (0.18 * Math.abs(v)) + ")" : "transparent";
+  return `<td class="num" style="background:${bg}">${v ?? 0}</td>`;
+}
+function edgefinder(d) {
+  const e = d.edge || {}, rows = (e.rows || []).map(r => `<tr><td>${esc(r.symbol)}</td>
+    <td class="${r.score > 0 ? "up" : r.score < 0 ? "down" : "muted"}">${esc(r.bias)}</td><td class="num"><b>${r.score}</b></td>
+    ${EDGE_COLS.map(([g, k]) => edgeCell(((r[g] || {})[k]))).join("")}
+    <td class="muted">${r.carry ? (r.carry.diff > 0 ? "+" : "") + r.carry.diff + "%" : ""}</td></tr>`).join("");
+  const head = EDGE_COLS.map(([g, k, l]) => `<th title="${g}: ${k}">${l}</th>`).join("");
+  const si = Object.entries(e.surprise_index || {}).filter(([, v]) => v != null)
+    .map(([c, v]) => `<span class="chip ${v > 0 ? "up" : v < 0 ? "down" : "muted"}">${c} ${v > 0 ? "+" : ""}${v}</span>`).join("");
+  return `<section style="grid-column:1/-1"><h2>EdgeFinder v2 — top setups (−10…+10)</h2><div class="scroll">
+    <table><tr><th>market</th><th>bias</th><th>score</th>${head}<th>carry</th></tr>${rows ||
+    '<tr><td colspan="24" class="muted">building — the first board appears within the hour</td></tr>'}</table>
+    ${si ? `<div style="margin-top:6px"><span class="muted">surprise index (90 d):</span> ${si}</div>` : ""}
+    <div class="muted" style="margin-top:4px">Blue = supports longs, red = supports shorts. Bias is context, not an entry — trades still need a trigger + council GO.</div>
+    </div></section>`;
+}
 function backtests(d) {
   let html = "";
   for (const [eng, rows] of Object.entries(d.backtests || {})) {
@@ -121,7 +147,7 @@ async function load() {
     document.getElementById("asof").textContent = "as of " + d.as_of.replace("T", " ").slice(0, 19) + " UTC · refreshes every 60 s";
     const v = d.macro && d.macro.vix, y = d.macro && d.macro.yields;
     document.getElementById("macro").textContent = (v ? `VIX ${v.close} (${v.regime})` : "") + (y ? ` · US10Y ${y.us10y}% · 2s10s ${y.curve_2s10s}` : "");
-    document.getElementById("grid").innerHTML = [strength(d), rotation(d), exposure(d), results(d), regimes(d),
+    document.getElementById("grid").innerHTML = [edgefinder(d), strength(d), rotation(d), exposure(d), results(d), regimes(d),
       walls(d), calendar(d), positioning(d), backtests(d), health(d), audit(d)].join("");
   } catch (e) {
     document.getElementById("grid").innerHTML = `<div class="err">${esc(e.message)}</div>`;

@@ -48,7 +48,7 @@ def jobs() -> List[Job]:
               (P, "/gold/retracement"), (P, "/gold/confirm?deploy=true"),
               (P, "/gold/levels/refresh?interval=4h"), (P, "/gold/alerter/scan?notify=true"),
               (P, "/sniper/scan?notify=true"), (G, "/fx/rotation?notify=true"),
-              (P, "/ops/treasury/check")]
+              (P, "/ops/treasury/check"), (P, "/edge2/ingest")]
     exec_token = config("EXECUTION_TOKEN", default=None)
     if exec_token:
         hourly.insert(1, (G, f"/execution/reconcile?token={exec_token}"))   # GET route
@@ -67,7 +67,7 @@ def jobs() -> List[Job]:
         Job("daily_0600", UTC, (6,), 0, ((P, "/wildchance/scrape?tier=daily"), (G, "/gold/news"),
             (G, "/macro/dashboard?force=true"), (G, "/macro/brief?force=true"),
             (G, "/billing/expire"), (G, "/data/refresh?part=macro"),
-            (P, "/gold/dxy/flip"), (P, "/gold/kingdom-report?notify=true"))),
+            (P, "/gold/dxy/flip"), (P, "/gold/kingdom-report?notify=true"), (P, "/edge2/refresh"))),
         Job("six_hourly", UTC, (0, 12, 18), 0, ((P, "/wildchance/scrape?tier=6h"),
             (P, "/autoalert/confluence?min_confidence=85"), (G, "/sentiment/scan"),
             (G, "/data/refresh?part=sentiment"),

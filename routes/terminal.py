@@ -77,6 +77,11 @@ async def build() -> dict:
                                                                             "expectancy_r", "max_drawdown_r")}
                                                      | {"stable": (v.get("walk_forward") or {}).get("stable")})
     audit, _ = await _safe(data_store.get("data_audit_last"), (None, None)) or (None, None)
+    from services import edge_v2
+    eb = await _safe(edge_v2.cached(), None) or {}
+    edge = {"rows": [{k: r.get(k) for k in ("symbol", "score", "bias", "technical", "sentiment", "macro", "carry")}
+                     for r in eb.get("rows", [])],
+            "surprise_index": eb.get("surprise_index"), "updated": eb.get("updated")}
     m = macro_cached()
     from services import errors as _errs
     health = _errs.summary()
@@ -89,6 +94,6 @@ async def build() -> dict:
             "signal_stats": stk.summarise(rows), "regimes": regimes, "walls": walls,
             "calendar": [{k: e.get(k) for k in ("time_utc", "ccy", "title", "forecast", "previous", "blocks")}
                          for e in ec.upcoming(3, high_only=True)][:12],
-            "positioning": positioning, "backtests": backtests,
+            "positioning": positioning, "backtests": backtests, "edge": edge,
             "audit": {"summary": (audit or {}).get("summary"), "as_of": (audit or {}).get("as_of"),
                       "issues": [i for i in (audit or {}).get("items", []) if i.get("status") != "✅"][:12]}}
