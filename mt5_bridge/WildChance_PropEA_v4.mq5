@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.57"
+#property version   "4.58"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -307,17 +307,44 @@ string SetupState()
 // The token from the input, else from MQL5\Files\wildchance_token.txt (one line). A MetaEditor
 // DEBUG run never shows the Inputs window — the file makes the feed work there too, and keeps
 // the token out of every chart's settings.
-string LoadToken()
+string CleanKey(string t)
   {
-   string t = InpBridgeToken;
-   StringTrimLeft(t); StringTrimRight(t);
-   if(t != "") return t;
-   int h = FileOpen("wildchance_token.txt", FILE_READ|FILE_TXT|FILE_ANSI);
+   // drop a UTF-8 BOM / quotes / spaces that Notepad or copy-paste can add
+   while(StringLen(t) > 0 && (StringGetCharacter(t, 0) > 126 || StringGetCharacter(t, 0) <= 32
+                              || StringGetCharacter(t, 0) == '"' || StringGetCharacter(t, 0) == '\''))
+      t = StringSubstr(t, 1);
+   while(StringLen(t) > 0)
+     {
+      ushort c = StringGetCharacter(t, StringLen(t) - 1);
+      if(c > 126 || c <= 32 || c == '"' || c == '\'') t = StringSubstr(t, 0, StringLen(t) - 1); else break;
+     }
+   return t;
+  }
+
+string ReadKeyFile(string name, int common)
+  {
+   int h = FileOpen(name, FILE_READ|FILE_TXT|FILE_ANSI|common);
    if(h == INVALID_HANDLE) return "";
    string line = FileReadString(h);
    FileClose(h);
-   StringTrimLeft(line); StringTrimRight(line);
-   return line;
+   return CleanKey(line);
+  }
+
+// The License key from the input, else from a key file in MQL5\Files (this terminal) or the
+// common Files folder. "wildchance_token.txt.txt" is accepted: Windows hides extensions.
+string LoadToken()
+  {
+   string t = CleanKey(InpBridgeToken);
+   if(t != "") return t;
+   string names[] = {"wildchance_token.txt", "wildchance_token.txt.txt", "wildchance_token"};
+   for(int i = 0; i < ArraySize(names); i++)
+     {
+      t = ReadKeyFile(names[i], 0);
+      if(t == "") t = ReadKeyFile(names[i], FILE_COMMON);
+      if(t != "") { Print("WildChance: license key read from ", names[i]); return t; }
+     }
+   Print("WildChance: no License key - set it in Inputs, or put it in MQL5\\Files\\wildchance_token.txt");
+   return "";
   }
 
 int OnInit()
@@ -1510,7 +1537,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.57 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.58 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
