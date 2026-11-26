@@ -31,8 +31,33 @@ OWNER_COMMANDS = [("open", "Open signals + exposure (owner)"), ("health", "Error
                   ("audit", "Data audit (owner)")]
 
 
+def owner_ids() -> set:
+    """OWNER_CHAT_ID may be one id or several (comma / space separated); quotes and
+    spaces pasted into Render are ignored."""
+    raw = OWNER_CHAT_ID.replace('"', "").replace("'", "")
+    return {x.strip() for x in raw.replace(",", " ").split() if x.strip()}
+
+
 def is_owner(update: Update) -> bool:
-    return bool(OWNER_CHAT_ID) and str(update.effective_chat.id) == OWNER_CHAT_ID
+    """The owner's own user id OR the owner's chat id (private chat ids equal user ids)."""
+    ids = owner_ids()
+    if not ids:
+        return False
+    chat = str(update.effective_chat.id) if update.effective_chat else ""
+    eu = getattr(update, "effective_user", None)
+    user = str(eu.id) if eu else ""
+    return chat in ids or user in ids
+
+
+def denied_text(update: Update) -> str:
+    chat = update.effective_chat.id if update.effective_chat else "?"
+    eu = getattr(update, "effective_user", None)
+    user = eu.id if eu else "?"
+    if not owner_ids():
+        return (f"🔒 Owner only — OWNER_CHAT_ID is not set in Render. Your user id is {user}: "
+                "put that number in OWNER_CHAT_ID and redeploy.")
+    return (f"🔒 Owner only. This chat id: {chat} · your user id: {user}. "
+            "If this is you, set OWNER_CHAT_ID in Render to your user id (no spaces or quotes) and redeploy.")
 
 
 async def _reply(update: Update, text: str) -> None:
@@ -182,7 +207,7 @@ async def terminal_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def open_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
-        await _reply(update, "🔒 Owner only.")
+        await _reply(update, denied_text(update))
         return
 
     async def go():
@@ -205,7 +230,7 @@ async def open_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
-        await _reply(update, "🔒 Owner only.")
+        await _reply(update, denied_text(update))
         return
     from services import errors
     s = errors.summary()
@@ -216,7 +241,7 @@ async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def audit_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
-        await _reply(update, "🔒 Owner only.")
+        await _reply(update, denied_text(update))
         return
 
     async def go():
@@ -239,10 +264,10 @@ async def register_menu(bot) -> None:
     the owner's own chat also lists the owner commands."""
     from telegram import BotCommandScopeChat, BotCommandScopeDefault
     await bot.set_my_commands([BotCommand(c, d) for c, d in PUBLIC_COMMANDS], scope=BotCommandScopeDefault())
-    if OWNER_CHAT_ID:
+    for oid in owner_ids():
         try:
             await bot.set_my_commands([BotCommand(c, d) for c, d in PUBLIC_COMMANDS + OWNER_COMMANDS],
-                                      scope=BotCommandScopeChat(int(OWNER_CHAT_ID)))
+                                      scope=BotCommandScopeChat(int(oid)))
         except Exception:
             pass
 
@@ -308,7 +333,7 @@ HANDLERS["chatid"] = chatid_cmd
 
 async def watch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
-        await _reply(update, "🔒 Owner only.")
+        await _reply(update, denied_text(update))
         return
     from services import deal_tracker as dt_
     w = dt_.parse_watch(context.args or [])
@@ -322,7 +347,7 @@ async def watch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def watches_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
-        await _reply(update, "🔒 Owner only.")
+        await _reply(update, denied_text(update))
         return
     from services import deal_tracker as dt_
     ws = (await dt_._load())["watches"]
@@ -333,7 +358,7 @@ async def watches_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def unwatch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
-        await _reply(update, "🔒 Owner only.")
+        await _reply(update, denied_text(update))
         return
     from services import deal_tracker as dt_
     try:
@@ -346,7 +371,7 @@ async def unwatch_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def deals_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
-        await _reply(update, "🔒 Owner only.")
+        await _reply(update, denied_text(update))
         return
 
     async def go():
@@ -374,7 +399,7 @@ def _num(x: str) -> Optional[float]:
 
 async def _owner_only(update: Update) -> bool:
     if not is_owner(update):
-        await _reply(update, "🔒 Owner only.")
+        await _reply(update, denied_text(update))
         return False
     return True
 
@@ -517,7 +542,7 @@ OWNER_COMMANDS += [("scout", "Hardware scout now (owner)"), ("scoutlist", "Scout
 # ── copy trader (owner) ─────────────────────────────────────────────────────────
 async def accounts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_owner(update):
-        await _reply(update, "🔒 Owner only.")
+        await _reply(update, denied_text(update))
         return
 
     async def go():
@@ -528,7 +553,7 @@ async def accounts_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def _copy_ctl(update: Update, context: ContextTypes.DEFAULT_TYPE, **kw):
     if not is_owner(update):
-        await _reply(update, "🔒 Owner only.")
+        await _reply(update, denied_text(update))
         return
     args = context.args or []
     if not args:
@@ -572,7 +597,7 @@ OWNER_COMMANDS += [("accounts", "Copy trader: master + follower accounts (owner)
 async def flashtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """/flashtest [EURUSD] [BUY open close] → the latest TP-hit flash card, to the owner's chat only."""
     if not is_owner(update):
-        await _reply(update, "🔒 Owner only.")
+        await _reply(update, denied_text(update))
         return
     args = context.args or []
     sym = args[0].upper() if args else "EURUSD"
