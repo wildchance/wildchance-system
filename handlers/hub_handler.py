@@ -567,3 +567,32 @@ OWNER_COMMANDS += [("accounts", "Copy trader: master + follower accounts (owner)
                    ("copypause", "Pause copying: /copypause <login|all> (owner)"),
                    ("copyresume", "Resume copying: /copyresume <login|all> (owner)"),
                    ("copymult", "Lot multiplier: /copymult <login> 0.5 (owner)")]
+
+
+async def flashtest_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/flashtest [EURUSD] [BUY open close] → the latest TP-hit flash card, to the owner's chat only."""
+    if not is_owner(update):
+        await _reply(update, "🔒 Owner only.")
+        return
+    args = context.args or []
+    sym = args[0].upper() if args else "EURUSD"
+    if len(sym) == 6 and sym.isalpha():
+        sym = f"{sym[:3]}/{sym[3:]}"
+    side = args[1].upper() if len(args) > 1 else None
+    try:
+        op = float(args[2]) if len(args) > 2 else None
+        cl = float(args[3]) if len(args) > 3 else None
+    except ValueError:
+        await _reply(update, "Usage: /flashtest EURUSD  ·  or  /flashtest EURUSD SELL 1.1650 1.1610")
+        return
+
+    async def go():
+        from services import flash_card as fc
+        r = await fc.send_test(sym, side, op, cl)
+        if not r.get("sent"):
+            await _reply(update, f"⚠️ Flash test: {r.get('reason') or r}")
+    await _guard(update, go)
+
+
+HANDLERS["flashtest"] = flashtest_cmd
+OWNER_COMMANDS += [("flashtest", "Test flash card to this chat: /flashtest EURUSD (owner)")]

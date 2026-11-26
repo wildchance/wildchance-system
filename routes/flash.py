@@ -27,6 +27,13 @@ async def card(symbol: str = Query(...), side: str = Query(...), open: float = Q
     return Response(fc.render(symbol, side, open, close), media_type="image/png")
 
 
+@router.post("/test")
+async def test(symbol: str = Query("EUR/USD"), side: str = Query(None), open: float = Query(None, gt=0),
+               close: float = Query(None, gt=0)):
+    """Owner TEST: the latest TP-hit card for ``symbol`` (or your own numbers) → owner's bot chat only."""
+    return await fc.send_test(symbol, side, open, close)
+
+
 @router.post("/post")
 async def post(symbol: str = Query(...), side: str = Query(...), open: float = Query(..., gt=0),
                close: float = Query(..., gt=0)):

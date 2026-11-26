@@ -163,6 +163,55 @@ async def _copy_to_owner(png: bytes, cap: str, name: str) -> bool:
         return False
 
 
+async def latest_win(symbol: Optional[str] = None) -> Optional[Dict]:
+    """The most recent tracked signal that hit at least TP1 (optionally for one symbol)."""
+    from services import signal_tracker
+    want = (symbol or "").upper().replace("/", "")
+    rows = [r for r in await signal_tracker._load()
+            if r.get("hits") and (not want or str(r.get("symbol", "")).upper().replace("/", "") == want)]
+    if not rows:
+        return None
+    r = max(rows, key=lambda x: x["hits"][-1].get("ts") or 0)
+    h = r["hits"][-1]
+    return {"symbol": r["symbol"], "side": r["side"], "open": float(r["entry"]), "close": float(h["price"]),
+            "tp": h.get("tp"), "ts": h.get("ts"), "engine": r.get("engine") or r.get("source")}
+
+
+async def send_test(symbol: Optional[str] = None, side: Optional[str] = None,
+                    open_price: Optional[float] = None, close_price: Optional[float] = None) -> Dict:
+    """Owner-only TEST: render a flash card and send it to the owner's private bot chat
+    (photo preview + downloadable file). Never the channel, never recorded as posted."""
+    import httpx
+    from services.owner_notify import BOT_TOKEN, OWNER_CHAT_ID
+    if not (BOT_TOKEN and OWNER_CHAT_ID):
+        return {"sent": False, "reason": "TELEGRAM_BOT_TOKEN / OWNER_CHAT_ID not set"}
+    if open_price is None or close_price is None or not side:
+        w = await latest_win(symbol)
+        if not w:
+            return {"sent": False, "reason": f"no tracked {symbol or ''} signal has hit TP1 yet — "
+                                             "pass side/open/close to test with your own numbers".replace("  ", " ")}
+        symbol, side, open_price, close_price = w["symbol"], w["side"], w["open"], w["close"]
+        when = dt.datetime.fromtimestamp(w["ts"], dt.timezone.utc) if w.get("ts") else None
+        label = f"TP{w.get('tp')} hit" + (f" · {w['engine']}" if w.get("engine") else "")
+    else:
+        when, label = None, "manual numbers"
+    if pips(symbol, side, open_price, close_price) <= 0:
+        return {"sent": False, "reason": "not a winning trade — flash cards are winners only"}
+    png = render(symbol, side, open_price, close_price, when)
+    cap = "🧪 TEST (only you see this) — " + caption(symbol, side, open_price, close_price) + f"\n{label}"
+    name = f"wildchance-{symbol.replace('/', '')}-{side.lower()}-test.png"
+    async with httpx.AsyncClient(timeout=20) as c:
+        p = await c.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto",
+                         data={"chat_id": OWNER_CHAT_ID, "caption": cap},
+                         files={"photo": ("flash.png", png, "image/png")})
+        d = await c.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument",
+                         data={"chat_id": OWNER_CHAT_ID, "caption": "downloadable copy"},
+                         files={"document": (name, png, "image/png")})
+    return {"sent": p.status_code == 200, "photo_status": p.status_code, "file_status": d.status_code,
+            "symbol": symbol, "side": side, "open": open_price, "close": close_price,
+            "pips": pips(symbol, side, open_price, close_price), "source": label}
+
+
 MATCH_PIPS = float(config("FLASH_MATCH_PIPS", default="15"))
 
 
