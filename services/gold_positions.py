@@ -15,6 +15,8 @@ from __future__ import annotations
 import datetime as _dt
 from typing import List, Optional
 
+from decouple import config
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +55,25 @@ async def _open_same_side_today(db: AsyncSession, symbol: str, side: str,
     return row if opened.date() == _utcnow().date() else None
 
 
+COUNCIL_GATE = str(config("GOLD_COUNCIL_GATE", default="true")).lower() in ("1", "true", "yes", "on")
+
+
+async def council_block(sig: dict) -> Optional[str]:
+    """Owner rule: no tracked gold position (and so no lifecycle card) without the council.
+    Returns the block reason, or None when the council passes (or already passed upstream)."""
+    if not COUNCIL_GATE or sig.get("council_pass"):
+        return None
+    try:
+        from services import council_gate
+        g = await council_gate.check(sig.get("instrument", "XAU/USD"),
+                                     "BUY" if sig.get("signal") == "LONG" else "SELL",
+                                     "swing" if (sig.get("trade_type") or "swing") == "swing" else "intraday")
+    except Exception as e:
+        return f"council unavailable ({type(e).__name__})"
+    sig["council"] = g.get("verdict")
+    return None if g.get("pass") else f"council {g.get('verdict')}"
+
+
 async def open_from_signal(db: AsyncSession, sig: dict,
                            source: str = "gold") -> Optional[dict]:
     """Persist a fired signal as an OPEN swing, or None if not tracked.
@@ -67,6 +88,9 @@ async def open_from_signal(db: AsyncSession, sig: dict,
     entry, stop = sig.get("entry"), sig.get("stop")
     if entry is None or stop is None:
         return None
+    why = await council_block(sig)
+    if why:
+        return {"skipped": why}
 
     side = "long" if sig["signal"] == "LONG" else "short"
     symbol = sig.get("instrument", "XAU/USD")
@@ -122,6 +146,9 @@ async def open_limit(db: AsyncSession, card: dict, source: str,
         return None
     if not card.get("gate", {}).get("allow", False):
         return {"skipped": "gate blocked", "reason": card.get("gate", {}).get("reason")}
+    why = await council_block(card)
+    if why:
+        return {"skipped": why}
     entry, stop = card.get("entry"), card.get("stop")
     if entry is None or stop is None:
         return None

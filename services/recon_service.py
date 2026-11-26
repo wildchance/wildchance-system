@@ -104,6 +104,34 @@ async def _radar(gold_price: float) -> Optional[dict]:
     return None
 
 
+async def gate_optimus(armed: list, sweep: dict) -> tuple:
+    """Optimus zones are trades only when (1) the recon's own DXY lock allows the side and
+    (2) the council passes it. One line per zone (the same side twice = one trade)."""
+    from services import council_gate
+    ok, blocked, seen = [], [], set()
+    longs = ((sweep or {}).get("dxy") or {}).get("gold_longs")
+    verdicts = {}
+    for r in armed:
+        side = str(r.get("side", "")).upper()
+        if side in seen:
+            continue                                          # buy3534 + buy3502 = one long, not two
+        seen.add(side)
+        if side == "BUY" and longs and longs != "unlocked":
+            blocked.append({"side": side, "zone": r.get("zone"), "why": "gold longs LOCKED by DXY"})
+            continue
+        if side not in verdicts:
+            try:
+                verdicts[side] = await council_gate.check("XAU/USD", side, style="reversion")
+            except Exception as e:
+                verdicts[side] = {"pass": False, "verdict": f"ERROR {type(e).__name__}"}
+        g = verdicts[side]
+        if not g.get("pass"):
+            blocked.append({"side": side, "zone": r.get("zone"), "why": f"council {g.get('verdict')}"})
+            continue
+        ok.append(r)
+    return ok, blocked
+
+
 async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] = None,
                 window: str = "prelondon", notify: bool = True,
                 armed_only: bool = True, force: bool = False) -> dict:
@@ -184,6 +212,9 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
     except Exception:
         pass
 
+    if optimus and optimus.get("armed"):
+        optimus["armed"], optimus["blocked"] = await gate_optimus(optimus["armed"], sweep)
+
     sig = _signature(sweep)
     last = _read_last()
     changed = sig != last
@@ -198,6 +229,9 @@ async def recon(dxy_price: Optional[float] = None, gold_price: Optional[float] =
         if _optimus_armed:
             from gold import optimus as gop
             text += "\n\n" + (gop.format_optimus(optimus) or "")
+        if optimus and optimus.get("blocked"):
+            text += "\n" + "\n".join(f"🔒 Optimus {b['side']} {b['zone']} not a trade: {b['why']}"
+                                    for b in optimus["blocked"][:3])
         if _bee_call:
             from gold import bumblebee as gbb
             text += "\n\n" + (gbb.format_bumblebee(bumblebee) or "")
