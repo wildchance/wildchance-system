@@ -114,15 +114,28 @@ LAST = {"ok": None, "status": None, "error": None, "model": None, "t": 0.0}
 _down_until = {"t": 0.0}
 
 
+_logged = {"key": None, "t": 0.0}
+CONFIG_COOLDOWN_S = 6 * 3600      # a rejected key / unavailable model will not fix itself
+TRANSIENT_COOLDOWN_S = 900        # network, 429, 5xx: try again in 15 min
+
+
 def _note(ok: bool, status, error: Optional[str], model: Optional[str]) -> None:
+    """Remember the outcome for /ops/ai; log a failure once per hour per distinct error."""
     import time as _t
-    LAST.update(ok=ok, status=status, error=(error or "")[:200] or None, model=model, t=_t.time())
-    if not ok:
-        try:
-            from services import errors
-            errors.record("upstream_data", "nvidia ai", f"{status}: {error}"[:160])
-        except Exception:
-            pass
+    now = _t.time()
+    LAST.update(ok=ok, status=status, error=(error or "")[:200] or None, model=model, t=now)
+    if ok:
+        _logged.update(key=None, t=0.0)
+        return
+    key = f"{status}:{(error or '')[:60]}"
+    if key == _logged["key"] and now - _logged["t"] < 3600:
+        return
+    _logged.update(key=key, t=now)
+    try:
+        from services import errors
+        errors.record("upstream_data", "nvidia ai", f"{status}: {error}"[:160])
+    except Exception:
+        pass
 
 
 async def ask_model(messages: List[Dict]) -> Optional[str]:
@@ -142,7 +155,7 @@ async def ask_model(messages: List[Dict]) -> Optional[str]:
                                        "temperature": 0.1, "max_tokens": 300})
         except Exception as e:
             _note(False, "network", f"{type(e).__name__}: {e}", model)
-            _down_until["t"] = _t.time() + 900
+            _down_until["t"] = _t.time() + TRANSIENT_COOLDOWN_S
             return None
         if r.status_code == 200:
             try:
@@ -156,11 +169,13 @@ async def ask_model(messages: List[Dict]) -> Optional[str]:
         if r.status_code in (404, 400, 422) and "model" in err.lower():
             continue                                  # retired / unavailable model → try the next one
         _note(False, r.status_code, err, model)
-        if r.status_code in (401, 403, 429) or r.status_code >= 500:
-            _down_until["t"] = _t.time() + 900
+        if r.status_code in (401, 403):
+            _down_until["t"] = _t.time() + CONFIG_COOLDOWN_S
+        elif r.status_code == 429 or r.status_code >= 500:
+            _down_until["t"] = _t.time() + TRANSIENT_COOLDOWN_S
         return None
     _note(False, 404, "none of the configured models is available to this key", NVIDIA_MODEL)
-    _down_until["t"] = _t.time() + 900
+    _down_until["t"] = _t.time() + CONFIG_COOLDOWN_S
     return None
 
 
