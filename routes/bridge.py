@@ -206,7 +206,7 @@ async def gate_verdict(symbol: str, side: str) -> Dict:
 @router.get("/gate")
 async def gate(symbol: str = Query(...), side: str = Query(...),
                x_bridge_token: Optional[str] = Header(None)):
-    await principal(x_bridge_token)                      # owner or a licensed member
+    """Read-only council verdict for the EA — no key needed (cached 60 s per symbol/side)."""
     return await gate_verdict(symbol, side)
 
 

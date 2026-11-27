@@ -72,21 +72,26 @@ def test_gate_verdict_combines_council_and_calendar(monkeypatch):
     assert bo["allow"] is False and bo["verdict"] == "EVENT" and "CPI" in bo["reason"]
 
 
-def test_gate_requires_bridge_token(monkeypatch):
+def test_gate_is_public_but_owner_routes_are_not(monkeypatch):
     from fastapi.testclient import TestClient
     from fastapi import FastAPI
     from routes import bridge
     monkeypatch.setattr(bridge, "TOKEN", "t0k")
+
+    async def verdict(symbol, side):
+        return {"allow": False, "reason": "council HOLD"}
+    monkeypatch.setattr(bridge, "gate_verdict", verdict)
     app = FastAPI()
     app.include_router(bridge.router)
     c = TestClient(app)
-    assert c.get("/bridge/gate?symbol=EURUSD&side=BUY").status_code == 401
-    assert c.get("/bridge/gate?symbol=EURUSD&side=BUY&token=t0k").status_code == 401   # header only
+    assert c.get("/bridge/gate?symbol=EURUSD&side=BUY").status_code == 200            # the EA needs no key
+    assert c.post("/bridge/deals", json={"deals": []}).status_code == 403             # nobody writes the journal
+    assert c.post("/bridge/deals", json={"deals": []}, headers={"X-Bridge-Token": "t0k"}).status_code == 200
 
 
 def test_ea_has_gate_and_parses_compact_json():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
-    assert '#property version   "4.63"' in src
+    assert '#property version   "4.64"' in src
     assert "/bridge/gate?symbol=" in src and "X-Bridge-Token" in src
     assert 'riskPct = MathMin(riskPct, appRisk)' in src
     from fastapi.responses import JSONResponse
@@ -147,12 +152,12 @@ def test_ea_is_plug_and_play():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
     assert "InpPreset      = PLAN_CUSTOM" in src and "InpPhase             = 0" in src
     assert "InpSizingMode = SIZING_RISK" in src and "/bridge/whoami" in src
-    assert "SH(InpSessionLondonStart)" in src and "SETUP:" in src
+    assert "SH(InpSessionLondonStart)" in src and "SETUP:" in src and "LICENSE (the only" not in src
 
 
 def test_ea_needs_license_for_entries():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
-    assert 'BLOCKED: LICENSE' in src and 'g_role == "owner"' in src
+    assert 'BLOCKED: LICENSE' not in src and 'g_role == "owner"' in src and "READY - council gate on" in src
 
 
 def test_owner_license_from_bot_works_without_bridge_token(monkeypatch):
@@ -190,7 +195,7 @@ def test_owner_license_from_bot_works_without_bridge_token(monkeypatch):
 
 def test_members_page_has_install_card_and_download_route():
     html = open("static/site/members.html").read()
-    assert "Install the EA" in html and "/members/ea/download" in html and "liccopy" in html and "urlcopy" in html
+    assert "Install the EA" in html and "/members/ea/download" in html and "urlcopy" in html and "no key needed" in html
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from routes import members

@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.63"
+#property version   "4.64"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -69,8 +69,6 @@ enum ENUM_LUNAR_SHIFT_MODE
   };
 
 //----------------------------------------------------------------- inputs
-input group "=== 0. LICENSE (the only thing to fill in) ==="
-input string   InpBridgeToken       = "";     // License key — from your WildChance member page (or MQL5\\Files\\wildchance_token.txt)
 
 input group "=== 1. ACCOUNT GUARD (defaults suit a normal account; pick a preset for a prop challenge) ==="
 input ENUM_FP_PRESET InpPreset      = PLAN_CUSTOM; // Account plan — CUSTOM = normal account (3% day / 8% max, no target)
@@ -166,6 +164,7 @@ input ENUM_TIMEFRAMES InpBBTF2      = PERIOD_D1;
 input group "=== 8. SEND DATA TO THE APP (EA -> /bridge) ==="
 input bool     InpSendData          = true;   // Push closed bars + account snapshot to the app
 input string   InpAppUrl            = "https://wildchance-system.onrender.com"; // Add it in Tools > Options > Expert Advisors > WebRequest
+input string   InpBridgeToken       = "";     // OPTIONAL owner sync key (journal / flash cards) - leave blank: the EA works without it
 input bool     InpPushDeals         = true;   // send closed trades → trade journal (W/L/BE) + flash cards (winners)
 input int      InpDealPushSec       = 10;     // how often to check for new closes (seconds, min 5)
 input int      InpDealBackfillDays  = 90;     // first run: send this many days of history to the journal
@@ -289,30 +288,27 @@ int AppGet(string path, string &reply)
    return code;
   }
 
-// Who am I to the app? owner → push the full feed; member → council gate only.
+// App reachable? (the council gate needs no key). With the optional owner sync key, also learn
+// whether this terminal may push the owner's journal / bars.
 void CheckLicense()
   {
    if(MQLInfoInteger(MQL_TESTER)) return;
    g_lastWho = TimeCurrent();
-   if(g_token == "") { g_role = ""; g_license = "SETUP: paste your License key (EA properties > Inputs)"; return; }
    string r;
-   int code = AppGet("/bridge/whoami", r);
+   int code = AppGet("/health", r);
    if(code == -1)
      {
       g_license = (r == "4014") ? "SETUP: Tools > Options > Expert Advisors > allow " + InpAppUrl
-                                : "SETUP: app not reachable (error " + r + ") - check internet";
+                                : "";                      // offline for a moment: no nagging, retried
       return;
      }
-   if(code == 200)
+   g_license = "";
+   g_role = "public";
+   if(g_token != "")
      {
-      g_role = (StringFind(r, "\"role\":\"owner\"") >= 0) ? "owner" : "member";
-      g_license = "";
-      return;
+      string w;
+      if(AppGet("/bridge/whoami", w) == 200 && StringFind(w, "\"role\":\"owner\"") >= 0) g_role = "owner";
      }
-   g_role = "";
-   g_license = (code == 402) ? "SETUP: license expired - renew on the members page"
-             : (code == 401 || code == 403) ? "SETUP: license key not recognised ("+IntegerToString(code)+") - send /license in the bot, paste that key"
-             : "SETUP: app answered HTTP " + IntegerToString(code) + " - try again shortly";
   }
 
 // The one line a new user reads: the next thing to do, or READY.
@@ -321,7 +317,7 @@ string SetupState()
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)) return "SETUP: click Algo Trading in the toolbar (turn it green)";
    if(!MQLInfoInteger(MQL_TRADE_ALLOWED))          return "SETUP: EA properties > Common > tick Allow Algo Trading";
    if(g_license != "")                             return g_license;
-   if(g_role == "member")                          return "READY - licensed (council gate on)";
+   if(g_role == "public")                          return "READY - council gate on";
    return "";
   }
 
@@ -362,9 +358,9 @@ string LoadToken()
      {
       t = ReadKeyFile(names[i], 0);
       if(t == "") t = ReadKeyFile(names[i], FILE_COMMON);
-      if(t != "") { Print("WildChance: license key read from ", names[i]); return t; }
+      if(t != "") { Print("WildChance: owner sync key read from ", names[i]); return t; }
      }
-   Print("WildChance: no License key - set it in Inputs, or put it in MQL5\\Files\\wildchance_token.txt");
+   // no owner sync key: fine — the EA trades with the council gate, it just doesn't sync a journal
    return "";
   }
 
@@ -973,17 +969,11 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
    if(why != "") { g_newSignalTxt = "BLOCKED: "+why; Print("WildChance blocked ",_Symbol,": ",why); return; }
 
    double appRisk = 0;
-   // no valid license → no new entries (a network outage is not a license problem: fail-open still applies)
-   if(!MQLInfoInteger(MQL_TESTER) && (g_token == "" || StringFind(g_license, "license") >= 0))
-     {
-      g_newSignalTxt = "BLOCKED: LICENSE - " + (g_token == "" ? "add your License key" : g_license);
-      return;
-     }
    if(InpUseAppGate && !MQLInfoInteger(MQL_TESTER))
      {
       string gwhy = "";
       int g = AppGate(isBuy, appRisk, gwhy);
-      if(g < 0 && StringFind(gwhy, "NO TOKEN") < 0)        // one retry: a slow / waking server is not a "no"
+      if(g < 0)                                             // one retry: a slow / waking server is not a "no"
         { Sleep(1500); g = AppGate(isBuy, appRisk, gwhy); }
       if(g == 0 || (g < 0 && !InpGateFailOpen))
         {
@@ -1421,7 +1411,6 @@ bool PostJson(string path, string body)
 int AppGate(bool isBuy, double &appRisk, string &reason)
   {
    appRisk = 0; reason = "";
-   if(g_token == "") { reason = "NO TOKEN"; return -1; }
    string url = InpAppUrl; if(StringSubstr(url, StringLen(url)-1)=="/") url = StringSubstr(url,0,StringLen(url)-1);
    string sym = (InpAppSymbol!="") ? InpAppSymbol : _Symbol;
    url += "/bridge/gate?symbol=" + sym + "&side=" + (isBuy ? "BUY" : "SELL");
@@ -1498,7 +1487,7 @@ void PushCalendar()
 
 void PushData()
   {
-   if(g_token == "") { g_sendStatus = "NO TOKEN: set InpBridgeToken or wildchance_token.txt"; return; }
+   if(g_token == "") { g_sendStatus = "OK - council gate (journal sync off)"; return; }
    bool leader = IsLeader();
    if(leader && TimeCurrent() - g_lastCalPush >= 6*3600)      // calendar every 6h (and at start)
      { g_lastCalPush = TimeCurrent(); PushCalendar(); }
@@ -1613,7 +1602,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.63 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.64 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :

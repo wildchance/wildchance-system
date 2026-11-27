@@ -18,10 +18,9 @@
 <li>MT5 → Tools → Options → Expert Advisors → tick <b>Allow WebRequest</b> → add this address
  <code id="appurl">https://wildchance-system.onrender.com</code> <button id="urlcopy" type="button">Copy</button>. Click <b>Algo Trading</b> in the toolbar (green).</li>
 <li>Drag <b>WildChance</b> from Navigator onto a chart (EURUSD H1). Common tab → tick <b>Allow Algo Trading</b>.</li>
-<li>Inputs tab → <b>License key</b> → paste your key → OK:
- <span style="display:inline-flex;gap:8px;flex-wrap:wrap;align-items:center"><code id="lic" style="word-break:break-all">••••••••</code><button id="licshow" type="button">Show</button><button id="liccopy" type="button">Copy key</button></span></li>
+<li>Click <b>OK</b>. That's it — no key needed.</li>
 </ol>
-<p class="muted">Done when the EA panel says <b>APP FEED OK</b> (or READY). If it shows a <b>SETUP:</b> line, it names the one thing to fix. Keep your key private — it stops working when your plan ends.</p>
+<p class="muted">Done when the EA panel says <b>READY - council gate on</b>. If it shows a <b>SETUP:</b> line, it names the one thing to fix.</p>
 <span id="licmsg" class="muted"></span></div>
 <div class="card" style="margin-top:16px"><h3>Macro brief</h3><p id="brief" class="muted" style="white-space:pre-wrap">Loading…</p></div>
 <div class="card feed" style="margin-top:16px"><h3>Latest signals</h3><div id="feed" class="muted">Loading…</div></div></div>
@@ -30,10 +29,8 @@
 const $=id=>document.getElementById(id);let KEY=null;try{KEY=localStorage.getItem('wc_key')}catch(e){}
 async function j(u){const r=await fetch(u,{headers:KEY?{'X-API-Key':KEY}:{}});let d={};try{d=await r.json()}catch(e){}if(!r.ok)throw new Error(d.detail||r.status);return d}
 function esc(s){return s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
-function licWire(){const l=$('lic');if(!l||l.dataset.wired)return;l.dataset.wired=1;
-$('licshow').onclick=()=>{l.textContent=l.textContent.startsWith('•')?KEY:'••••••••'};
-$('urlcopy').onclick=async()=>{try{await navigator.clipboard.writeText($('appurl').textContent);$('licmsg').textContent='Address copied.'}catch(e){$('licmsg').textContent='Select and copy the address.'}};
-$('liccopy').onclick=async()=>{try{await navigator.clipboard.writeText(KEY);$('licmsg').textContent='Copied.'}catch(e){l.textContent=KEY;$('licmsg').textContent='Select and copy it.'}}}
+function licWire(){const u=$('urlcopy');if(!u||u.dataset.wired)return;u.dataset.wired=1;
+u.onclick=async()=>{try{await navigator.clipboard.writeText($('appurl').textContent);$('licmsg').textContent='Address copied.'}catch(e){$('licmsg').textContent='Select and copy the address.'}}}
 async function show(){licWire();try{const m=await j('/members/me');$('login').style.display='none';$('app').style.display='block';
 $('status').innerHTML=`${esc(m.email)} · plan <b>${esc(m.tier)}</b>`+(m.paid_until?` · active until ${m.paid_until.slice(0,10)}`:'')+(location.search.includes('paid=1')?' · <span class="ok">payment received — thank you!</span>':'');
 $('tg').innerHTML=m.telegram_invite?`<a class="btn" href="${m.telegram_invite}" target="_blank" rel="noopener">Join the private Telegram</a>`:(m.paid?'':'<a class="btn" href="/pricing">Upgrade for full signals</a>');
