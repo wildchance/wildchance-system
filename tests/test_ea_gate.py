@@ -91,7 +91,7 @@ def test_gate_is_public_but_owner_routes_are_not(monkeypatch):
 
 def test_ea_has_gate_and_parses_compact_json():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
-    assert '#property version   "4.66"' in src
+    assert '#property version   "4.67"' in src
     assert "/bridge/gate?symbol=" in src and "X-Bridge-Token" in src
     assert 'riskPct = MathMin(riskPct, appRisk)' in src
     from fastapi.responses import JSONResponse

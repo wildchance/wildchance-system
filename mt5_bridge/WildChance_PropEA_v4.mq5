@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.66"
+#property version   "4.67"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -181,7 +181,7 @@ input int      InpGateTimeoutMs     = 8000;   // Gate request timeout (the app m
 
 input group "=== 8b. AUTO CHARTS (attach ONE chart, the EA opens the rest) ==="
 input bool     InpAutoCharts        = true;   // Open a chart + this EA (same settings) for every market below
-input string   InpAutoSymbols       = "EURUSD,GBPUSD,USDJPY,USDCHF,USDCAD,AUDUSD,NZDUSD,EURJPY,GBPJPY,EURGBP,AUDJPY,EURAUD,GBPAUD,EURCHF,GBPCAD,USDZAR,XAUUSD,XAGUSD,USOIL,BTCUSD,ETHUSD,US30,US100,US500,GER40";
+input string   InpAutoSymbols       = "BTCUSD,XAUUSD,XAGUSD,USOIL,US30,US100,US500,GER40,EURUSD,GBPUSD,USDJPY,USDCHF,EURJPY,GBPJPY,AUDUSD"; // fast movers, big pip value
 input ENUM_TIMEFRAMES InpAutoTF     = PERIOD_H1; // Timeframe for the auto-opened charts
 
 input group "=== 9. HUD ==="
@@ -261,7 +261,7 @@ LivePlan g_tr;
 //| init / deinit                                                    |
 //+------------------------------------------------------------------+
 string g_token = "";
-bool     g_autoDone = false;
+bool     g_autoDone = false, g_autoRetried = false;
 datetime g_startT   = 0;
 string   g_autoNote = "";
 datetime g_lastHud = 0;
@@ -1210,26 +1210,41 @@ bool ChartIsOpen(string sym)
 void AutoOpenCharts()
   {
    g_autoDone = true;
+   ResetLastError();
    if(!ChartSaveTemplate(0, "wildchance_auto"))       // this chart + EA + its exact inputs
-     { g_autoNote = "AUTO: could not save the template"; return; }
+     {
+      g_autoNote = "AUTO: could not save the template (error " + IntegerToString(GetLastError()) + ")";
+      Print("WildChance ", g_autoNote);
+      return;
+     }
    string sfx = BrokerSuffix();
    string parts[];
-   int n = StringSplit(InpAutoSymbols, ',', parts), opened = 0, missing = 0;
+   int n = StringSplit(InpAutoSymbols, ',', parts), opened = 0, failed = 0, missing = 0;
    string miss = "";
    for(int i = 0; i < n; i++)
      {
       string base = parts[i]; StringTrimLeft(base); StringTrimRight(base); StringToUpper(base);
       if(base == "") continue;
       string sym = ResolveSymbol(base, sfx);
-      if(sym == "") { missing++; miss += base + " "; continue; }
+      if(sym == "") { missing++; miss += base + " "; Print("WildChance AUTO: ", base, " not found at this broker"); continue; }
       if(ChartIsOpen(sym)) continue;
+      ResetLastError();
       long id = ChartOpen(sym, InpAutoTF);
-      if(id > 0 && ChartApplyTemplate(id, "wildchance_auto.tpl")) opened++;
+      if(id <= 0) { failed++; Print("WildChance AUTO: ChartOpen ", sym, " failed, error ", GetLastError()); continue; }
+      ResetLastError();
+      bool ok = ChartApplyTemplate(id, "wildchance_auto.tpl");
+      if(!ok) { ResetLastError(); ok = ChartApplyTemplate(id, "\\Profiles\\Templates\\wildchance_auto.tpl"); }
+      if(ok) opened++;
+      else { failed++; Print("WildChance AUTO: template on ", sym, " failed, error ", GetLastError()); }
       Sleep(300);                                       // let each chart load before the next
      }
-   g_autoNote = "AUTO: opened " + IntegerToString(opened) + " charts" + (missing > 0 ? " (not at this broker: " + miss + ")" : "");
+   g_autoNote = "AUTO: opened " + IntegerToString(opened) + (failed > 0 ? ", failed " + IntegerToString(failed) + " (see Experts)" : "")
+              + (missing > 0 ? ", not at broker: " + miss : "");
    Print("WildChance ", g_autoNote);
+   if(opened == 0 && failed > 0 && !g_autoRetried)      // one retry a minute later
+     { g_autoRetried = true; g_autoDone = false; g_startT = TimeLocal() + 50; }
   }
+
 
 // Forex pair (3/5-digit quote, no metal / crypto / oil / index name)?
 bool IsFxSymbol()
@@ -1727,7 +1742,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.66 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.67 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
