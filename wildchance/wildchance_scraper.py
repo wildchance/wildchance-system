@@ -419,6 +419,7 @@ def fetch_calendar():
 # ============================================================================
 # TIER 1 — 6H: live prices + sentiment delta
 # ============================================================================
+MAIN_LOOP = None                # the API's event loop (set at startup) — see _pool_fill
 PRICE_STATUS = {"live": True}   # False → the last fetch fell back to PRICE_FALLBACK
 
 
@@ -440,7 +441,19 @@ def _pool_fill(symbols, out):
     async def run():
         return await asyncio.gather(*(one(s) for s in symbols), return_exceptions=True)
     try:
-        res = asyncio.run(run())
+        # Run on the app's own loop when there is one: a private asyncio.run loop would
+        # leave pooled DB/HTTP connections bound to a dead loop ("attached to a
+        # different loop" 500s in later requests).
+        loop = MAIN_LOOP
+        on_main = False
+        try:
+            on_main = asyncio.get_running_loop() is loop
+        except RuntimeError:
+            pass
+        if loop is not None and loop.is_running() and not on_main:
+            res = asyncio.run_coroutine_threadsafe(run(), loop).result(timeout=90)
+        else:
+            res = asyncio.run(run())
     except Exception as e:
         print(f"[PRICE] pool fill failed: {e}")
         return 0

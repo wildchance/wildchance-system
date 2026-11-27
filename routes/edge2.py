@@ -37,9 +37,17 @@ async def history(symbol: str):
 async def ingest():
     """Hourly: new calendar actuals → macro layer, then rebuild the board (pool prices only)."""
     from services import edge_v2, macro_surprise
+    import asyncio
     r = await macro_surprise.ingest()
-    b = await edge_v2.board(force=True)
-    return {**r, "markets": len(b["rows"])}
+    # the board rebuild takes a while (pool prices for every market): run it in the
+    # background so the cron call answers fast instead of being logged as slow
+    t = asyncio.create_task(edge_v2.board(force=True))
+    _bg.add(t)
+    t.add_done_callback(_bg.discard)
+    return {**r, "board": "rebuilding"}
+
+
+_bg: set = set()                                   # keep background tasks referenced
 
 
 @router.post("/refresh")

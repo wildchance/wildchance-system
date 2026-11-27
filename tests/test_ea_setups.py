@@ -60,3 +60,30 @@ def test_ea_auto_opens_the_market_list():
     assert "void AutoOpenCharts()" in src and 'ChartSaveTemplate(0, "wildchance_auto")' in src
     assert 'ChartApplyTemplate(id, "wildchance_auto.tpl")' in src and "BTCUSD" in src and "GER40" in src
     assert '"USTEC"' in src and '"XTIUSD"' in src and "ChartIsOpen(sym)" in src
+
+
+def test_pool_fill_runs_on_the_app_loop_from_a_worker_thread():
+    """A worker-thread price fill must not spin up its own loop (shared pools break)."""
+    import asyncio
+    from wildchance import wildchance_scraper as wc
+    seen = {}
+
+    async def fake_alt(sym, iv, n):
+        seen["loop"] = asyncio.get_running_loop()
+        return {"values": [{"close": "1.5"}], "source": "t"}
+
+    async def none(*a, **k):
+        return None
+
+    async def main():
+        import services.price_pool as pp, services.broker_feed as bf
+        old = (pp.alt_values, bf.td_values, wc.MAIN_LOOP)
+        pp.alt_values, bf.td_values, wc.MAIN_LOOP = fake_alt, none, asyncio.get_running_loop()
+        try:
+            out = {}
+            n = await asyncio.to_thread(wc._pool_fill, ["EURUSD"], out)
+            return n, out, asyncio.get_running_loop()
+        finally:
+            pp.alt_values, bf.td_values, wc.MAIN_LOOP = old
+    n, out, loop = asyncio.new_event_loop().run_until_complete(main())
+    assert n == 1 and out["EURUSD"] == 1.5 and seen["loop"] is loop

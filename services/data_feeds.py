@@ -315,7 +315,7 @@ async def tiingo_daily(symbol: str, years: int = 30) -> List[Bar]:
     hit = _cached(key, 12 * 3600)
     if hit is not None:
         return hit
-    p = {"startDate": start, "resampleFreq": "1day", "token": TIINGO_KEY}
+    p = {"startDate": max(start, "2020-01-01"), "resampleFreq": "1day", "token": TIINGO_KEY}   # FX/crypto floor
     if is_crypto(symbol):
         data = await _get("tiingo", "https://api.tiingo.com/tiingo/crypto/prices",
                           {**p, "tickers": s.lower()})
