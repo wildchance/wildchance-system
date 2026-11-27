@@ -210,6 +210,14 @@ async def gate(symbol: str = Query(...), side: str = Query(...),
     return await gate_verdict(symbol, side)
 
 
+@router.post("/setup")
+async def ea_setup(ev: Dict, x_bridge_token: Optional[str] = Header(None)):
+    """Every setup the owner's EA finds (entered or blocked + why) → the setup log."""
+    await _auth(x_bridge_token)
+    from services import ea_setups
+    return await ea_setups.record(ev)
+
+
 @router.get("/whoami")
 async def whoami(x_bridge_token: Optional[str] = Header(None)):
     """The EA's start-up license check: role (owner / member), plan and expiry."""

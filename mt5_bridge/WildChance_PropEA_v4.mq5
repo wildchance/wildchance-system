@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.64"
+#property version   "4.65"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -91,6 +91,9 @@ input bool     InpUsePartials       = true;   // false = single TP (matches the 
 input int      InpMaxConcurrent     = 2;      // Max open trades for this magic across all charts
 input int      InpMaxSpreadPips     = 3;      // Skip entry if spread is wider (pips)
 input ulong    InpMagicNumber       = 408812; // Magic number (use the same one on every chart)
+input double   InpMaxSpreadATR      = 0.15;   // Non-FX (BTC, indices, metals, oil): max spread as a share of ATR
+input bool     InpPhonePush         = true;   // MT5 phone push (Tools > Options > Notifications > MetaQuotes ID) on entries + strong setups
+input int      InpPhoneMinQuality   = 7;      // ...and on blocked setups at/above this quality
 input bool     InpRandomizeSL       = false;  // Widen SL by a random 1-3 pips (fill diversity only)
 
 input group "=== 2. LUNAR OVERLAY (ON - verify with GET /lunar/backtest on your symbols) ==="
@@ -950,8 +953,10 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
 
    string why = "";
    double spreadPips = (ask-bid)/pip;
+   bool   spreadBad  = IsFxSymbol() ? (spreadPips > InpMaxSpreadPips)
+                                    : (atrN > 0 && (ask-bid) > InpMaxSpreadATR * atrN);
    if(g_tr.active || CountMagicPositions() >= InpMaxConcurrent) why = "MAX CONCURRENT";
-   else if(spreadPips > InpMaxSpreadPips)                      why = "SPREAD "+DoubleToString(spreadPips,1)+"p";
+   else if(spreadBad)                                          why = "SPREAD "+DoubleToString(spreadPips,1)+"p";
    else if(g_isChop)                                           why = "[CHOP-TRAP] ADX "+DoubleToString(g_adxVal,1);
    else if(g_newsBlocked)                                      why = "[NEWS] high-impact window";
    else if(InpSessionFilter && !(g_inLondon || g_inNY))        why = "OUTSIDE LONDON/NY";
@@ -966,7 +971,8 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
    else if(InpRequireTDI && ((isBuy && g_tdiPrice<g_tdiSignal) || (!isBuy && g_tdiPrice>g_tdiSignal))) why = "TDI DISAGREES";
    else if(idSig && InpID50MaxTrendDay>0 && g_trendDayAge>InpID50MaxTrendDay) why = "D1 TREND DAY "+IntegerToString(g_trendDayAge);
    else if(InpMaxSLxATR>0 && risk > InpMaxSLxATR*atrN)         why = "SL TOO WIDE ("+DoubleToString(risk/atrN,1)+"xATR)";
-   if(why != "") { g_newSignalTxt = "BLOCKED: "+why; Print("WildChance blocked ",_Symbol,": ",why); return; }
+   if(why != "") { g_newSignalTxt = "BLOCKED: "+why; Print("WildChance blocked ",_Symbol,": ",why);
+                   LogSetup(isBuy, setup, entry, sl, "BLOCKED: "+why); return; }
 
    double appRisk = 0;
    if(InpUseAppGate && !MQLInfoInteger(MQL_TESTER))
@@ -979,6 +985,7 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
         {
          g_newSignalTxt = "BLOCKED: APP "+gwhy;
          Print("WildChance blocked by app gate ",_Symbol,": ",gwhy);
+         LogSetup(isBuy, setup, entry, sl, "COUNCIL: "+gwhy);
          return;
         }
       if(g < 0) Print("WildChance: app gate unreachable (",gwhy,") - fail-open, EA filters only");
@@ -1016,6 +1023,7 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
                     (InpSizingMode==SIZING_TARGET ? " (target TP"+IntegerToString(InpTargetTP)+")" : " (risk %)");
    if(InpDrawTradePlan) DrawPlan();
    if(InpAlertOnEntry) Alert("WildChance ",_Symbol," ",g_newSignalTxt," SL ",DoubleToString(sl,_Digits));
+   LogSetup(isBuy, setup, g_tr.entry, sl, "ENTERED");
   }
 
 bool FindOwnPosition()
@@ -1133,6 +1141,35 @@ double PipSize()
    if(digits==3 || digits==5) return _Point*10.0;
    if(StringFind(s,"XAU")>=0 || StringFind(s,"GOLD")>=0) return _Point*10.0;
    return _Point;
+  }
+
+// Forex pair (3/5-digit quote, no metal / crypto / oil / index name)?
+bool IsFxSymbol()
+  {
+   string s = _Symbol; StringToUpper(s);
+   int d = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   if(d != 3 && d != 5) return false;
+   string non[] = {"XAU","XAG","GOLD","SILVER","BTC","ETH","OIL","WTI","BRENT","XTI","XBR","US30","US100","US500",
+                   "NAS","SPX","DJ","GER","UK100","JP225","NIK","HK50"};
+   for(int i = 0; i < ArraySize(non); i++) if(StringFind(s, non[i]) >= 0) return false;
+   return true;
+  }
+
+// Every setup the EA finds → the app's setup log (owner sync key) and the phone (MT5 push).
+void LogSetup(bool isBuy, string setup, double entry, double sl, string outcome)
+  {
+   string side = isBuy ? "BUY" : "SELL";
+   bool entered = (outcome == "ENTERED");
+   if(InpPhonePush && TerminalInfoInteger(TERMINAL_NOTIFICATIONS_ENABLED) && (entered || g_quality >= InpPhoneMinQuality))
+      SendNotification("WildChance " + _Symbol + " " + side + " " + setup + " q" + IntegerToString(g_quality)
+                       + "/10 @" + DoubleToString(entry, _Digits) + " - " + outcome);
+   if(g_token == "" || g_role != "owner" || MQLInfoInteger(MQL_TESTER)) return;
+   string js = StringFormat("{\"symbol\":\"%s\",\"side\":\"%s\",\"setup\":\"%s\",\"quality\":%d,"
+                            "\"entry\":%s,\"stop\":%s,\"outcome\":\"%s\",\"tf\":\"%s\",\"session\":\"%s\",\"t\":%I64d}",
+                            JsonSafe(_Symbol), side, setup, g_quality, DoubleToString(entry, _Digits),
+                            DoubleToString(sl, _Digits), JsonSafe(outcome), EnumToString(_Period),
+                            JsonSafe(g_sessionStr), (long)TimeGMT());
+   PostJson("/bridge/setup", js);
   }
 
 bool IsPivotHigh(const double &high[], int idx, int lb, int total)
@@ -1602,7 +1639,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.64 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.65 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :

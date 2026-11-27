@@ -921,3 +921,24 @@ async def license_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 HANDLERS["license"] = license_cmd
 OWNER_COMMANDS += [("license", "Owner sync key for the EA journal (optional, owner)")]
+
+
+
+async def setups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner: the latest setups the EA found on every chart (entered / blocked + why)."""
+    if not is_owner(update):
+        await _reply(update, denied_text(update))
+        return
+
+    async def go():
+        import time as _t
+        from services import data_store, ea_setups
+        v, _ = await data_store.get(ea_setups.KEY)
+        rows = list(v or [])
+        head = ea_setups.summary_line(ea_setups.summary(rows, _t.time() - 86400))
+        await update.message.reply_text(head + "\n\n" + ea_setups.text(rows[-15:][::-1]))
+    await _guard(update, go)
+
+
+HANDLERS["setups"] = setups_cmd
+OWNER_COMMANDS += [("setups", "EA setups found on all charts, last 24 h (owner)")]
