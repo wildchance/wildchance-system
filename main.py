@@ -157,6 +157,12 @@ async def lifespan(app: FastAPI):
     # --- startup ---
     import logging as _log
     _lg = _log.getLogger("uvicorn.error")
+    try:                                   # worker threads schedule async work on this loop
+        import asyncio as _aio
+        from wildchance import wildchance_scraper as _wcs
+        _wcs.MAIN_LOOP = _aio.get_running_loop()
+    except Exception:
+        pass
     # A DOWN/expired database must NOT crash-loop the whole API. The signal engines
     # (Optimus, VAULTUM, Bumblebee, Venom, …) are stateless compute — they stay live
     # even with no DB; only tracking/execution/SaaS endpoints need it (they 500 per-call
