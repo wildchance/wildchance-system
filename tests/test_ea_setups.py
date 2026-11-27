@@ -1,0 +1,55 @@
+import asyncio
+
+from services import ea_setups as es
+
+
+def run(c):
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(c)
+    finally:
+        loop.close()
+
+
+def test_reason_parsing():
+    assert es.reason_of("BLOCKED: [CHOP-TRAP] ADX 19.0") == "CHOP-TRAP"
+    assert es.reason_of("BLOCKED: SPREAD 25.0p") == "SPREAD"
+    assert es.reason_of("COUNCIL: council HOLD") == "COUNCIL"
+    assert es.reason_of("ENTERED") == "ENTERED"
+
+
+def test_record_dedupes_pings_and_summarises(monkeypatch):
+    from services import data_store, owner_notify
+    store, sent = {}, []
+
+    async def get(k):
+        return store.get(k), None
+
+    async def put(k, v):
+        store[k] = v
+        return True
+
+    async def send(t):
+        sent.append(t)
+        return True
+    monkeypatch.setattr(data_store, "get", get)
+    monkeypatch.setattr(data_store, "put", put)
+    monkeypatch.setattr(owner_notify, "send", send)
+    monkeypatch.setattr(es, "_pinged", {})
+    base = {"symbol": "EURUSD.m", "side": "SELL", "setup": "M", "entry": 1.0975, "stop": 1.0985, "t": 1000}
+    run(es.record({**base, "quality": 6, "outcome": "BLOCKED: [CHOP-TRAP] ADX 19.7"}))
+    assert run(es.record({**base, "quality": 6, "outcome": "BLOCKED: [CHOP-TRAP] ADX 19.7"}))["duplicate"]
+    run(es.record({**base, "symbol": "BTCUSD.m", "quality": 8, "outcome": "COUNCIL: council HOLD"}))
+    run(es.record({**base, "symbol": "US30.m", "side": "BUY", "setup": "W", "quality": 7, "outcome": "ENTERED"}))
+    assert len(store[es.KEY]) == 3
+    assert len(sent) == 2 and "US30.m BUY W q7/10" in sent[1]           # q6 block silent; q8 block + entry pinged
+    s = es.summary(store[es.KEY])
+    assert s == {"setups": 3, "entered": 1, "blocked": 2, "top_blocks": [("CHOP-TRAP", 1), ("COUNCIL", 1)],
+                 "markets": 3}
+    assert "3 setups on 3 markets — 1 entered" in es.summary_line(s)
+
+
+def test_ea_logs_setups_and_relative_spread():
+    src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
+    assert "bool IsFxSymbol()" in src and "InpMaxSpreadATR * atrN" in src
+    assert src.count("LogSetup(") >= 4 and '"/bridge/setup"' in src and "SendNotification(" in src

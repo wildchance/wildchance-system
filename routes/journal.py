@@ -41,5 +41,12 @@ async def report(period: str = Query("day", pattern="^(day|week|month)$"), notif
         from services.realtime import alert_once
         text = (tj.report_card(period, s) if s.get("trades") else f"📒 *Trade journal — {period}*: no broker closes "
                 "(EA not connected).") + "\n" + "\n".join(stk.report_lines(sig))
+        try:
+            from services import ea_setups
+            from services import data_store
+            v, _ = await data_store.get(ea_setups.KEY)
+            text += "\n" + ea_setups.summary_line(ea_setups.summary(list(v or []), since.timestamp()))
+        except Exception:
+            pass
         out["sent"] = await alert_once(f"journal:{period}:{now:%Y-%m-%d}", text, ttl_hours=20)
     return out
