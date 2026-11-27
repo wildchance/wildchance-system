@@ -53,3 +53,10 @@ def test_ea_logs_setups_and_relative_spread():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
     assert "bool IsFxSymbol()" in src and "InpMaxSpreadATR * atrN" in src
     assert src.count("LogSetup(") >= 4 and '"/bridge/setup"' in src and "SendNotification(" in src
+
+
+def test_ea_auto_opens_the_market_list():
+    src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
+    assert "void AutoOpenCharts()" in src and 'ChartSaveTemplate(0, "wildchance_auto")' in src
+    assert 'ChartApplyTemplate(id, "wildchance_auto.tpl")' in src and "BTCUSD" in src and "GER40" in src
+    assert '"USTEC"' in src and '"XTIUSD"' in src and "ChartIsOpen(sym)" in src
