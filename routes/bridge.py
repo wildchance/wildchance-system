@@ -35,24 +35,50 @@ _accounts: Dict[str, Dict] = {}
 _owner_keys: Dict[str, object] = {"loaded": False, "keys": set()}
 
 
+def derived_owner_key() -> Optional[str]:
+    """The owner's EA key, COMPUTED from a server secret already in Render (OPS_TOKEN, else
+    CRON_TOKEN, else the Telegram bot token) — nothing stored, so a database hiccup or a second
+    /license can never mint a different key and orphan the one pasted into the EA. Rotating that
+    secret rotates the key."""
+    import hashlib
+    import hmac
+    secret = (config("OPS_TOKEN", default=None) or config("CRON_TOKEN", default=None)
+              or config("TELEGRAM_BOT_TOKEN", default=None) or config("BOT_TOKEN", default=None))
+    if not secret:
+        return None
+    return "wco_" + hmac.new(str(secret).encode(), b"wildchance-owner-ea-license", hashlib.sha256).hexdigest()[:32]
+
+
 async def owner_license() -> str:
-    """The owner's EA license (bot /license) — created once, kept in the data store, so the owner
-    never has to set BRIDGE_TOKEN in Render. BRIDGE_TOKEN, when set, keeps working too."""
+    """The owner's EA license for the bot's /license — always the same derived key."""
+    k = derived_owner_key()
+    if k:
+        return k
+    # no server secret at all (unusual): fall back to a stored key, created only if truly absent
     import secrets
     from services import data_store
     v, _ = await data_store.get("owner_license")
     if not v:
         v = "wco_" + secrets.token_urlsafe(24)
-        await data_store.put("owner_license", v)
+        if not await data_store.put("owner_license", v):
+            raise RuntimeError("could not save the owner license — try /license again in a minute")
     _owner_keys["keys"].add(v)
     _owner_keys["loaded"] = True
     return v
+
+
+def hmac_equal(a: str, b: str) -> bool:
+    import hmac
+    return hmac.compare_digest(str(a), str(b))
 
 
 async def is_owner_key(token: Optional[str]) -> bool:
     if not token:
         return False
     if TOKEN and token == TOKEN:
+        return True
+    dk = derived_owner_key()
+    if dk and hmac_equal(token, dk):
         return True
     if not _owner_keys["loaded"]:
         try:

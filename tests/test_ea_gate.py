@@ -86,7 +86,7 @@ def test_gate_requires_bridge_token(monkeypatch):
 
 def test_ea_has_gate_and_parses_compact_json():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
-    assert '#property version   "4.62"' in src
+    assert '#property version   "4.63"' in src
     assert "/bridge/gate?symbol=" in src and "X-Bridge-Token" in src
     assert 'riskPct = MathMin(riskPct, appRisk)' in src
     from fastapi.responses import JSONResponse
@@ -211,3 +211,29 @@ def test_guard_never_decides_from_a_disconnected_zero():
     assert "bool AccountReady()" in src and 'g_propStatus = "WAITING FOR ACCOUNT"' in src
     assert "if(saved <= 0)" in src and 'GlobalVariableDel(g_gvp + "maxlock")' in src
     assert "g_breachCount >= 3" in src and "(belowMax && confirmed)" in src
+
+
+def test_owner_key_is_derived_and_stable(monkeypatch):
+    import asyncio
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routes import bridge
+    from services import data_store
+
+    async def broken(*a, **k):
+        raise RuntimeError("db hiccup")                       # the store is down: the key must not change
+    monkeypatch.setattr(data_store, "get", broken)
+    monkeypatch.setattr(data_store, "put", broken)
+    monkeypatch.setattr(bridge, "config", lambda k, default=None: "ops-secret-123" if k == "OPS_TOKEN" else default)
+    monkeypatch.setattr(bridge, "TOKEN", None)
+    loop = asyncio.new_event_loop()
+    try:
+        k1 = loop.run_until_complete(bridge.owner_license())
+        k2 = loop.run_until_complete(bridge.owner_license())
+    finally:
+        loop.close()
+    assert k1 == k2 and k1.startswith("wco_") and len(k1) == 36
+    app = FastAPI()
+    app.include_router(bridge.router)
+    c = TestClient(app)
+    assert c.get("/bridge/whoami", headers={"X-Bridge-Token": k1}).json() == {"role": "owner"}

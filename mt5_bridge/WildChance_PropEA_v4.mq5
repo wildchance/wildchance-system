@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.62"
+#property version   "4.63"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -311,7 +311,7 @@ void CheckLicense()
      }
    g_role = "";
    g_license = (code == 402) ? "SETUP: license expired - renew on the members page"
-             : (code == 401 || code == 403) ? "SETUP: license key not recognised - copy it again"
+             : (code == 401 || code == 403) ? "SETUP: license key not recognised ("+IntegerToString(code)+") - send /license in the bot, paste that key"
              : "SETUP: app answered HTTP " + IntegerToString(code) + " - try again shortly";
   }
 
@@ -1613,7 +1613,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.62 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.63 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
