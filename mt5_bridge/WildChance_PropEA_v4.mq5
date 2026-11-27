@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.65"
+#property version   "4.66"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -179,6 +179,11 @@ input bool     InpGateFailOpen      = false;  // App unreachable: false = no cou
 input bool     InpUseAppRisk        = true;   // Cap risk % at the app's regime risk budget (never raises it)
 input int      InpGateTimeoutMs     = 8000;   // Gate request timeout (the app may be waking up)
 
+input group "=== 8b. AUTO CHARTS (attach ONE chart, the EA opens the rest) ==="
+input bool     InpAutoCharts        = true;   // Open a chart + this EA (same settings) for every market below
+input string   InpAutoSymbols       = "EURUSD,GBPUSD,USDJPY,USDCHF,USDCAD,AUDUSD,NZDUSD,EURJPY,GBPJPY,EURGBP,AUDJPY,EURAUD,GBPAUD,EURCHF,GBPCAD,USDZAR,XAUUSD,XAGUSD,USOIL,BTCUSD,ETHUSD,US30,US100,US500,GER40";
+input ENUM_TIMEFRAMES InpAutoTF     = PERIOD_H1; // Timeframe for the auto-opened charts
+
 input group "=== 9. HUD ==="
 input ENUM_BASE_CORNER InpCorner    = CORNER_LEFT_UPPER;
 input int      InpFontSize          = 9;
@@ -256,6 +261,9 @@ LivePlan g_tr;
 //| init / deinit                                                    |
 //+------------------------------------------------------------------+
 string g_token = "";
+bool     g_autoDone = false;
+datetime g_startT   = 0;
+string   g_autoNote = "";
 datetime g_lastHud = 0;
 
 // Several charts on one account: ONE leader does the account-wide uploads (deal history, MT5
@@ -320,7 +328,7 @@ string SetupState()
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED)) return "SETUP: click Algo Trading in the toolbar (turn it green)";
    if(!MQLInfoInteger(MQL_TRADE_ALLOWED))          return "SETUP: EA properties > Common > tick Allow Algo Trading";
    if(g_license != "")                             return g_license;
-   if(g_role == "public")                          return "READY - council gate on";
+   if(g_role == "public" || g_role == "owner")     return "READY - council gate on" + (g_autoNote != "" ? " · " + g_autoNote : "");
    return "";
   }
 
@@ -369,6 +377,7 @@ string LoadToken()
 
 int OnInit()
   {
+   g_startT = TimeLocal();
    g_token = LoadToken();
    if(MQLInfoInteger(MQL_DEBUG))
       Print("WildChance: running under the MetaEditor DEBUGGER - inputs are the defaults. "
@@ -422,6 +431,9 @@ void OnTimer()
   {
    CheckPropGuard();
    if(TimeLocal() - g_lastHud >= 2) { UpdateHUD(); g_lastHud = TimeLocal(); }
+   if(InpAutoCharts && !g_autoDone && !MQLInfoInteger(MQL_TESTER) && AccountReady() && TimeLocal() - g_startT >= 10
+      && IsLeader())
+      AutoOpenCharts();
    if(InpUseNewsFilter && !MQLInfoInteger(MQL_TESTER) && TimeCurrent() - g_lastNewsCheck >= 60)
      { g_newsBlocked = IsHighImpactNewsWindow(); g_lastNewsCheck = TimeCurrent(); }
    if(!MQLInfoInteger(MQL_TESTER) && (g_lastWho == 0 || TimeCurrent() - g_lastWho >= (g_role == "" ? 60 : 3600)))
@@ -1143,6 +1155,82 @@ double PipSize()
    return _Point;
   }
 
+
+//+------------------------------------------------------------------+
+//| AUTO CHARTS — one chart in, every market out                      |
+//+------------------------------------------------------------------+
+// The broker's suffix, read from this chart: "EURUSD.m" → ".m", "XAUUSDm" → "m", "EURUSD" → "".
+string BrokerSuffix()
+  {
+   string s = _Symbol, u = _Symbol; StringToUpper(u);
+   string bases[] = {"EURUSD","GBPUSD","USDJPY","USDCHF","USDCAD","AUDUSD","NZDUSD","XAUUSD","XAGUSD","BTCUSD",
+                     "EURJPY","GBPJPY","EURGBP","AUDJPY","EURAUD","GBPAUD","EURCHF","GBPCAD","USDZAR","ETHUSD"};
+   for(int i = 0; i < ArraySize(bases); i++)
+      if(StringFind(u, bases[i]) == 0) return StringSubstr(s, StringLen(bases[i]));
+   return "";
+  }
+
+bool SymbolUsable(string name)
+  {
+   bool custom = false;
+   if(!SymbolExist(name, custom)) return false;
+   if(!SymbolSelect(name, true)) return false;
+   return SymbolInfoInteger(name, SYMBOL_TRADE_MODE) != SYMBOL_TRADE_MODE_DISABLED;
+  }
+
+// Broker name for a market: tries the suffix first, then the plain name and common index / oil aliases.
+string ResolveSymbol(string base, string sfx)
+  {
+   string names[];
+   ArrayResize(names, 1); names[0] = base;
+   if(base == "US30")  { ArrayResize(names, 4); names[1] = "DJ30"; names[2] = "WS30"; names[3] = "DOW30"; }
+   if(base == "US100") { ArrayResize(names, 5); names[1] = "USTEC"; names[2] = "NAS100"; names[3] = "NDX100"; names[4] = "US100Cash"; }
+   if(base == "US500") { ArrayResize(names, 4); names[1] = "SPX500"; names[2] = "SP500"; names[3] = "US500Cash"; }
+   if(base == "GER40") { ArrayResize(names, 4); names[1] = "DE40"; names[2] = "DAX40"; names[3] = "GER30"; }
+   if(base == "USOIL") { ArrayResize(names, 5); names[1] = "XTIUSD"; names[2] = "WTI"; names[3] = "USOUSD"; names[4] = "OIL"; }
+   for(int i = 0; i < ArraySize(names); i++)
+     {
+      if(sfx != "" && SymbolUsable(names[i] + sfx)) return names[i] + sfx;
+      if(SymbolUsable(names[i])) return names[i];
+     }
+   return "";
+  }
+
+bool ChartIsOpen(string sym)
+  {
+   long id = ChartFirst();
+   while(id >= 0)
+     {
+      if(ChartSymbol(id) == sym) return true;
+      id = ChartNext(id);
+     }
+   return false;
+  }
+
+void AutoOpenCharts()
+  {
+   g_autoDone = true;
+   if(!ChartSaveTemplate(0, "wildchance_auto"))       // this chart + EA + its exact inputs
+     { g_autoNote = "AUTO: could not save the template"; return; }
+   string sfx = BrokerSuffix();
+   string parts[];
+   int n = StringSplit(InpAutoSymbols, ',', parts), opened = 0, missing = 0;
+   string miss = "";
+   for(int i = 0; i < n; i++)
+     {
+      string base = parts[i]; StringTrimLeft(base); StringTrimRight(base); StringToUpper(base);
+      if(base == "") continue;
+      string sym = ResolveSymbol(base, sfx);
+      if(sym == "") { missing++; miss += base + " "; continue; }
+      if(ChartIsOpen(sym)) continue;
+      long id = ChartOpen(sym, InpAutoTF);
+      if(id > 0 && ChartApplyTemplate(id, "wildchance_auto.tpl")) opened++;
+      Sleep(300);                                       // let each chart load before the next
+     }
+   g_autoNote = "AUTO: opened " + IntegerToString(opened) + " charts" + (missing > 0 ? " (not at this broker: " + miss + ")" : "");
+   Print("WildChance ", g_autoNote);
+  }
+
 // Forex pair (3/5-digit quote, no metal / crypto / oil / index name)?
 bool IsFxSymbol()
   {
@@ -1639,7 +1727,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.65 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.66 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
