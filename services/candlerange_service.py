@@ -273,9 +273,13 @@ async def add_plans(result: dict) -> dict:
                 if not cg["pass"]:
                     g["allow"] = False
                     g["reasons"].append(f"council {cg['verdict']}")
-            except Exception as e:
+                else:
+                    p["council_line"] = cg.get("line")       # shown on the card: proof it was gated
+            except Exception as e:                           # no council answer = no trade card
                 from services import errors
                 errors.swallow(f"candlerange council {sym}", e)
+                g["allow"] = False
+                g["reasons"].append("council unavailable")
         p["gate"] = g
         a["plan"] = p
     return result
@@ -307,6 +311,8 @@ def format_alert(result: dict) -> Optional[str]:
                     interesting += ["   " + l for l in lots]
                 except Exception:
                     pass
+                if p.get("council_line"):
+                    interesting += ["   " + l for l in str(p["council_line"]).splitlines()]
                 crt = "05:00" if name == "0100" else "17:00"
                 interesting.append(f"   _CRT confirmation at {crt} UTC — enter only on the retest_")
             elif p:
