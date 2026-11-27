@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.67"
+#property version   "4.68"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -180,7 +180,7 @@ input bool     InpUseAppRisk        = true;   // Cap risk % at the app's regime 
 input int      InpGateTimeoutMs     = 8000;   // Gate request timeout (the app may be waking up)
 
 input group "=== 8b. AUTO CHARTS (attach ONE chart, the EA opens the rest) ==="
-input bool     InpAutoCharts        = true;   // Open a chart + this EA (same settings) for every market below
+input bool     InpAutoCharts        = false;  // (optional) Open a chart + this EA (same settings) for every market below
 input string   InpAutoSymbols       = "BTCUSD,XAUUSD,XAGUSD,USOIL,US30,US100,US500,GER40,EURUSD,GBPUSD,USDJPY,USDCHF,EURJPY,GBPJPY,AUDUSD"; // fast movers, big pip value
 input ENUM_TIMEFRAMES InpAutoTF     = PERIOD_H1; // Timeframe for the auto-opened charts
 
@@ -1742,7 +1742,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.67 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.68 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
