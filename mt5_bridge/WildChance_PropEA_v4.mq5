@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.61"
+#property version   "4.62"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -173,7 +173,7 @@ input string   InpAppSymbol         = "";     // Name to send (blank = chart sym
 input string   InpSendTFs           = "M15,H1,H4,D1,W1";
 input int      InpInitialBars       = 300;    // First push per timeframe; afterwards the last 3 bars
 input bool     InpUseAppGate        = true;   // Ask the app (council/exposure/regime/calendar) before every entry
-input bool     InpGateFailOpen      = true;   // App unreachable: true = trade on the EA's own filters, false = skip
+input bool     InpGateFailOpen      = false;  // App unreachable: false = no council answer, no trade (default) · true = trade on the EA's own filters
 input bool     InpUseAppRisk        = true;   // Cap risk % at the app's regime risk budget (never raises it)
 input int      InpGateTimeoutMs     = 8000;   // Gate request timeout (the app may be waking up)
 
@@ -983,6 +983,8 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
      {
       string gwhy = "";
       int g = AppGate(isBuy, appRisk, gwhy);
+      if(g < 0 && StringFind(gwhy, "NO TOKEN") < 0)        // one retry: a slow / waking server is not a "no"
+        { Sleep(1500); g = AppGate(isBuy, appRisk, gwhy); }
       if(g == 0 || (g < 0 && !InpGateFailOpen))
         {
          g_newSignalTxt = "BLOCKED: APP "+gwhy;
@@ -1611,7 +1613,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.61 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.62 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :

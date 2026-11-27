@@ -135,12 +135,22 @@ async def session_digest(
         lines.append("⛔ *RISK-OFF* — scorecard verdict RED. Stand down / minimum size.")
 
     if setups:
+        # positioning leans are NOT trades: each line carries the council's verdict, and only a
+        # council GO reads as a trade (the digest used to look like an un-gated EUR/USD call)
+        from services import council_gate
         lines.append("")
-        lines.append(f"*Confluence (conf ≥ {min_conf}):*")
+        lines.append(f"*Positioning leans (COT + retail, conf ≥ {min_conf}):*")
         for s in setups:
+            side = "BUY" if s["verdict"] == "LONG" else "SELL"
+            try:
+                cg = await council_gate.check(s["pair"], side, "swing")
+            except Exception:
+                cg = {"pass": False, "verdict": "unavailable"}
+            tag = ("✅ council GO — check the engine card for entry / stop" if cg.get("pass")
+                   else f"🧭 watch only — council {cg.get('verdict')}")
             lines.append(
-                f"• {s['pair']}  *{s['verdict']}*  conf {s['confidence']}  "
-                f"@ {s.get('price')}  (retail {s.get('retail_long','?')}%L)"
+                f"• {s['pair']} leans *{s['verdict']}* (conf {s['confidence']}, retail "
+                f"{s.get('retail_long','?')}%L) @ {s.get('price')} · {tag}"
             )
 
     if usdjpy_fire:

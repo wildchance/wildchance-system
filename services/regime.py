@@ -98,7 +98,7 @@ async def compute(symbol: str, max_age_s: int = 3600) -> Dict:
     hit = _cache.get(key)
     if hit and time.time() - hit[0] < max_age_s:
         return hit[1]
-    er = ap = vix = None
+    er = ap = vix = adr_pips = None
     try:
         from services.ohlc_service import fetch_ohlc
         d = await fetch_ohlc(symbol, "1day", 300)
@@ -110,6 +110,11 @@ async def compute(symbol: str, max_age_s: int = 3600) -> Dict:
         atrs = atr_series(d or [])
         if len(atrs) >= 50:
             ap = int(100 * sum(1 for a in atrs[-250:] if a <= atrs[-1]) / len(atrs[-250:]))
+        last = (d or [])[-20:]
+        if len(last) >= 10:
+            from propfirm.target_lots import pip_size
+            pip = pip_size(symbol) or 0.0001
+            adr_pips = round(sum(b[2] - b[3] for b in last) / len(last) / pip, 1)
     except Exception as e:
         from services import errors
         errors.swallow(f"regime.compute {symbol}", e)
@@ -127,6 +132,7 @@ async def compute(symbol: str, max_age_s: int = 3600) -> Dict:
     except Exception:
         pass
     reg = classify(er, ap, vix, event)
+    reg["adr_pips"] = adr_pips
     _cache[key] = (time.time(), reg)
     return reg
 
