@@ -905,21 +905,19 @@ APP_URL = str(config("PUBLIC_BASE_URL", default="https://wildchance-system.onren
 async def license_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Owner: the EA owner key (full feed). Members: where their key lives (members page)."""
     if not is_owner(update):
-        await _reply(update, "🔑 Your EA license key is on your members page — log in and tap *Copy* in "
-                             f"the 'Install the EA' card: {APP_URL}/members\n"
-                             "No account yet? /trial you@email.com (7 days free).")
+        await _reply(update, "The EA needs no key — download it from the members page and drop it on a chart: "
+                             f"{APP_URL}/members")
         return
 
     async def go():
         from routes.bridge import owner_license
         key = await owner_license()
-        await _reply(update, "🔑 *Your EA license key* (owner — full feed). Tap to copy:\n"
+        await _reply(update, "🔑 *Owner sync key* (optional — only to sync YOUR trades into the journal / flash "
+                             "cards; the EA trades fine without it). Tap to copy:\n"
                              f"`{key}`\n\n"
-                             "MT5 → right-click the chart → Expert Advisors → Properties → Inputs → "
-                             "*License key* → paste → OK. The panel shows *APP FEED OK* within a minute.\n"
-                             f"One-time MT5 step: Tools → Options → Expert Advisors → allow `{APP_URL}`")
+                             "MT5 → Properties → Inputs → *OPTIONAL owner sync key* → paste → OK.")
     await _guard(update, go)
 
 
 HANDLERS["license"] = license_cmd
-PUBLIC_COMMANDS += [("license", "Your EA license key")]
+OWNER_COMMANDS += [("license", "Owner sync key for the EA journal (optional, owner)")]
