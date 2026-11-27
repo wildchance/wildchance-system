@@ -40,6 +40,24 @@ async def _agent_scores() -> Optional[Dict]:
     return _scores["v"]
 
 
+QUIET_ATR_PCT = float(config("QUIET_ATR_PCT", default="15"))       # volatility percentile floor (1 y)
+MIN_ADR_PIPS_FX = float(config("MIN_ADR_PIPS_FX", default="50"))    # avg daily range floor, FX pairs
+
+
+def quiet_reason(symbol: str, reg: Optional[Dict]) -> Optional[str]:
+    """A market moving too little to reach TP1 in a session (e.g. NZD/USD in a lull)."""
+    if not reg:
+        return None
+    ap, adr = reg.get("atr_pct"), reg.get("adr_pips")
+    s = symbol.upper().replace("/", "")
+    fx = len(s) == 6 and s.isalpha() and not s.startswith(("XAU", "XAG", "BTC", "ETH"))
+    if ap is not None and ap < QUIET_ATR_PCT:
+        return f"too quiet — volatility in the bottom {QUIET_ATR_PCT:.0f}% of the year (TP1 unlikely)"
+    if fx and adr is not None and adr < MIN_ADR_PIPS_FX:
+        return f"too quiet — {adr:.0f} pips/day average range (< {MIN_ADR_PIPS_FX:.0f}), TP1 unlikely"
+    return None
+
+
 async def check(symbol: str, side: str, trade_type: str = "intraday", style: Optional[str] = None) -> Dict:
     """style: 'reversion' / 'continuation' for regime routing (None = no routing)."""
     from services import council as cn
@@ -61,7 +79,7 @@ async def check(symbol: str, side: str, trade_type: str = "intraday", style: Opt
     ex = await fx_rotation.exposure_for(symbol, norm_side(side))
     try:
         rb = await regime.risk_for(symbol)
-        blocked = regime.route(rb["regime"], style, norm_side(side))
+        blocked = regime.route(rb["regime"], style, norm_side(side)) or quiet_reason(symbol, rb.get("regime"))
     except Exception as e:
         from services import errors
         errors.swallow(f"regime.risk_for {symbol}", e)
