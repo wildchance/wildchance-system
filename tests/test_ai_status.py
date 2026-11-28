@@ -47,6 +47,8 @@ def test_retired_model_falls_back_and_success_recorded(monkeypatch):
     monkeypatch.setattr(ai, "NVIDIA_MODEL", "old/model")
     monkeypatch.setattr(ai, "FALLBACK_MODELS", ["new/model"])
     monkeypatch.setattr(ai, "_down_until", {"t": 0.0})
+    monkeypatch.setattr(ai, "MODEL_CHAINS", {"fast": [], "deep": []})
+    monkeypatch.setattr(ai, "_dead", {})
     monkeypatch.setattr(httpx, "AsyncClient", _client(replies, seen))
     assert run(ai.ask_model([{"role": "user", "content": "hi"}])) == "ok"
     assert seen == ["old/model", "new/model"] and ai.LAST["ok"] and ai.LAST["model"] == "new/model"
@@ -94,6 +96,26 @@ def test_end_of_life_410_falls_back(monkeypatch):
     monkeypatch.setattr(ai, "NVIDIA_MODEL", "meta/llama-3.1-8b-instruct")
     monkeypatch.setattr(ai, "FALLBACK_MODELS", ["new/model"])
     monkeypatch.setattr(ai, "_down_until", {"t": 0.0})
+    monkeypatch.setattr(ai, "MODEL_CHAINS", {"fast": [], "deep": []})
+    monkeypatch.setattr(ai, "_dead", {})
     monkeypatch.setattr(httpx, "AsyncClient", _client(replies, seen))
     assert run(ai.ask_model([{"role": "user", "content": "hi"}])) == "ok"
     assert seen == ["meta/llama-3.1-8b-instruct", "new/model"]
+
+
+def test_role_chains_skip_dead_models_and_strip_thinking(monkeypatch):
+    seen = []
+    replies = [_Resp(410, {"detail": "Gone"}),
+               _Resp(200, {"choices": [{"message": {"content": "<think>hmm</think> brief"}}]}),
+               _Resp(200, {"choices": [{"message": {"content": "again"}}]})]
+    monkeypatch.setattr(ai, "NVIDIA_API_KEY", "k")
+    monkeypatch.setattr(ai, "NVIDIA_MODEL_SET", False)
+    monkeypatch.setattr(ai, "MODEL_CHAINS", {"fast": ["small/a"], "deep": ["big/r", "big/s"]})
+    monkeypatch.setattr(ai, "FALLBACK_MODELS", [])
+    monkeypatch.setattr(ai, "_down_until", {"t": 0.0})
+    monkeypatch.setattr(ai, "_dead", {})
+    monkeypatch.setattr(httpx, "AsyncClient", _client(replies, seen))
+    assert run(ai.ask_model([{"role": "user", "content": "x"}], role="deep")) == "brief"
+    assert run(ai.ask_model([{"role": "user", "content": "x"}], role="deep")) == "again"
+    assert seen == ["big/r", "big/s", "big/s"]          # the retired model is not retried
+    assert ai.models_for("fast")[0] == "small/a"

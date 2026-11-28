@@ -103,7 +103,7 @@ async def brief(force: bool = False) -> Dict:
             {"role": "user", "content": json.dumps({"series": dash["series"],
                                                     "yield_curve": dash["yield_curve"],
                                                     "regime": dash["regime"]})}]
-    txt = await ai.ask_model(msgs)
+    txt = await ai.ask_model(msgs, role="deep")
     out = {"as_of": dash["as_of"], "posture": dash["regime"]["posture"],
            "brief": txt or "AI brief is temporarily unavailable — the macro numbers below are live.",
            "model": ai.LAST.get("model") if txt else None}

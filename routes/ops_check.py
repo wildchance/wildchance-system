@@ -219,7 +219,10 @@ async def ai_status(test: bool = False):
         hint = "model not available — set NVIDIA_MODEL to a model your build.nvidia.com account lists"
     elif st == 429:
         hint = "NVIDIA rate / credit limit — check credits at build.nvidia.com"
-    return {"key_set": bool(ai.NVIDIA_API_KEY), "model": ai.NVIDIA_MODEL, "last": ai.LAST, "hint": hint}
+    import time as _t
+    return {"key_set": bool(ai.NVIDIA_API_KEY), "model": ai.NVIDIA_MODEL, "last": ai.LAST, "hint": hint,
+            "chains": {r: ai.models_for(r) for r in ai.MODEL_CHAINS},
+            "skipped_models": [m for m, t in ai._dead.items() if t > _t.time()]}
 
 
 @router.get("/telegram")
