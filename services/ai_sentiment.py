@@ -180,6 +180,7 @@ async def ask_model(messages: List[Dict], role: str = "fast") -> Optional[str]:
     if _t.time() < _down_until["t"]:
         return None
     for model in models_for(role):
+        t0 = _t.time()
         try:
             async with httpx.AsyncClient(timeout=25) as c:
                 r = await c.post(NVIDIA_URL, headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
@@ -196,6 +197,11 @@ async def ask_model(messages: List[Dict], role: str = "fast") -> Optional[str]:
                 _note(False, 200, f"unexpected reply: {e}", model)
                 return None
             _note(True, 200, None, model)
+            try:
+                from services import ai_log
+                await ai_log.record(role, model, messages, txt, (_t.time() - t0) * 1000)
+            except Exception:
+                pass
             return txt
         err = r.text[:200]
         if r.status_code == 410 or (r.status_code in (404, 400, 422) and "model" in err.lower()):
