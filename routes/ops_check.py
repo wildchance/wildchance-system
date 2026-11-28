@@ -216,12 +216,16 @@ async def ai_status(test: bool = False):
     elif st == 410:
         hint = "model retired by NVIDIA — remove NVIDIA_MODEL in Render (default llama-3.3-70b) and redeploy"
     elif st == 404:
-        hint = "model not available — set NVIDIA_MODEL to a model your build.nvidia.com account lists"
+        hint = ("no listed model answered — remove NVIDIA_MODEL / NVIDIA_FAST_MODELS / NVIDIA_DEEP_MODELS in "
+                "Render so the server picks from NVIDIA's live list; if it still fails, the key is not a "
+                "build.nvidia.com API key (it must start with nvapi-)")
     elif st == 429:
         hint = "NVIDIA rate / credit limit — check credits at build.nvidia.com"
     import time as _t
     return {"key_set": bool(ai.NVIDIA_API_KEY), "model": ai.NVIDIA_MODEL, "last": ai.LAST, "hint": hint,
             "chains": {r: ai.models_for(r) for r in ai.MODEL_CHAINS},
+            "nvidia_lists": len(ai._avail["ids"]),
+            "chat_models_seen": ai.discovered_chat(ai._avail["ids"], "fast")[:15],
             "skipped_models": [m for m, t in ai._dead.items() if t > _t.time()]}
 
 

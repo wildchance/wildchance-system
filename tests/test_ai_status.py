@@ -138,3 +138,18 @@ def test_successful_calls_are_logged_for_distillation(monkeypatch):
     r = run(ai_log.rows())[-1]
     assert r["model"] == "m/x" and r["job"] == "fast" and r["reply"] == "bull" and r["messages"][0]["content"] == "gold?"
     assert ai_log.stats()["fast:m/x"]["calls"] == 1
+
+
+def test_live_model_list_drops_unserved_names_and_adds_discovered(monkeypatch):
+    monkeypatch.setattr(ai, "NVIDIA_MODEL_SET", False)
+    monkeypatch.setattr(ai, "NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")
+    monkeypatch.setattr(ai, "MODEL_CHAINS", {"fast": ["gone/model", "meta/llama-3.3-70b-instruct"], "deep": []})
+    monkeypatch.setattr(ai, "FALLBACK_MODELS", [])
+    monkeypatch.setattr(ai, "_dead", {})
+    monkeypatch.setattr(ai, "_avail", {"t": 1e18, "ids": [
+        "nvidia/nv-embedqa-e5-v5", "meta/llama-3.3-70b-instruct", "qwen/qwen3-32b", "nvidia/llama-3.1-nemoguard-8b"]})
+    m = ai.models_for("fast")
+    assert m[0] == "meta/llama-3.3-70b-instruct" and "gone/model" not in m
+    assert "qwen/qwen3-32b" in m and not any("embed" in x or "guard" in x for x in m)
+    monkeypatch.setattr(ai, "_avail", {"t": 0.0, "ids": []})          # list unknown → chains as-is
+    assert ai.models_for("fast")[0] == "gone/model"

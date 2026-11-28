@@ -982,7 +982,9 @@ async def lab_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
             last = r.get("last") or {}
             msg = (f"✅ NVIDIA AI works — model {last.get('model')}" if last.get("ok") else
                    f"❌ NVIDIA AI failed ({last.get('status')}): {last.get('error') or ''}\n"
-                   f"{r.get('hint') or ''}") + ("" if r.get("key_set") else "\n(no NVIDIA_API_KEY on the server)")
+                   f"{r.get('hint') or ''}") + ("" if r.get("key_set") else "\n(no NVIDIA_API_KEY on the server)") + \
+                (f"\nNVIDIA serves {r.get('nvidia_lists')} models; chat ones seen: "
+                 + ", ".join(r.get("chat_models_seen") or [])[:600] if not last.get("ok") else "")
             await update.message.reply_text(msg)
             return
         if args and args[0].lower() == "run":
