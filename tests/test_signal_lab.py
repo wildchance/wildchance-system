@@ -83,3 +83,12 @@ def test_spotter_tilt_and_vote(fields):
     assert council.vote_spotter({"tilt": 0.6, "signals": 3}, "SELL")["vote"] == -1
     assert council.vote_spotter({"tilt": 0.1, "signals": 3}, "BUY")["vote"] == 0
     assert council.vote_spotter(None, "BUY")["vote"] == 0
+
+
+def test_lab_text_summarises_run_signals_and_lean():
+    from handlers.hub_handler import lab_text
+    sigs = [{"name": "rev", "formula": "-ret", "oos": {"ic": 0.08}}]
+    t = lab_text(sigs, {"XAUUSD": {"tilt": 0.6, "signals": 1}, "EURUSD": {"tilt": 0.0, "signals": 1}},
+                 {"running": False, "theme": "mr", "result": {"ok": True, "tried": 10, "accepted": sigs}})
+    assert "tried 10, accepted 1" in t and "-ret" in t and "XAUUSD BUY +0.60" in t and "EURUSD" not in t
+    assert "/lab run" in t
