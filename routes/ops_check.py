@@ -213,6 +213,8 @@ async def ai_status(test: bool = False):
         hint = "add NVIDIA_API_KEY in Render → Environment, then redeploy (the key is read at start-up)"
     elif st in (401, 403):
         hint = "NVIDIA rejected the key — create a new one at build.nvidia.com and replace it in Render"
+    elif st == 410:
+        hint = "model retired by NVIDIA — remove NVIDIA_MODEL in Render (default llama-3.3-70b) and redeploy"
     elif st == 404:
         hint = "model not available — set NVIDIA_MODEL to a model your build.nvidia.com account lists"
     elif st == 429:
