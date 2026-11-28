@@ -8,6 +8,8 @@ readings into a Stage-0 macro-bias lock for the swing engine.
 Env:
   NVIDIA_API_KEY          key from build.nvidia.com (OpenAI-compatible endpoint)
   NVIDIA_MODEL            default meta/llama-3.3-70b-instruct (3.1-8b reached end of life 2026-08-26)
+  NVIDIA_FAST_MODELS      chain for many small calls (sentiment, Polymarket tagging)
+  NVIDIA_DEEP_MODELS      chain for long reads (macro brief) — reasoning models first
   SENTIMENT_AUTO_BIAS     false → shown as context only; true → |score| ≥ 0.5 with
                           confidence ≥ 0.6 sets SELL_ONLY / BUY_ONLY where you have
                           NOT set MACRO_BIAS yourself (manual always wins)
@@ -28,6 +30,7 @@ import httpx
 from decouple import config
 
 NVIDIA_API_KEY = config("NVIDIA_API_KEY", default=None)
+NVIDIA_MODEL_SET = bool(config("NVIDIA_MODEL", default=""))          # an explicit pin goes first everywhere
 NVIDIA_MODEL = config("NVIDIA_MODEL", default="meta/llama-3.3-70b-instruct")
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 AUTO_BIAS = str(config("SENTIMENT_AUTO_BIAS", default="false")).strip().lower() in (
@@ -110,6 +113,21 @@ async def headlines(symbol: str) -> List[str]:
 FALLBACK_MODELS = [m.strip() for m in str(config(
     "NVIDIA_FALLBACK_MODELS", default="meta/llama-3.3-70b-instruct,meta/llama-4-maverick-17b-128e-instruct,"
                                       "meta/llama-3.1-70b-instruct,mistralai/mistral-small-24b-instruct")).split(",") if m.strip()]
+# Model chains per job (first available wins; a retired/missing model is skipped for 24 h):
+#   fast — many small calls (headline sentiment, Polymarket question tagging)
+#   deep — few long reads (macro brief): bigger reasoning models first
+def _chain(env: str, default: str) -> List[str]:
+    return [m.strip() for m in str(config(env, default=default)).split(",") if m.strip()]
+
+
+MODEL_CHAINS = {
+    "fast": _chain("NVIDIA_FAST_MODELS", "meta/llama-3.3-70b-instruct,openai/gpt-oss-20b,qwen/qwen3-32b,"
+                                         "nvidia/nvidia-nemotron-nano-9b-v2"),
+    "deep": _chain("NVIDIA_DEEP_MODELS", "openai/gpt-oss-120b,nvidia/nemotron-3-super-120b-a12b,"
+                                         "deepseek-ai/deepseek-v3.1,meta/llama-3.3-70b-instruct"),
+}
+_dead: Dict[str, float] = {}                 # model → retry after (retired / not on this account)
+DEAD_MODEL_S = 24 * 3600
 LAST = {"ok": None, "status": None, "error": None, "model": None, "t": 0.0}
 _down_until = {"t": 0.0}
 
@@ -138,7 +156,21 @@ def _note(ok: bool, status, error: Optional[str], model: Optional[str]) -> None:
         pass
 
 
-async def ask_model(messages: List[Dict]) -> Optional[str]:
+def models_for(role: str) -> List[str]:
+    """NVIDIA_MODEL (if set) first, then the role's chain, then the generic fallbacks — no repeats."""
+    import time as _t
+    out: List[str] = []
+    for m in ([NVIDIA_MODEL] if NVIDIA_MODEL_SET else []) + MODEL_CHAINS.get(role, []) + \
+            [NVIDIA_MODEL] + FALLBACK_MODELS:
+        if m and m not in out and _dead.get(m, 0) <= _t.time():
+            out.append(m)
+    return out
+
+
+_THINK = re.compile(r"<think>.*?</think>", re.S | re.I)
+
+
+async def ask_model(messages: List[Dict], role: str = "fast") -> Optional[str]:
     """Chat completion on NVIDIA's API. Never raises; the reason for a failure is kept in LAST
     (shown at /ops/ai) and a failing API is skipped for 15 min so pages don't hang on it."""
     import time as _t
@@ -147,19 +179,19 @@ async def ask_model(messages: List[Dict]) -> Optional[str]:
         return None
     if _t.time() < _down_until["t"]:
         return None
-    for model in [NVIDIA_MODEL] + [m for m in FALLBACK_MODELS if m != NVIDIA_MODEL]:
+    for model in models_for(role):
         try:
             async with httpx.AsyncClient(timeout=25) as c:
                 r = await c.post(NVIDIA_URL, headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"},
                                  json={"model": model, "messages": messages,
-                                       "temperature": 0.1, "max_tokens": 300})
+                                       "temperature": 0.1, "max_tokens": 300 if role == "fast" else 900})
         except Exception as e:
             _note(False, "network", f"{type(e).__name__}: {e}", model)
             _down_until["t"] = _t.time() + TRANSIENT_COOLDOWN_S
             return None
         if r.status_code == 200:
             try:
-                txt = r.json()["choices"][0]["message"]["content"]
+                txt = _THINK.sub("", r.json()["choices"][0]["message"]["content"] or "").strip()
             except Exception as e:
                 _note(False, 200, f"unexpected reply: {e}", model)
                 return None
@@ -167,6 +199,7 @@ async def ask_model(messages: List[Dict]) -> Optional[str]:
             return txt
         err = r.text[:200]
         if r.status_code == 410 or (r.status_code in (404, 400, 422) and "model" in err.lower()):
+            _dead[model] = _t.time() + DEAD_MODEL_S
             continue                                  # retired (410 Gone) / unavailable model → try the next one
         _note(False, r.status_code, err, model)
         if r.status_code in (401, 403):

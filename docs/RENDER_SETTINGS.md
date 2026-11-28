@@ -24,6 +24,9 @@ Make tokens with: `python -c "import secrets; print(secrets.token_urlsafe(32))"`
 | Setting | Status | Notes |
 |---|---|---|
 | `NVIDIA_API_KEY` | 🟠 | AI sentiment, Polymarket reading, macro brief. |
+| `NVIDIA_FAST_MODELS` | ⚪ | Optional. Comma list for the many small AI calls (default llama-3.3-70b → gpt-oss-20b → qwen3-32b → nemotron-nano-9b-v2). |
+| `NVIDIA_DEEP_MODELS` | ⚪ | Optional. Comma list for the macro brief (default gpt-oss-120b → nemotron-3-super-120b → deepseek-v3.1 → llama-3.3-70b). |
+| `NVIDIA_MODEL` | ⚪ | Optional pin tried first for every job — leave unset to use the chains. |
 | `FRED_KEY` | 🟠 | Macro dashboard (free at fred.stlouisfed.org). |
 | `YAHOO_FALLBACK_ENABLED` | 🟠 `true` | Free backup prices when TwelveData is rate-limited. |
 | `POLYGON_API_KEY` | 🟢 | Stock daily bars (NVDA etc.). |
