@@ -26,7 +26,7 @@
 //|  MetaEditor (F7), run in the Strategy Tester, then a DEMO first.  |
 //+------------------------------------------------------------------+
 #property copyright "WildChance"
-#property version   "4.68"
+#property version   "4.69"
 
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
@@ -89,6 +89,8 @@ input int      InpTargetTP          = 3;      // SIZING_TARGET: which TP must pa
 input double   InpFixedSLPips       = 0;      // 0 = structural stop; 10 = owner's sheet (100 points)
 input bool     InpUsePartials       = true;   // false = single TP (matches the sheet's math exactly)
 input int      InpMaxConcurrent     = 2;      // Max open trades for this magic across all charts
+input bool     InpOnePerCluster     = true;   // Max 1 open trade per correlated group (US indices+GER40, metals, JPY crosses...)
+input double   InpCommissionPerLot  = 0;      // Round-turn commission per 1.00 lot in account currency (raw/ECN accounts), counted in the risk
 input int      InpMaxSpreadPips     = 3;      // Skip entry if spread is wider (pips)
 input ulong    InpMagicNumber       = 408812; // Magic number (use the same one on every chart)
 input double   InpMaxSpreadATR      = 0.15;   // Non-FX (BTC, indices, metals, oil): max spread as a share of ATR
@@ -968,6 +970,7 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
    bool   spreadBad  = IsFxSymbol() ? (spreadPips > InpMaxSpreadPips)
                                     : (atrN > 0 && (ask-bid) > InpMaxSpreadATR * atrN);
    if(g_tr.active || CountMagicPositions() >= InpMaxConcurrent) why = "MAX CONCURRENT";
+   else if(InpOnePerCluster && ClusterBusy())                  why = "CORRELATED ("+RiskCluster(_Symbol)+" already open)";
    else if(spreadBad)                                          why = "SPREAD "+DoubleToString(spreadPips,1)+"p";
    else if(g_isChop)                                           why = "[CHOP-TRAP] ADX "+DoubleToString(g_adxVal,1);
    else if(g_newsBlocked)                                      why = "[NEWS] high-impact window";
@@ -1022,6 +1025,8 @@ void ExecuteFilteredSetup(const datetime &time[], const double &high[], const do
    double tp1=NormalizeDouble(entry+d*risk*InpTP1R,_Digits), tp2=NormalizeDouble(entry+d*risk*InpTP2R,_Digits);
    double tp3=NormalizeDouble(entry+d*risk*InpTP3R,_Digits);
    string comment = "WC4_"+setup+(InpUseLunarEngine?(isBuy?"_NM":"_FM"):"");
+   if(!ClaimOpenSlot() || CountMagicPositions() >= InpMaxConcurrent || (InpOnePerCluster && ClusterBusy()))
+     { g_newSignalTxt = "BLOCKED: another chart is opening"; LogSetup(isBuy, setup, entry, sl, "MAX CONCURRENT"); return; }
    bool sent = isBuy ? trade.Buy(lots,_Symbol,0,sl,tp3,comment) : trade.Sell(lots,_Symbol,0,sl,tp3,comment);
    if(!sent || (trade.ResultRetcode()!=TRADE_RETCODE_DONE && trade.ResultRetcode()!=TRADE_RETCODE_PLACED))
      { Print("WildChance order error ",trade.ResultRetcode()," ",trade.ResultRetcodeDescription()); return; }
@@ -1090,9 +1095,9 @@ double CalculateLotSize(double slDist, double riskPct)
    if(slDist<=0) return 0;
    double riskMoney = AccountInfoDouble(ACCOUNT_EQUITY)*riskPct/100.0;
    double tickSize  = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
-   double tickValue = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+   double tickValue = LossTickValue();
    if(tickSize<=0 || tickValue<=0) return 0;
-   double lossPerLot = (slDist/tickSize)*tickValue;
+   double lossPerLot = (slDist/tickSize)*tickValue + MathMax(0, InpCommissionPerLot);   // stop + costs
    double minLot=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MIN), maxLot=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_MAX);
    double step=SymbolInfoDouble(_Symbol,SYMBOL_VOLUME_STEP);
    double lots = MathFloor((riskMoney/lossPerLot)/step)*step;
@@ -1106,7 +1111,7 @@ double CalculateLotSize(double slDist, double riskPct)
 double TargetLots(double tpDist, double slDist, double riskPct)
   {
    double tickSize  = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
-   double tickValue = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
+   double tickValue = SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);      // profit side: the TP pays this
    if(tpDist<=0 || tickSize<=0 || tickValue<=0) return 0;
    double target = (InpTargetUSD > 0) ? InpTargetUSD : g_initialBalance * InpTargetPct / 100.0;
    double perLot = (tpDist/tickSize)*tickValue;            // $ at TP for 1.00 lot (works for crosses)
@@ -1119,6 +1124,54 @@ double TargetLots(double tpDist, double slDist, double riskPct)
    double lots = MathMin(want, cap);
    int digits = (int)MathMax(0, MathRound(-MathLog10(step)));
    return NormalizeDouble(lots, digits);
+  }
+
+// Loss-side tick value: for crosses / non-USD indices (EURJPY, GER40 ...) MT5 can quote a
+// different value for losing ticks — size on the larger so the stop never costs more than planned.
+double LossTickValue()
+  {
+   double tv = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+   double tl = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE_LOSS);
+   return MathMax(tv, tl);
+  }
+
+// Correlated group of a symbol (broker suffixes ignored): positions in the same group move together.
+string RiskCluster(string sym)
+  {
+   string s = sym; StringToUpper(s);
+   if(StringFind(s,"US30")>=0 || StringFind(s,"DJ30")>=0 || StringFind(s,"WS30")>=0 || StringFind(s,"US100")>=0 ||
+      StringFind(s,"USTEC")>=0 || StringFind(s,"NAS100")>=0 || StringFind(s,"US500")>=0 || StringFind(s,"SPX500")>=0 ||
+      StringFind(s,"GER40")>=0 || StringFind(s,"DE40")>=0) return "INDICES";
+   if(StringFind(s,"XAU")>=0 || StringFind(s,"XAG")>=0 || StringFind(s,"GOLD")>=0 || StringFind(s,"SILVER")>=0) return "METALS";
+   if(StringFind(s,"BTC")>=0 || StringFind(s,"ETH")>=0) return "CRYPTO";
+   if(StringFind(s,"OIL")>=0 || StringFind(s,"XTI")>=0 || StringFind(s,"XBR")>=0 || StringFind(s,"BRENT")>=0) return "OIL";
+   if(StringLen(s)>=6 && StringSubstr(s,3,3)=="JPY") return "JPY";
+   if(StringLen(s)>=6 && StringSubstr(s,0,3)=="USD") return "USD_BASE";     // USDCHF, USDCAD ...
+   if(StringLen(s)>=6 && StringSubstr(s,3,3)=="USD") return "USD_QUOTE";    // EURUSD, GBPUSD, AUDUSD ...
+   return s;
+  }
+
+// Another open trade (this magic, any chart) in the same correlated group?
+bool ClusterBusy()
+  {
+   string mine = RiskCluster(_Symbol);
+   for(int i=0;i<PositionsTotal();i++)
+      if(posInfo.SelectByIndex(i) && posInfo.Magic()==InpMagicNumber && posInfo.Symbol()!=_Symbol &&
+         RiskCluster(posInfo.Symbol())==mine) return true;
+   return false;
+  }
+
+// Atomic "one chart opens at a time": all charts run in parallel, so two could both see
+// 1 open trade and both open (3 > max 2). A terminal global variable is claimed with
+// GlobalVariableSetOnCondition (atomic) and held for 3 seconds.
+bool ClaimOpenSlot()
+  {
+   string gv = "WC_open_" + IntegerToString((long)InpMagicNumber);
+   if(!GlobalVariableCheck(gv)) GlobalVariableSet(gv, 0);
+   double last = GlobalVariableGet(gv);
+   double now  = (double)TimeLocal();
+   if(now - last < 3) return false;
+   return GlobalVariableSetOnCondition(gv, now, last);
   }
 
 int CountMagicPositions()
@@ -1742,7 +1795,7 @@ void SetVal(string key,string text,color clr=clrAqua)
 void UpdateHUD()
   {
    double eq=AccountInfoDouble(ACCOUNT_EQUITY);
-   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.68 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
+   SetVal("title",(MQLInfoInteger(MQL_DEBUG) ? "DEBUG RUN - attach from Navigator! " : "")+"v4.69 "+g_presetName+" P"+IntegerToString(InpPhase)+"  init "+DoubleToString(g_initialBalance,0),clrWhite);
    if(g_minDays > 0)
       SetVal("days", g_minDaysProfitable ?
              IntegerToString(g_profitDays)+"/"+IntegerToString(g_minDays)+" profitable (payout)" :
