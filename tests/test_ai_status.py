@@ -119,3 +119,22 @@ def test_role_chains_skip_dead_models_and_strip_thinking(monkeypatch):
     assert run(ai.ask_model([{"role": "user", "content": "x"}], role="deep")) == "again"
     assert seen == ["big/r", "big/s", "big/s"]          # the retired model is not retried
     assert ai.models_for("fast")[0] == "small/a"
+
+
+def test_successful_calls_are_logged_for_distillation(monkeypatch):
+    from services import ai_log
+    seen = []
+    monkeypatch.setattr(ai_log, "_rows", [])
+    monkeypatch.setattr(ai_log, "_loaded", {"done": True})
+    monkeypatch.setattr(ai_log, "FLUSH_EVERY", 10 ** 6)
+    monkeypatch.setattr(ai, "NVIDIA_API_KEY", "k")
+    monkeypatch.setattr(ai, "NVIDIA_MODEL_SET", False)
+    monkeypatch.setattr(ai, "MODEL_CHAINS", {"fast": ["m/x"], "deep": []})
+    monkeypatch.setattr(ai, "FALLBACK_MODELS", [])
+    monkeypatch.setattr(ai, "_down_until", {"t": 0.0})
+    monkeypatch.setattr(ai, "_dead", {})
+    monkeypatch.setattr(httpx, "AsyncClient", _client([_Resp(200, {"choices": [{"message": {"content": "bull"}}]})], seen))
+    assert run(ai.ask_model([{"role": "user", "content": "gold?"}])) == "bull"
+    r = run(ai_log.rows())[-1]
+    assert r["model"] == "m/x" and r["job"] == "fast" and r["reply"] == "bull" and r["messages"][0]["content"] == "gold?"
+    assert ai_log.stats()["fast:m/x"]["calls"] == 1

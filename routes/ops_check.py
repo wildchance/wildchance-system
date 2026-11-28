@@ -225,6 +225,21 @@ async def ai_status(test: bool = False):
             "skipped_models": [m for m, t in ai._dead.items() if t > _t.time()]}
 
 
+@router.get("/ai/log")
+async def ai_log_view(limit: int = 200, format: str = "json"):
+    """Logged AI calls (prompt → reply per model). format=jsonl downloads the
+    distillation dataset (one {"messages": [...], "model": ...} per line)."""
+    import json
+    from fastapi.responses import PlainTextResponse
+    from services import ai_log
+    rows = await ai_log.rows(limit)
+    if format == "jsonl":
+        body = "\n".join(json.dumps({"messages": r["messages"] + [{"role": "assistant", "content": r["reply"]}],
+                                      "model": r["model"], "job": r["job"]}) for r in rows)
+        return PlainTextResponse(body, headers={"Content-Disposition": "attachment; filename=ai_calls.jsonl"})
+    return {"count": len(rows), "by_model": ai_log.stats(), "rows": rows[-20:]}
+
+
 @router.get("/telegram")
 async def telegram_status():
     """Why the bot is silent: Telegram's own view of our webhook (token never shown)."""
