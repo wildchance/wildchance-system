@@ -422,6 +422,8 @@ app.include_router(members_router)
 app.include_router(correlation_router)
 from routes.signal_lab import router as signal_lab_router  # noqa: E402
 app.include_router(signal_lab_router)
+from routes.thesis import router as thesis_router  # noqa: E402
+app.include_router(thesis_router)
 
 # Serve the static dashboards (EdgeFinder board at /static/dashboard/edgefinder.html).
 # Guarded so a missing directory never blocks boot.

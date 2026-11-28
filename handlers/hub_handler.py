@@ -1000,3 +1000,21 @@ async def lab_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 HANDLERS["lab"] = lab_cmd
 OWNER_COMMANDS += [("lab", "Signal lab / Spotter: /lab · /lab run <theme> · /lab ai (owner)")]
+
+
+async def thesis_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner: /thesis [symbol] — the owner's Elliott thesis vs live prices → best bias now."""
+    if not is_owner(update):
+        await _reply(update, denied_text(update))
+        return
+    sym = (context.args[0] if context.args else "XAUUSD").upper()
+
+    async def go():
+        from services import thesis
+        r = await thesis.run(sym)
+        await _reply(update, thesis.text(r) if r.get("ok") else f"🧭 {r.get('reason')}")
+    await _guard(update, go)
+
+
+HANDLERS["thesis"] = thesis_cmd
+OWNER_COMMANDS += [("thesis", "Owner thesis vs live price → best bias: /thesis XAUUSD (owner)")]

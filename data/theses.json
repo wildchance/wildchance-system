@@ -1,0 +1,18 @@
+{
+  "XAUUSD": {
+    "since": "2026-11-28",
+    "title": "Gold: wave-4 correction (W-X-Y-X-Z) ending — bounce, then the decision at 4084-4200",
+    "count": "Wave 3 topped ~5,600. Since then a complex W-X-Y-X-Z correction inside a falling channel. Z = A, B (triangle 4,080-4,240), C in five waves; wave 5 of C reached the W1 -2.5 band / MN +4 median at ~3,490.",
+    "levels": {"floor": 3487, "pivot_low": 4084, "pivot_high": 4200, "line": 4340},
+    "event": {"date": "2026-12-09", "name": "FOMC"},
+    "scenarios": [
+      {"key": "opt2", "side": "SELL", "weight": 0.6,
+       "name": "Option 2 — bounce fails at 4084-4200, final leg to the channel bottom",
+       "targets": [3487, 3021, 2900, 2656]},
+      {"key": "opt1", "side": "BUY", "weight": 0.4,
+       "name": "Option 1 — Z ended at ~3,490, wave 5 up to new highs",
+       "targets": [4340, 4700, 5600]}
+    ],
+    "sources": ["owner W1/MN Bollinger map 28-Nov", "Elliott count (Option 1 / Option 2) 28-Nov"]
+  }
+}
