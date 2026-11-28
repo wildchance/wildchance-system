@@ -158,6 +158,18 @@ def vote_vix(vix: Optional[Dict], symbol: str, side: str) -> Dict:
     return _v("vix", 1 if side == risk_on else 0, f"VIX {lvl:.1f} calm → risk-on")
 
 
+def vote_spotter(t: Optional[Dict], side: str) -> Dict:
+    """Spotter (signal lab): AI-found signals that passed in- AND out-of-sample rank-IC tests.
+    Strong same-side tilt → FOR, strong opposite tilt → AGAINST, otherwise abstain."""
+    from services.signal_lab import SPOT_TILT
+    if not t or not t.get("signals"):
+        return _v("spotter", 0, "no proven signals yet")
+    want = 1 if side == "BUY" else -1
+    tl = t["tilt"] * want
+    why = f"{t['signals']} lab signals, tilt {t['tilt']:+.2f}"
+    return _v("spotter", 1 if tl >= SPOT_TILT else -1 if tl <= -SPOT_TILT else 0, why)
+
+
 def midterm_window(today: dt.date) -> bool:
     """Fisher's 'Midterm Miracle' window: Q4 of the midterm year → end of Q2 next year."""
     return (today.month >= 10 and today.year % 4 == 2) or (today.month <= 6 and (today.year - 1) % 4 == 2)
@@ -351,12 +363,18 @@ async def convene(symbol: str, side: str, yearly: Optional[Dict] = None,
         edge = await edge_v2.score_for(symbol)
     except Exception:
         pass
+    spot = None
+    try:
+        from services import signal_lab
+        spot = await signal_lab.spotter(symbol)
+    except Exception:
+        pass
     votes = [vote_cot(cot_row, side), vote_sentiment(sent, side), vote_weekly(wk, side),
              vote_structure(yearly, side), vote_history(role_stats), vote_macro(lock, side),
              vote_news(news, side), vote_base_rates((yearly or {}).get("history"), side, trade_type),
              vote_vix(vix, symbol, side), vote_seasonal(symbol, side),
              vote_plan(plans, side, price, tol),
-             vote_mirofish(mf, side), vote_fundamentals(edge, side)]
+             vote_mirofish(mf, side), vote_fundamentals(edge, side), vote_spotter(spot, side)]
     votes = apply_scores(votes, scores)
     d = decide(votes)
     pr = probability(votes, scores)
