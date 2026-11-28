@@ -91,7 +91,7 @@ def test_gate_is_public_but_owner_routes_are_not(monkeypatch):
 
 def test_ea_has_gate_and_parses_compact_json():
     src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
-    assert '#property version   "4.68"' in src
+    assert '#property version   "4.69"' in src
     assert "/bridge/gate?symbol=" in src and "X-Bridge-Token" in src
     assert 'riskPct = MathMin(riskPct, appRisk)' in src
     from fastapi.responses import JSONResponse
@@ -242,3 +242,14 @@ def test_owner_key_is_derived_and_stable(monkeypatch):
     app.include_router(bridge.router)
     c = TestClient(app)
     assert c.get("/bridge/whoami", headers={"X-Bridge-Token": k1}).json() == {"role": "owner"}
+
+
+def test_ea_risk_audit_v469():
+    """Risk audit: loss-side tick value, commission in the risk, one trade per correlated
+    group, and an atomic open slot so parallel charts can't exceed the concurrency cap."""
+    src = open("mt5_bridge/WildChance_PropEA_v4.mq5").read()
+    assert "SYMBOL_TRADE_TICK_VALUE_LOSS" in src and "double tickValue = LossTickValue();" in src
+    assert "InpCommissionPerLot" in src and "+ MathMax(0, InpCommissionPerLot)" in src
+    assert 'input bool     InpOnePerCluster     = true;' in src and 'return "INDICES";' in src
+    assert "GlobalVariableSetOnCondition(gv, now, last)" in src
+    assert src.index("ClaimOpenSlot() ||") < src.index("trade.Buy(lots")
