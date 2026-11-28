@@ -310,12 +310,13 @@ async def tiingo_daily(symbol: str, years: int = 30) -> List[Bar]:
     if not TIINGO_KEY:
         return []
     s = _s(symbol)
-    start = (dt.date.today() - dt.timedelta(days=365 * years)).isoformat()
+    # Tiingo now rejects any startDate before 2020-01-01 (HTTP 400), on every endpoint
+    start = max((dt.date.today() - dt.timedelta(days=365 * years)).isoformat(), "2020-01-01")
     key = f"tiingo:{s}:{years}"
     hit = _cached(key, 12 * 3600)
     if hit is not None:
         return hit
-    p = {"startDate": max(start, "2020-01-01"), "resampleFreq": "1day", "token": TIINGO_KEY}   # FX/crypto floor
+    p = {"startDate": start, "resampleFreq": "1day", "token": TIINGO_KEY}
     if is_crypto(symbol):
         data = await _get("tiingo", "https://api.tiingo.com/tiingo/crypto/prices",
                           {**p, "tickers": s.lower()})
