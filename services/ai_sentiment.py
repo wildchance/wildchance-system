@@ -7,7 +7,7 @@ readings into a Stage-0 macro-bias lock for the swing engine.
 
 Env:
   NVIDIA_API_KEY          key from build.nvidia.com (OpenAI-compatible endpoint)
-  NVIDIA_MODEL            default meta/llama-3.1-8b-instruct (cheap/fast)
+  NVIDIA_MODEL            default meta/llama-3.3-70b-instruct (3.1-8b reached end of life 2026-08-26)
   SENTIMENT_AUTO_BIAS     false → shown as context only; true → |score| ≥ 0.5 with
                           confidence ≥ 0.6 sets SELL_ONLY / BUY_ONLY where you have
                           NOT set MACRO_BIAS yourself (manual always wins)
@@ -28,7 +28,7 @@ import httpx
 from decouple import config
 
 NVIDIA_API_KEY = config("NVIDIA_API_KEY", default=None)
-NVIDIA_MODEL = config("NVIDIA_MODEL", default="meta/llama-3.1-8b-instruct")
+NVIDIA_MODEL = config("NVIDIA_MODEL", default="meta/llama-3.3-70b-instruct")
 NVIDIA_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 AUTO_BIAS = str(config("SENTIMENT_AUTO_BIAS", default="false")).strip().lower() in (
     "1", "true", "yes", "on")
@@ -108,8 +108,8 @@ async def headlines(symbol: str) -> List[str]:
 
 # tried in order when the configured model is retired / not on this account (HTTP 404 / 400)
 FALLBACK_MODELS = [m.strip() for m in str(config(
-    "NVIDIA_FALLBACK_MODELS", default="meta/llama-3.3-70b-instruct,meta/llama-3.1-70b-instruct,"
-                                      "mistralai/mixtral-8x7b-instruct-v0.1")).split(",") if m.strip()]
+    "NVIDIA_FALLBACK_MODELS", default="meta/llama-3.3-70b-instruct,meta/llama-4-maverick-17b-128e-instruct,"
+                                      "meta/llama-3.1-70b-instruct,mistralai/mistral-small-24b-instruct")).split(",") if m.strip()]
 LAST = {"ok": None, "status": None, "error": None, "model": None, "t": 0.0}
 _down_until = {"t": 0.0}
 
@@ -166,8 +166,8 @@ async def ask_model(messages: List[Dict]) -> Optional[str]:
             _note(True, 200, None, model)
             return txt
         err = r.text[:200]
-        if r.status_code in (404, 400, 422) and "model" in err.lower():
-            continue                                  # retired / unavailable model → try the next one
+        if r.status_code == 410 or (r.status_code in (404, 400, 422) and "model" in err.lower()):
+            continue                                  # retired (410 Gone) / unavailable model → try the next one
         _note(False, r.status_code, err, model)
         if r.status_code in (401, 403):
             _down_until["t"] = _t.time() + CONFIG_COOLDOWN_S

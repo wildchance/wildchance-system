@@ -86,6 +86,7 @@ class PolygonStream:
             subs = ",".join(f"T.{s}" for s in symbols)
             self.ws_client.subscribe(subs)
             logger.info(f"🚀 Polygon WebSocket starting for {len(symbols)} symbols")
+            self._loop = asyncio.get_running_loop()      # the handler runs back on this loop
             # run() blocks, so hand it to a worker thread to keep the loop free.
             await asyncio.to_thread(self.ws_client.run, self._sync_handler)
         except Exception as e:
@@ -95,7 +96,9 @@ class PolygonStream:
     def _sync_handler(self, msg):
         """Bridge the SDK's sync callback into the async handler."""
         try:
-            asyncio.run(self.handle_message(msg))
+            # back onto the app loop: the redis client belongs to it (asyncio.run here
+            # would bind its connections to a throwaway loop)
+            asyncio.run_coroutine_threadsafe(self.handle_message(msg), self._loop).result(timeout=10)
         except Exception as e:
             logger.error(f"Polygon handler error: {e}")
 

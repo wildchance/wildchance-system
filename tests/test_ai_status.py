@@ -84,3 +84,16 @@ def test_failure_logged_once_per_hour_and_config_errors_back_off(monkeypatch):
     assert len(seen) == 3 and len(logged) == 1                     # 3 failures, 1 log line
     import time
     assert ai._down_until["t"] - time.time() > 5 * 3600            # bad key: back off for hours
+
+
+def test_end_of_life_410_falls_back(monkeypatch):
+    seen = []
+    replies = [_Resp(410, {"title": "Gone", "detail": "The model 'meta/llama-3.1-8b-instruct' has reached its end of life"}),
+               _Resp(200, {"choices": [{"message": {"content": "ok"}}]})]
+    monkeypatch.setattr(ai, "NVIDIA_API_KEY", "k")
+    monkeypatch.setattr(ai, "NVIDIA_MODEL", "meta/llama-3.1-8b-instruct")
+    monkeypatch.setattr(ai, "FALLBACK_MODELS", ["new/model"])
+    monkeypatch.setattr(ai, "_down_until", {"t": 0.0})
+    monkeypatch.setattr(httpx, "AsyncClient", _client(replies, seen))
+    assert run(ai.ask_model([{"role": "user", "content": "hi"}])) == "ok"
+    assert seen == ["meta/llama-3.1-8b-instruct", "new/model"]
