@@ -942,3 +942,59 @@ async def setups_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 HANDLERS["setups"] = setups_cmd
 OWNER_COMMANDS += [("setups", "EA setups found on all charts, last 24 h (owner)")]
+
+
+def lab_text(sigs, tilts, state) -> str:
+    lines = []
+    if state.get("running"):
+        lines.append(f"🧪 Running: '{state.get('theme')}' — I'll message you when it's done.")
+    r = state.get("result")
+    if r and not state.get("running"):
+        lines.append(f"🧪 Last run '{r.get('theme', state.get('theme'))}': tried {r.get('tried', 0)}, "
+                     f"accepted {len(r.get('accepted') or [])}" if r.get("ok") else
+                     f"🧪 Last run failed: {r.get('reason')}")
+    lines.append(f"📚 Proven signals: {len(sigs)}")
+    for s in sigs[:8]:
+        lines.append(f"• {s.get('name')}: {s['formula']}  (out-of-sample IC {s['oos'].get('ic')})")
+    lean = [(k, v["tilt"]) for k, v in (tilts or {}).items() if v.get("signals") and abs(v["tilt"]) >= 0.34]
+    if lean:
+        lines.append("🔭 Spotter today: " + ", ".join(f"{k} {'BUY' if t > 0 else 'SELL'} {t:+.2f}"
+                                                     for k, t in sorted(lean, key=lambda x: -abs(x[1]))))
+    elif sigs:
+        lines.append("🔭 Spotter today: no strong lean")
+    lines.append("\nStart a run: /lab run mean reversion\nTest the AI key: /lab ai")
+    return "\n".join(lines)
+
+
+async def lab_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Owner: signal lab — /lab · /lab run <theme> · /lab ai (NVIDIA key test)."""
+    if not is_owner(update):
+        await _reply(update, denied_text(update))
+        return
+    args = list(context.args or [])
+
+    async def go():
+        from routes import signal_lab as rl
+        from services import signal_lab as sl
+        if args and args[0].lower() == "ai":
+            from routes.ops_check import ai_status
+            r = await ai_status(test=True)
+            last = r.get("last") or {}
+            msg = (f"✅ NVIDIA AI works — model {last.get('model')}" if last.get("ok") else
+                   f"❌ NVIDIA AI failed ({last.get('status')}): {last.get('error') or ''}\n"
+                   f"{r.get('hint') or ''}") + ("" if r.get("key_set") else "\n(no NVIDIA_API_KEY on the server)")
+            await update.message.reply_text(msg)
+            return
+        if args and args[0].lower() == "run":
+            theme = " ".join(args[1:]).strip() or "mean reversion"
+            r = await rl.run(theme=theme, rounds=3, per_round=5)
+            await update.message.reply_text(
+                f"🧪 Started '{theme}' (3 rounds). Takes a few minutes — I'll message you the result."
+                if r.get("ok") else f"🧪 {r.get('reason')}")
+            return
+        await update.message.reply_text(lab_text(await sl.load(), await sl.tilts(), rl._state))
+    await _guard(update, go)
+
+
+HANDLERS["lab"] = lab_cmd
+OWNER_COMMANDS += [("lab", "Signal lab / Spotter: /lab · /lab run <theme> · /lab ai (owner)")]
