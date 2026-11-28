@@ -156,13 +156,52 @@ def _note(ok: bool, status, error: Optional[str], model: Optional[str]) -> None:
         pass
 
 
+MODELS_URL = "https://integrate.api.nvidia.com/v1/models"
+_avail: Dict = {"t": 0.0, "ids": []}          # what NVIDIA actually serves right now
+_CHAT_HINT = re.compile(r"instruct|chat|gpt-oss|nemotron|qwen3|deepseek", re.I)
+_NOT_CHAT = re.compile(r"embed|rerank|guard|safety|vision|vlm|clip|parse|reward|retriev|ocr|pii|"
+                       r"detector|translate|speech|asr|tts|cosmos|kosmos|fuyu|vila|paligemma|neva", re.I)
+
+
+async def refresh_available(force: bool = False) -> List[str]:
+    """GET /v1/models (cached 6 h). Empty on failure → the static chains are used as-is."""
+    import time as _t
+    if not force and _avail["ids"] and _t.time() - _avail["t"] < 6 * 3600:
+        return _avail["ids"]
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(MODELS_URL, headers={"Authorization": f"Bearer {NVIDIA_API_KEY}"}
+                            if NVIDIA_API_KEY else {})
+        ids = [m.get("id") for m in (r.json().get("data") or [])] if r.status_code == 200 else []
+    except Exception:
+        ids = []
+    _avail.update(t=_t.time(), ids=[i for i in ids if isinstance(i, str)])
+    return _avail["ids"]
+
+
+def discovered_chat(ids: List[str], role: str) -> List[str]:
+    """Chat models NVIDIA lists that our chains don't name — biggest-sounding first for deep jobs."""
+    chat = [i for i in ids if _CHAT_HINT.search(i) and not _NOT_CHAT.search(i)]
+
+    def size(i: str) -> float:
+        m = re.findall(r"(\d+(?:\.\d+)?)b\b", i.lower())
+        return float(m[0]) if m else 0.0
+    if role == "deep":
+        return sorted(chat, key=lambda i: -size(i))
+    pref = [i for i in chat if 20 <= size(i) <= 80] + [i for i in chat if not 20 <= size(i) <= 80]
+    return pref
+
+
 def models_for(role: str) -> List[str]:
-    """NVIDIA_MODEL (if set) first, then the role's chain, then the generic fallbacks — no repeats."""
+    """NVIDIA_MODEL (if set) first, then the role's chain, then the generic fallbacks — no repeats.
+    When NVIDIA's model list is known, names it does not serve are dropped and live chat models
+    from that list are added after ours (a key never ends up with zero usable models)."""
     import time as _t
     out: List[str] = []
+    live = set(_avail["ids"])
     for m in ([NVIDIA_MODEL] if NVIDIA_MODEL_SET else []) + MODEL_CHAINS.get(role, []) + \
-            [NVIDIA_MODEL] + FALLBACK_MODELS:
-        if m and m not in out and _dead.get(m, 0) <= _t.time():
+            [NVIDIA_MODEL] + FALLBACK_MODELS + (discovered_chat(_avail["ids"], role)[:6] if live else []):
+        if m and m not in out and _dead.get(m, 0) <= _t.time() and (not live or m in live):
             out.append(m)
     return out
 
@@ -179,7 +218,10 @@ async def ask_model(messages: List[Dict], role: str = "fast") -> Optional[str]:
         return None
     if _t.time() < _down_until["t"]:
         return None
+    await refresh_available()
+    tried, last_err = [], ""
     for model in models_for(role):
+        tried.append(model)
         t0 = _t.time()
         try:
             async with httpx.AsyncClient(timeout=25) as c:
@@ -204,8 +246,9 @@ async def ask_model(messages: List[Dict], role: str = "fast") -> Optional[str]:
                 pass
             return txt
         err = r.text[:200]
-        if r.status_code == 410 or (r.status_code in (404, 400, 422) and "model" in err.lower()):
+        if r.status_code in (404, 410) or (r.status_code in (400, 422) and "model" in err.lower()):
             _dead[model] = _t.time() + DEAD_MODEL_S
+            last_err = f"{r.status_code} {err[:80]}"
             continue                                  # retired (410 Gone) / unavailable model → try the next one
         _note(False, r.status_code, err, model)
         if r.status_code in (401, 403):
@@ -213,7 +256,8 @@ async def ask_model(messages: List[Dict], role: str = "fast") -> Optional[str]:
         elif r.status_code == 429 or r.status_code >= 500:
             _down_until["t"] = _t.time() + TRANSIENT_COOLDOWN_S
         return None
-    _note(False, 404, "none of the configured models is available to this key", NVIDIA_MODEL)
+    _note(False, 404, f"no model answered (tried {', '.join(tried) or 'none'}; NVIDIA lists "
+                      f"{len(_avail['ids'])} models; last: {last_err or '-'})", NVIDIA_MODEL)
     _down_until["t"] = _t.time() + CONFIG_COOLDOWN_S
     return None
 
